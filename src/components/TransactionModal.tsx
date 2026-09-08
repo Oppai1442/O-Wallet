@@ -508,7 +508,7 @@ export function TransactionModal({
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div
-        className="flex max-h-[100dvh] w-full max-w-6xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-slate-900 sm:max-h-[94dvh] sm:rounded-3xl"
+        className="flex max-h-[100dvh] w-full max-w-7xl min-w-0 flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-slate-900 sm:max-h-[94dvh] sm:rounded-3xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-5 sm:py-4">
@@ -519,9 +519,9 @@ export function TransactionModal({
           <Button variant="ghost" onClick={onClose}><X size={18} /></Button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto overscroll-contain">
-          <div className="grid gap-0 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,.95fr)]">
-            <div className="space-y-4 p-4 sm:p-5 lg:border-r lg:border-slate-200 lg:dark:border-slate-800">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
+          <div className="grid min-w-0 gap-0 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,.95fr)]">
+            <div className="min-w-0 space-y-4 p-4 sm:p-5 lg:border-r lg:border-slate-200 lg:dark:border-slate-800">
               <div className="grid grid-cols-3 gap-2 rounded-2xl bg-slate-100 p-1 dark:bg-slate-800">
                 {(['expense', 'income', 'transfer'] as TransactionType[]).map((value) => (
                   <button key={value} onClick={() => setType(value)} className={`rounded-xl px-3 py-2 text-sm font-bold transition ${type === value ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>
@@ -607,7 +607,7 @@ export function TransactionModal({
               <div><Label>{t('modal.note')}</Label><Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} /></div>
             </div>
 
-            <div className="space-y-4 bg-slate-50/60 p-4 dark:bg-slate-950/30 sm:p-5">
+            <div className="min-w-0 space-y-4 bg-slate-50/60 p-4 dark:bg-slate-950/30 sm:p-5">
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div><div className="font-bold text-slate-800 dark:text-slate-100">{t('modal.screenshot')}</div><div className="text-xs text-slate-500">{t('modal.ocrHint')}</div></div>
@@ -659,23 +659,25 @@ export function TransactionModal({
                 </div>
               )}
 
-              {batchDrafts.length > 0 && (
-                <BatchOcrReview
-                  drafts={batchDrafts}
-                  previewUrls={previewUrls}
-                  files={files}
-                  accounts={accounts}
-                  categories={categories}
-                  activeId={activeBatchId}
-                  onActiveId={setActiveBatchId}
-                  onChange={updateBatchDraft}
-                />
-              )}
-
               {ocrRaw && <details className="rounded-2xl bg-white p-4 dark:bg-slate-900"><summary className="cursor-pointer text-sm font-bold text-slate-700 dark:text-slate-200">{t('modal.rawOcr')}</summary><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-500">{ocrRaw}</pre></details>}
               {error && <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</div>}
             </div>
           </div>
+
+          {batchDrafts.length > 0 && (
+            <div className="min-w-0 border-t border-slate-200 bg-slate-50/40 p-4 dark:border-slate-800 dark:bg-slate-950/20 sm:p-5">
+              <BatchOcrReview
+                drafts={batchDrafts}
+                previewUrls={previewUrls}
+                files={files}
+                accounts={accounts}
+                categories={categories}
+                activeId={activeBatchId}
+                onActiveId={setActiveBatchId}
+                onChange={updateBatchDraft}
+              />
+            </div>
+          )}
         </div>
 
         <div className="flex shrink-0 justify-end gap-2 border-t border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-5">

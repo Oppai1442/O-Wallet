@@ -4,7 +4,7 @@ O-Wallet is a private, local-first expense tracker built as a static PWA.
 
 **No O-Wallet runtime backend is required.** The production deployment is static HTML/CSS/JS. The browser performs OCR, encryption, analytics and sync; encrypted cloud data is stored in the user's own Google Drive.
 
-Current release: **v0.6.2**
+Current release: **v0.6.3**
 
 ## Highlights
 
@@ -489,6 +489,13 @@ Field regions strip short inline labels by default, so a region containing `Nộ
 
 Selecting multiple images exposes **Batch OCR**. OCR is processed sequentially with one reusable Tesseract worker, producing one editable draft per image. Existing wallet transactions **and earlier drafts in the same batch** are checked for semantic duplicates using amount/account/time plus recipient/description similarity. Exact-looking matches are deselected by default. This is distinct from Drive synchronization conflicts: sync conflict resolution handles competing versions of the same UUID, while OCR duplicate detection looks for separate transaction UUIDs that appear to represent the same real-world transaction.
 
+
+## v0.6.3 bulk OCR review layout fix
+
+- Bulk OCR review now spans the full transaction modal width instead of being nested inside the already-narrow screenshot column.
+- The transaction modal clips horizontal overflow and all major grid children use `min-width: 0`, preventing accidental page-width expansion.
+- Bulk image list, preview, form fields, long file names, and the “include this image” checkbox now wrap responsively without collapsing into vertical text.
+- The modal maximum width is increased to `max-w-7xl` on desktop while remaining full-width on small screens.
 
 ## v0.6.2 Google session / startup notes
 
