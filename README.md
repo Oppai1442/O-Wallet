@@ -4,7 +4,7 @@ O-Wallet is a private, local-first expense tracker built as a static PWA.
 
 **No O-Wallet runtime backend is required.** The production deployment is static HTML/CSS/JS. The browser performs OCR, encryption, analytics and sync; encrypted cloud data is stored in the user's own Google Drive.
 
-Current release: **v0.2.0**
+Current release: **v0.2.1**
 
 ## Highlights
 
