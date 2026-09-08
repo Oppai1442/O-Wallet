@@ -1,11 +1,16 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { CopyPlus, ImagePlus, LoaderCircle, ScanText, Sparkles, X } from 'lucide-react'
+import { CalendarDays, CopyPlus, ImagePlus, Images, LoaderCircle, Repeat2, ScanText, Sparkles, X } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { accountDisplayName, categoryDisplayName, localizeError, useI18n } from '../i18n'
-import { parseTransactionFromOcr, parseTransactionFromRegions, recognizeImage } from '../lib/ocr'
+import { buildDetectedLines, parseTransactionFromOcr, parseTransactionFromRegions, recognizeImage } from '../lib/ocr'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
-import type { OcrRegion, OcrTemplate, Transaction, TransactionType } from '../types'
+import { combineLocalDateAndTime, localDateKeyFromInputDateTime, localTimeFromInputDateTime, localWeekday, recurringDateKeys } from '../lib/scheduling'
+import type { OcrDetectedLine, OcrField, OcrRegion, OcrResult, OcrTemplate, Transaction, TransactionType } from '../types'
 import { Button, Input, Label, Select, Textarea } from './ui'
+import { MultiDatePicker } from './MultiDatePicker'
+import { BatchOcrReview, type BatchOcrDraft } from './BatchOcrReview'
+import { OcrTeachingPanel } from './OcrTeachingPanel'
+import { findDuplicateTransaction } from '../lib/duplicates'
 
 const OcrRegionEditor = lazy(() => import('./OcrRegionEditor').then((module) => ({ default: module.OcrRegionEditor })))
 
@@ -22,14 +27,22 @@ export function TransactionModal({
   transaction?: Transaction
   duplicateFrom?: Transaction
 }) {
-  const { accounts, categories, repository, saveEntity, settings } = useWallet()
+  const { accounts, categories, repository, saveEntity, saveEntities, settings, transactions } = useWallet()
   const { t } = useI18n()
   const seed = transaction ?? duplicateFrom
   const editing = Boolean(transaction)
   const [type, setType] = useState<TransactionType>(seed?.type ?? 'expense')
   const [amount, setAmount] = useState(seed?.amount ? String(seed.amount) : '')
   const [currency, setCurrency] = useState(seed?.currency ?? settings?.defaultCurrency ?? 'VND')
-  const [occurredAt, setOccurredAt] = useState(seed ? toLocalInputDateTime(seed.occurredAt) : toLocalInputDateTime())
+  const initialOccurredAt = seed ? toLocalInputDateTime(seed.occurredAt) : toLocalInputDateTime()
+  const initialDateKey = localDateKeyFromInputDateTime(initialOccurredAt)
+  const [occurredAt, setOccurredAt] = useState(initialOccurredAt)
+  const [creationMode, setCreationMode] = useState<'single' | 'multiple' | 'repeat'>('single')
+  const [batchTime, setBatchTime] = useState(localTimeFromInputDateTime(initialOccurredAt))
+  const [selectedDates, setSelectedDates] = useState<string[]>([initialDateKey])
+  const [repeatStartDate, setRepeatStartDate] = useState(initialDateKey)
+  const [repeatUntilDate, setRepeatUntilDate] = useState(initialDateKey)
+  const [repeatWeekdays, setRepeatWeekdays] = useState<number[]>([localWeekday(initialDateKey)])
   const [categoryId, setCategoryId] = useState(seed?.categoryId ?? settings?.transactionDefaults?.categoryId ?? '')
   const [accountId, setAccountId] = useState(seed?.accountId ?? settings?.transactionDefaults?.accountId ?? '')
   const [destinationAccountId, setDestinationAccountId] = useState(seed?.destinationAccountId ?? '')
@@ -49,6 +62,11 @@ export function TransactionModal({
   const [ocrProgress, setOcrProgress] = useState(0)
   const [ocrStatus, setOcrStatus] = useState('')
   const [ocrRaw, setOcrRaw] = useState('')
+  const [ocrResult, setOcrResult] = useState<OcrResult>()
+  const [detectedLines, setDetectedLines] = useState<OcrDetectedLine[]>([])
+  const [lineMappings, setLineMappings] = useState<Record<string, OcrField | ''>>({})
+  const [batchDrafts, setBatchDrafts] = useState<BatchOcrDraft[]>([])
+  const [activeBatchId, setActiveBatchId] = useState<string>()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
 
@@ -57,6 +75,11 @@ export function TransactionModal({
     [categories, type],
   )
   const templates = settings?.ocrTemplates ?? []
+  const plannedDates = useMemo(() => {
+    if (editing || creationMode === 'single') return [localDateKeyFromInputDateTime(occurredAt)]
+    if (creationMode === 'multiple') return [...selectedDates].sort()
+    return recurringDateKeys(repeatStartDate, repeatUntilDate, repeatWeekdays)
+  }, [creationMode, editing, occurredAt, repeatStartDate, repeatUntilDate, repeatWeekdays, selectedDates])
 
   useEffect(() => {
     if (!accounts.some((account) => account.id === accountId)) setAccountId(accounts[0]?.id ?? '')
@@ -89,7 +112,7 @@ export function TransactionModal({
       id: crypto.randomUUID(),
       name: templateName.trim(),
       aspectRatio: imageSize ? imageSize.width / imageSize.height : undefined,
-      regions: regions.map((region) => ({ ...region, id: crypto.randomUUID() })),
+      regions: regions.map((region) => ({ ...region, id: crypto.randomUUID(), sourceLineId: undefined })),
       createdAt: now,
       updatedAt: now,
     }
@@ -102,28 +125,50 @@ export function TransactionModal({
     setTemplateName('')
   }
 
-  async function ensureImageSize(file: File) {
-    if (imageSize) return imageSize
+  function applyParsedCandidate(parsed: ReturnType<typeof parseTransactionFromOcr>) {
+    setOcrRaw(parsed.rawText)
+    if (parsed.amount) setAmount(String(parsed.amount))
+    if (parsed.occurredAt) {
+      const local = toLocalInputDateTime(parsed.occurredAt)
+      const dateKey = localDateKeyFromInputDateTime(local)
+      setOccurredAt(local)
+      setBatchTime(localTimeFromInputDateTime(local))
+      if (creationMode === 'repeat') {
+        setRepeatStartDate(dateKey)
+        setRepeatUntilDate((current) => current < dateKey ? dateKey : current)
+      }
+    }
+    if (parsed.merchant) setMerchant(parsed.merchant)
+    if (parsed.balanceAfter) setBalanceAfter(String(parsed.balanceAfter))
+    if (parsed.description) setDescription(parsed.description)
+    setType(parsed.type)
+  }
+
+  async function readImageSize(file: File) {
     if ('createImageBitmap' in window) {
       const bitmap = await createImageBitmap(file)
       const value = { width: bitmap.width, height: bitmap.height }
       bitmap.close()
-      setImageSize(value)
       return value
     }
     const url = URL.createObjectURL(file)
     try {
-      const value = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+      return await new Promise<{ width: number; height: number }>((resolve, reject) => {
         const image = new window.Image()
         image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight })
         image.onerror = () => reject(new Error('modal.errorOcr'))
         image.src = url
       })
-      setImageSize(value)
-      return value
     } finally {
       URL.revokeObjectURL(url)
     }
+  }
+
+  async function ensureImageSize(file: File) {
+    if (imageSize) return imageSize
+    const value = await readImageSize(file)
+    setImageSize(value)
+    return value
   }
 
   async function runOcr() {
@@ -139,20 +184,240 @@ export function TransactionModal({
         }),
         ensureImageSize(files[0]),
       ])
+      setOcrResult(result)
+      setDetectedLines(buildDetectedLines(result, size.width, size.height))
+      setLineMappings(Object.fromEntries(regions.filter((region) => region.sourceLineId).map((region) => [region.sourceLineId!, region.field])))
       const parsed = regions.length
         ? parseTransactionFromRegions(result, regions, size.width, size.height)
         : parseTransactionFromOcr(result)
-      setOcrRaw(parsed.rawText)
-      if (parsed.amount) setAmount(String(parsed.amount))
-      if (parsed.occurredAt) setOccurredAt(toLocalInputDateTime(parsed.occurredAt))
-      if (parsed.merchant) setMerchant(parsed.merchant)
-      if (parsed.balanceAfter) setBalanceAfter(String(parsed.balanceAfter))
-      if (parsed.description) setDescription(parsed.description)
-      setType(parsed.type)
+      applyParsedCandidate(parsed)
     } catch (e) {
       setError(localizeError(e, t, 'modal.errorOcr'))
     } finally {
       setOcrBusy(false)
+    }
+  }
+
+  function mapDetectedLine(line: OcrDetectedLine, mappedField: OcrField | '') {
+    setLineMappings((current) => ({ ...current, [line.id]: mappedField }))
+    const withoutLine = regions.filter((region) => region.sourceLineId !== line.id)
+    const nextRegions = mappedField
+      ? [...withoutLine, {
+          id: crypto.randomUUID(),
+          field: mappedField,
+          x: Math.max(0, line.x - 0.006),
+          y: Math.max(0, line.y - 0.004),
+          width: Math.min(1 - Math.max(0, line.x - 0.006), line.width + 0.012),
+          height: Math.min(1 - Math.max(0, line.y - 0.004), line.height + 0.008),
+          stripLabel: mappedField !== 'generic' && mappedField !== 'ignore',
+          sourceLineId: line.id,
+        } satisfies OcrRegion]
+      : withoutLine
+    setRegions(nextRegions)
+    setShowRegions(true)
+    if (ocrResult && imageSize) applyParsedCandidate(parseTransactionFromRegions(ocrResult, nextRegions, imageSize.width, imageSize.height))
+  }
+
+  async function runBatchOcr() {
+    if (!files.length || editing) return
+    setOcrBusy(true)
+    setError(undefined)
+    setBatchDrafts([])
+    setOcrProgress(0)
+    try {
+      const drafts: BatchOcrDraft[] = []
+      const batchCandidates: Transaction[] = []
+      const existingIds = new Set(transactions.map((transaction) => transaction.id))
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index]
+        const [result, size] = await Promise.all([
+          recognizeImage(file, (progress, status) => {
+            setOcrProgress((index + progress) / files.length)
+            setOcrStatus(`${index + 1}/${files.length} · ${status}`)
+          }),
+          readImageSize(file),
+        ])
+        const parsed = regions.length
+          ? parseTransactionFromRegions(result, regions, size.width, size.height)
+          : parseTransactionFromOcr(result)
+        const localOccurredAt = parsed.occurredAt ? toLocalInputDateTime(parsed.occurredAt) : occurredAt
+        const parsedType = parsed.type
+        const compatibleCategories = categories.filter((category) => category.kind === parsedType || category.kind === 'both' || parsedType === 'transfer')
+        const resolvedCategoryId = compatibleCategories.some((category) => category.id === categoryId) ? categoryId : compatibleCategories[0]?.id ?? categoryId
+        const resolvedAccountId = accounts.some((account) => account.id === accountId) ? accountId : accounts[0]?.id ?? ''
+        const amountValue = parsed.amount ? String(parsed.amount) : ''
+        const candidateOccurredAt = fromLocalInputDateTime(localOccurredAt)
+        const conflict = parsed.amount
+          ? findDuplicateTransaction({
+              type: parsedType,
+              amount: parsed.amount,
+              occurredAt: candidateOccurredAt,
+              accountId: resolvedAccountId,
+              merchant: parsed.merchant,
+              description: parsed.description,
+            }, [...transactions, ...batchCandidates])
+          : undefined
+        const draftId = crypto.randomUUID()
+        drafts.push({
+          id: draftId,
+          fileIndex: index,
+          selected: conflict?.level !== 'exact',
+          type: parsedType,
+          amount: amountValue,
+          currency,
+          occurredAt: localOccurredAt,
+          categoryId: resolvedCategoryId,
+          accountId: resolvedAccountId,
+          destinationAccountId: parsedType === 'transfer' ? accounts.find((account) => account.id !== resolvedAccountId)?.id : undefined,
+          merchant: parsed.merchant ?? '',
+          balanceAfter: parsed.balanceAfter !== undefined ? String(parsed.balanceAfter) : '',
+          description: parsed.description ?? '',
+          rawText: parsed.rawText,
+          conflict: conflict ? {
+            level: conflict.level,
+            source: existingIds.has(conflict.transaction.id) ? 'existing' : 'batch',
+            transactionId: conflict.transaction.id,
+            occurredAt: conflict.transaction.occurredAt,
+            amount: conflict.transaction.amount,
+            merchant: conflict.transaction.merchant,
+          } : undefined,
+        })
+        if (parsed.amount) {
+          batchCandidates.push({
+            id: draftId,
+            type: parsedType,
+            amount: parsed.amount,
+            currency,
+            occurredAt: candidateOccurredAt,
+            categoryId: resolvedCategoryId,
+            accountId: resolvedAccountId,
+            destinationAccountId: parsedType === 'transfer' ? accounts.find((account) => account.id !== resolvedAccountId)?.id : undefined,
+            merchant: parsed.merchant,
+            balanceAfter: parsed.balanceAfter,
+            description: parsed.description,
+            imageIds: [],
+            createdAt: candidateOccurredAt,
+            updatedAt: candidateOccurredAt,
+            deleted: false,
+          })
+        }
+      }
+      setBatchDrafts(drafts)
+      setActiveBatchId(drafts[0]?.id)
+      setOcrProgress(1)
+    } catch (e) {
+      setError(localizeError(e, t, 'modal.errorOcr'))
+    } finally {
+      setOcrBusy(false)
+    }
+  }
+
+  function updateBatchDraft(next: BatchOcrDraft) {
+    const compatibleCategories = categories.filter((category) => category.kind === next.type || category.kind === 'both' || next.type === 'transfer')
+    const normalized = compatibleCategories.some((category) => category.id === next.categoryId)
+      ? next
+      : { ...next, categoryId: compatibleCategories[0]?.id ?? next.categoryId }
+    const amountValue = Number(normalized.amount)
+    let conflict = normalized.conflict
+    if (amountValue > 0 && normalized.occurredAt && normalized.accountId) {
+      const siblingCandidates: Transaction[] = batchDrafts
+        .filter((draft) => draft.id !== normalized.id && Number(draft.amount) > 0 && draft.occurredAt && draft.accountId)
+        .map((draft) => ({
+          id: draft.id,
+          type: draft.type,
+          amount: Number(draft.amount),
+          currency: draft.currency || currency,
+          occurredAt: fromLocalInputDateTime(draft.occurredAt),
+          categoryId: draft.categoryId,
+          accountId: draft.accountId,
+          destinationAccountId: draft.destinationAccountId,
+          merchant: draft.merchant || undefined,
+          balanceAfter: draft.balanceAfter ? Number(draft.balanceAfter) : undefined,
+          description: draft.description || undefined,
+          imageIds: [],
+          createdAt: fromLocalInputDateTime(draft.occurredAt),
+          updatedAt: fromLocalInputDateTime(draft.occurredAt),
+          deleted: false,
+        }))
+      const existingIds = new Set(transactions.map((transaction) => transaction.id))
+      const match = findDuplicateTransaction({
+        type: normalized.type,
+        amount: amountValue,
+        occurredAt: fromLocalInputDateTime(normalized.occurredAt),
+        accountId: normalized.accountId,
+        merchant: normalized.merchant,
+        description: normalized.description,
+      }, [...transactions, ...siblingCandidates])
+      conflict = match ? {
+        level: match.level,
+        source: existingIds.has(match.transaction.id) ? 'existing' : 'batch',
+        transactionId: match.transaction.id,
+        occurredAt: match.transaction.occurredAt,
+        amount: match.transaction.amount,
+        merchant: match.transaction.merchant,
+      } : undefined
+    }
+    setBatchDrafts((current) => current.map((draft) => draft.id === normalized.id ? { ...normalized, conflict } : draft))
+  }
+
+  async function saveBatchOcr() {
+    if (!repository) return
+    const selected = batchDrafts.filter((draft) => draft.selected)
+    if (!selected.length) {
+      setError(t('batch.errorNoneSelected'))
+      return
+    }
+    for (const draft of selected) {
+      const numericAmount = Number(draft.amount)
+      if (!numericAmount || numericAmount <= 0 || !draft.accountId || !draft.categoryId || !draft.occurredAt) {
+        setActiveBatchId(draft.id)
+        setError(t('batch.errorInvalidDraft'))
+        return
+      }
+      if (draft.type === 'transfer' && (!draft.destinationAccountId || draft.destinationAccountId === draft.accountId)) {
+        setActiveBatchId(draft.id)
+        setError(t('modal.errorTransferAccounts'))
+        return
+      }
+    }
+
+    setSaving(true)
+    setError(undefined)
+    try {
+      const now = new Date().toISOString()
+      const batchId = selected.length > 1 ? crypto.randomUUID() : undefined
+      const records: Transaction[] = []
+      for (let index = 0; index < selected.length; index += 1) {
+        const draft = selected[index]
+        const file = files[draft.fileIndex]
+        const imageId = file ? (await repository.saveImage(file)).id : undefined
+        records.push({
+          id: crypto.randomUUID(),
+          type: draft.type,
+          amount: Number(draft.amount),
+          currency: draft.currency || currency,
+          occurredAt: fromLocalInputDateTime(draft.occurredAt),
+          categoryId: draft.categoryId,
+          accountId: draft.accountId,
+          destinationAccountId: draft.type === 'transfer' ? draft.destinationAccountId : undefined,
+          merchant: draft.merchant.trim() || undefined,
+          balanceAfter: draft.balanceAfter ? Number(draft.balanceAfter) : undefined,
+          description: draft.description.trim() || undefined,
+          note: note.trim() || undefined,
+          tags: uniqueTags(tags),
+          batch: batchId ? { id: batchId, mode: 'ocr-batch', index, count: selected.length } : undefined,
+          imageIds: imageId ? [imageId] : [],
+          createdAt: now,
+          updatedAt: now,
+          deleted: false,
+        })
+      }
+      await saveEntities(records)
+      onClose()
+    } catch (e) {
+      setError(localizeError(e, t, 'modal.errorSave'))
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -167,6 +432,37 @@ export function TransactionModal({
       return
     }
 
+    let occurrenceTimes: string[]
+    if (editing || creationMode === 'single') {
+      occurrenceTimes = [fromLocalInputDateTime(occurredAt)]
+    } else if (creationMode === 'multiple') {
+      if (selectedDates.length === 0) {
+        setError(t('schedule.errorNoDates'))
+        return
+      }
+      occurrenceTimes = [...new Set(selectedDates)].sort().map((date) => combineLocalDateAndTime(date, batchTime))
+    } else {
+      if (!repeatStartDate || !repeatUntilDate || repeatUntilDate < repeatStartDate) {
+        setError(t('schedule.errorRepeatRange'))
+        return
+      }
+      if (repeatWeekdays.length === 0) {
+        setError(t('schedule.errorWeekdays'))
+        return
+      }
+      const dates = recurringDateKeys(repeatStartDate, repeatUntilDate, repeatWeekdays)
+      if (dates.length === 0) {
+        setError(t('schedule.errorNoOccurrences'))
+        return
+      }
+      occurrenceTimes = dates.map((date) => combineLocalDateAndTime(date, batchTime))
+    }
+
+    if (occurrenceTimes.length > 5000) {
+      setError(t('schedule.errorTooMany'))
+      return
+    }
+
     setSaving(true)
     setError(undefined)
     try {
@@ -174,12 +470,14 @@ export function TransactionModal({
       if (!editing && duplicateFrom) imageIds.push(...duplicateFrom.imageIds)
       for (const file of files) imageIds.push((await repository.saveImage(file)).id)
       const now = new Date().toISOString()
-      const next: Transaction = {
-        id: transaction?.id ?? crypto.randomUUID(),
+      const batchId = occurrenceTimes.length > 1 ? crypto.randomUUID() : undefined
+      const batchMode = creationMode === 'repeat' ? 'recurring' : 'multi-date'
+      const records: Transaction[] = occurrenceTimes.map((time, index) => ({
+        id: editing ? transaction!.id : crypto.randomUUID(),
         type,
         amount: numericAmount,
         currency,
-        occurredAt: fromLocalInputDateTime(occurredAt),
+        occurredAt: time,
         categoryId,
         accountId,
         destinationAccountId: type === 'transfer' ? destinationAccountId : undefined,
@@ -188,12 +486,17 @@ export function TransactionModal({
         description: description.trim() || undefined,
         note: note.trim() || undefined,
         tags: uniqueTags(tags),
+        batch: editing
+          ? transaction?.batch
+          : batchId ? { id: batchId, mode: batchMode, index, count: occurrenceTimes.length } : undefined,
         imageIds,
-        createdAt: transaction?.createdAt ?? now,
+        createdAt: editing ? transaction!.createdAt : now,
         updatedAt: now,
         deleted: false,
-      }
-      await saveEntity(next)
+      }))
+
+      if (records.length === 1) await saveEntity(records[0])
+      else await saveEntities(records)
       onClose()
     } catch (e) {
       setError(localizeError(e, t, 'modal.errorSave'))
@@ -232,15 +535,71 @@ export function TransactionModal({
                 <div><Label>{t('modal.currency')}</Label><Input value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} /></div>
               </div>
 
+              {!editing && (
+                <div className="space-y-3 rounded-2xl border border-slate-200 p-3 dark:border-slate-800">
+                  <div>
+                    <Label>{t('schedule.creationMode')}</Label>
+                    <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+                      {([
+                        ['single', 'schedule.single'],
+                        ['multiple', 'schedule.multiple'],
+                        ['repeat', 'schedule.repeat'],
+                      ] as const).map(([value, label]) => (
+                        <button type="button" key={value} onClick={() => setCreationMode(value)} className={`rounded-lg px-2 py-2 text-xs font-bold transition sm:text-sm ${creationMode === value ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>
+                          {t(label)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {creationMode === 'single' && (
+                    <div><Label>{t('modal.time')}</Label><Input type="datetime-local" value={occurredAt} onChange={(e) => { setOccurredAt(e.target.value); setBatchTime(localTimeFromInputDateTime(e.target.value)) }} /></div>
+                  )}
+
+                  {creationMode === 'multiple' && (
+                    <div className="space-y-3">
+                      <div className="grid gap-3 sm:grid-cols-[180px_1fr] sm:items-end">
+                        <div><Label>{t('schedule.sharedTime')}</Label><Input type="time" value={batchTime} onChange={(e) => setBatchTime(e.target.value)} /></div>
+                        <div className="rounded-xl bg-indigo-50 px-3 py-2 text-xs text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">{t('schedule.multiHint')}</div>
+                      </div>
+                      <MultiDatePicker selected={selectedDates} onChange={setSelectedDates} />
+                    </div>
+                  )}
+
+                  {creationMode === 'repeat' && (
+                    <div className="space-y-3">
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div><Label>{t('schedule.startDate')}</Label><Input type="date" value={repeatStartDate} onChange={(e) => { setRepeatStartDate(e.target.value); if (repeatUntilDate < e.target.value) setRepeatUntilDate(e.target.value) }} /></div>
+                        <div><Label>{t('schedule.untilDate')}</Label><Input type="date" min={repeatStartDate} value={repeatUntilDate} onChange={(e) => setRepeatUntilDate(e.target.value)} /></div>
+                        <div><Label>{t('schedule.sharedTime')}</Label><Input type="time" value={batchTime} onChange={(e) => setBatchTime(e.target.value)} /></div>
+                      </div>
+                      <div>
+                        <Label>{t('schedule.weekdays')}</Label>
+                        <div className="grid grid-cols-7 gap-1">
+                          {([
+                            [1, 'weekday.mon'], [2, 'weekday.tue'], [3, 'weekday.wed'], [4, 'weekday.thu'], [5, 'weekday.fri'], [6, 'weekday.sat'], [0, 'weekday.sun'],
+                          ] as const).map(([day, label]) => {
+                            const active = repeatWeekdays.includes(day)
+                            return <button type="button" key={day} onClick={() => setRepeatWeekdays((current) => active ? current.filter((item) => item !== day) : [...current, day])} className={`rounded-xl border px-1 py-2 text-xs font-bold transition ${active ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'}`}>{t(label)}</button>
+                          })}
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-2 rounded-xl bg-indigo-50 px-3 py-2 text-xs text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300"><Repeat2 className="mt-0.5 shrink-0" size={15} /><span>{t('schedule.repeatPreview', { count: plannedDates.length })}</span></div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {editing && <div><Label>{t('modal.time')}</Label><Input type="datetime-local" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} /></div>}
+
               <div className="grid gap-4 sm:grid-cols-2">
-                <div><Label>{t('modal.time')}</Label><Input type="datetime-local" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} /></div>
                 <div><Label>{t('modal.category')}</Label><Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>{eligibleCategories.map((category) => <option key={category.id} value={category.id}>{categoryDisplayName(category, t)}</option>)}</Select></div>
                 <div><Label>{type === 'transfer' ? t('modal.sourceAccount') : t('modal.account')}</Label><Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>{accounts.map((account) => <option key={account.id} value={account.id}>{accountDisplayName(account, t)}</option>)}</Select></div>
                 {type === 'transfer' && <div><Label>{t('modal.destinationAccount')}</Label><Select value={destinationAccountId} onChange={(e) => setDestinationAccountId(e.target.value)}>{accounts.filter((account) => account.id !== accountId).map((account) => <option key={account.id} value={account.id}>{accountDisplayName(account, t)}</option>)}</Select></div>}
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
-                <div><Label>{t('modal.merchant')}</Label><Input value={merchant} onChange={(e) => setMerchant(e.target.value)} /></div>
+                <div className="min-w-0"><Label>{t('modal.merchant')}</Label><Input className="min-w-0" value={merchant} onChange={(e) => setMerchant(e.target.value)} /></div>
                 <div><Label>{t('modal.balanceAfter')}</Label><Input type="number" value={balanceAfter} onChange={(e) => setBalanceAfter(e.target.value)} /></div>
               </div>
               <div><Label>{t('modal.tags')}</Label><Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder={t('modal.tagsPlaceholder')} /><p className="mt-1 text-xs text-slate-500">{t('modal.tagsHint')}</p></div>
@@ -254,7 +613,17 @@ export function TransactionModal({
                   <div><div className="font-bold text-slate-800 dark:text-slate-100">{t('modal.screenshot')}</div><div className="text-xs text-slate-500">{t('modal.ocrHint')}</div></div>
                   <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700">
                     <ImagePlus size={17} /> {t('modal.chooseImages')}
-                    <input hidden type="file" accept="image/*" multiple onChange={(e) => { setFiles(Array.from(e.target.files ?? [])); setRegions([]); setImageSize(undefined) }} />
+                    <input hidden type="file" accept="image/*" multiple onChange={(e) => {
+                      setFiles(Array.from(e.target.files ?? []))
+                      setRegions([])
+                      setImageSize(undefined)
+                      setOcrResult(undefined)
+                      setDetectedLines([])
+                      setLineMappings({})
+                      setBatchDrafts([])
+                      setActiveBatchId(undefined)
+                      setOcrRaw('')
+                    }} />
                   </label>
                 </div>
                 {previewUrls.length > 0 && (
@@ -263,12 +632,17 @@ export function TransactionModal({
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button variant="secondary" onClick={() => setShowRegions((value) => !value)}><Sparkles size={17} /> {showRegions ? t('ocr.hideRegions') : t('ocr.configureRegions')}</Button>
                       <Button onClick={runOcr} disabled={ocrBusy}><ScanText size={17} /> {ocrBusy ? `OCR ${Math.round(ocrProgress * 100)}%` : regions.length ? t('ocr.runRegions') : t('modal.ocrFirst')}</Button>
+                      {!editing && files.length > 1 && <Button variant="secondary" onClick={runBatchOcr} disabled={ocrBusy}><Images size={17} /> {t('batch.run', { count: files.length })}</Button>}
                     </div>
                     {ocrBusy && <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full bg-indigo-500 transition-all" style={{ width: `${ocrProgress * 100}%` }} /></div>}
                     {ocrStatus && ocrBusy && <div className="mt-1 text-xs text-slate-500">{ocrStatus}</div>}
                   </>
                 )}
               </div>
+
+              {detectedLines.length > 0 && (
+                <OcrTeachingPanel lines={detectedLines} mappings={lineMappings} onMap={mapDetectedLine} />
+              )}
 
               {previewUrls[0] && showRegions && (
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
@@ -285,6 +659,19 @@ export function TransactionModal({
                 </div>
               )}
 
+              {batchDrafts.length > 0 && (
+                <BatchOcrReview
+                  drafts={batchDrafts}
+                  previewUrls={previewUrls}
+                  files={files}
+                  accounts={accounts}
+                  categories={categories}
+                  activeId={activeBatchId}
+                  onActiveId={setActiveBatchId}
+                  onChange={updateBatchDraft}
+                />
+              )}
+
               {ocrRaw && <details className="rounded-2xl bg-white p-4 dark:bg-slate-900"><summary className="cursor-pointer text-sm font-bold text-slate-700 dark:text-slate-200">{t('modal.rawOcr')}</summary><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-500">{ocrRaw}</pre></details>}
               {error && <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</div>}
             </div>
@@ -292,9 +679,9 @@ export function TransactionModal({
         </div>
 
         <div className="flex shrink-0 justify-end gap-2 border-t border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-5">
-          {duplicateFrom && <span className="mr-auto hidden items-center gap-1 text-xs text-slate-500 sm:flex"><CopyPlus size={14} /> {t('modal.duplicating')}</span>}
+          <div className="mr-auto hidden items-center gap-2 text-xs text-slate-500 sm:flex">{duplicateFrom && <><CopyPlus size={14} /> {t('modal.duplicating')}</>}{!editing && plannedDates.length > 1 && <><CalendarDays size={14} /> {t('schedule.willCreate', { count: plannedDates.length })}</>}</div>
           <Button variant="secondary" onClick={onClose}>{t('common.cancel')}</Button>
-          <Button onClick={save} disabled={saving || ocrBusy}>{saving ? <><LoaderCircle className="animate-spin" size={17} /> {t('modal.saving')}</> : editing ? t('common.save') : t('modal.save')}</Button>
+          <Button onClick={batchDrafts.length ? saveBatchOcr : save} disabled={saving || ocrBusy}>{saving ? <><LoaderCircle className="animate-spin" size={17} /> {t('modal.saving')}</> : batchDrafts.length ? t('batch.saveSelected', { count: batchDrafts.filter((draft) => draft.selected).length }) : editing ? t('common.save') : plannedDates.length > 1 ? t('schedule.saveMany', { count: plannedDates.length }) : t('modal.save')}</Button>
         </div>
       </div>
     </div>

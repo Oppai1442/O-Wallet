@@ -15,6 +15,7 @@ import {
 import { useWallet } from '../WalletContext'
 import { categoryBreakdown, filteredTransactions, summarize, trendData, type RangeKey } from '../lib/analytics'
 import { formatCompactMoney, formatMoney } from '../lib/format'
+import { useCurrentTime } from '../lib/useCurrentTime'
 import { categoryDisplayName, useI18n } from '../i18n'
 import { Card, EmptyState, Select } from './ui'
 
@@ -24,7 +25,8 @@ export function Analytics() {
   const { transactions, categories } = useWallet()
   const { t, locale } = useI18n()
   const [range, setRange] = useState<RangeKey>('6m')
-  const filtered = useMemo(() => filteredTransactions(transactions, range), [transactions, range])
+  const now = useCurrentTime()
+  const filtered = useMemo(() => filteredTransactions(transactions, range, now), [transactions, range, now])
   const trend = useMemo(() => trendData(filtered, range, locale), [filtered, range, locale])
   const breakdown = useMemo(() => categoryBreakdown(filtered, categories, (category) => categoryDisplayName(category, t), t('common.other')), [filtered, categories, t])
   const summary = useMemo(() => summarize(filtered), [filtered])

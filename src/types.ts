@@ -13,6 +13,20 @@ export interface OcrRegion {
   y: number
   width: number
   height: number
+  /** Strip a short inline label such as `Nội dung:` before parsing the region value. */
+  stripLabel?: boolean
+  /** Present when the region was generated from a detected OCR line in the teaching UI. */
+  sourceLineId?: string
+}
+
+export interface OcrDetectedLine {
+  id: string
+  text: string
+  confidence: number
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 export interface OcrTemplate {
@@ -30,6 +44,13 @@ export interface BudgetConfig {
   monthlyLimit: number
 }
 
+export interface TransactionBatchInfo {
+  id: string
+  mode: 'multi-date' | 'recurring' | 'ocr-batch'
+  index: number
+  count: number
+}
+
 export interface Transaction {
   id: string
   type: TransactionType
@@ -44,6 +65,7 @@ export interface Transaction {
   description?: string
   note?: string
   tags?: string[]
+  batch?: TransactionBatchInfo
   imageIds: string[]
   createdAt: string
   updatedAt: string

@@ -16,6 +16,8 @@ import { useWallet } from '../WalletContext'
 import { categoryBreakdown, filteredTransactions, summarize, trendData, type RangeKey } from '../lib/analytics'
 import { totalBalance } from '../lib/finance'
 import { formatCompactMoney, formatDateTime, formatMoney } from '../lib/format'
+import { effectiveTransactions } from '../lib/scheduling'
+import { useCurrentTime } from '../lib/useCurrentTime'
 import { categoryDisplayName, useI18n } from '../i18n'
 import { Badge, Card, EmptyState, Select } from './ui'
 
@@ -25,19 +27,22 @@ export function Dashboard() {
   const { transactions, categories, accounts, settings } = useWallet()
   const { t, locale } = useI18n()
   const [range, setRange] = useState<RangeKey>('30d')
-  const filtered = useMemo(() => filteredTransactions(transactions, range), [transactions, range])
+  const now = useCurrentTime()
+  const currentTransactions = useMemo(() => effectiveTransactions(transactions, now), [transactions, now])
+  const futureCount = Math.max(0, transactions.length - currentTransactions.length)
+  const filtered = useMemo(() => filteredTransactions(transactions, range, now), [transactions, range, now])
   const summary = useMemo(() => summarize(filtered), [filtered])
   const trend = useMemo(() => trendData(filtered, range, locale), [filtered, range, locale])
   const pie = useMemo(() => categoryBreakdown(filtered, categories, (category) => categoryDisplayName(category, t), t('common.other')), [filtered, categories, t])
-  const balance = useMemo(() => totalBalance(accounts, transactions), [accounts, transactions])
+  const balance = useMemo(() => totalBalance(accounts, transactions, now), [accounts, transactions, now])
   const budgetRows = useMemo(() => {
     const budgets = settings?.budgets ?? []
     if (!budgets.length) return []
-    const now = new Date()
-    const start = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
-    const end = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime()
+    const nowDate = new Date(now)
+    const start = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).getTime()
+    const end = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 1).getTime()
     return budgets.map((budget) => {
-      const spent = transactions
+      const spent = currentTransactions
         .filter((tx) => tx.type === 'expense' && tx.categoryId === budget.categoryId)
         .filter((tx) => { const time = new Date(tx.occurredAt).getTime(); return time >= start && time < end })
         .reduce((sum, tx) => sum + tx.amount, 0)
@@ -49,7 +54,7 @@ export function Dashboard() {
         percent: budget.monthlyLimit > 0 ? Math.min(150, spent / budget.monthlyLimit * 100) : 0,
       }
     }).sort((a, b) => b.percent - a.percent)
-  }, [settings?.budgets, transactions, categories, t])
+  }, [settings?.budgets, currentTransactions, categories, t, now])
 
   const cards = [
     { label: t('dashboard.balance'), value: balance, icon: WalletCards, tone: 'text-indigo-500' },
@@ -64,6 +69,7 @@ export function Dashboard() {
         <div>
           <h1 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">{t('dashboard.title')}</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('dashboard.subtitle')}</p>
+          {futureCount > 0 && <p className="mt-1 text-xs font-semibold text-indigo-500">{t('dashboard.futurePending', { count: futureCount })}</p>}
         </div>
         <Select className="w-36" value={range} onChange={(e) => setRange(e.target.value as RangeKey)}>
           <option value="7d">{t('range.7d')}</option>
@@ -161,9 +167,9 @@ export function Dashboard() {
 
       <Card className="overflow-hidden">
         <div className="border-b border-slate-100 px-4 py-4 font-bold text-slate-900 dark:border-slate-800 dark:text-white">{t('dashboard.recent')}</div>
-        {transactions.length === 0 ? <div className="p-4"><EmptyState title={t('dashboard.noTransactionsTitle')} text={t('dashboard.noTransactionsText')} /></div> : (
+        {currentTransactions.length === 0 ? <div className="p-4"><EmptyState title={t('dashboard.noTransactionsTitle')} text={t('dashboard.noTransactionsText')} /></div> : (
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {transactions.slice(0, 6).map((tx) => (
+            {currentTransactions.slice(0, 6).map((tx) => (
               <div key={tx.id} className="flex items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
                   <div className="truncate font-semibold text-slate-800 dark:text-slate-100">{tx.merchant || tx.description || t('transaction.noDescription')}</div>

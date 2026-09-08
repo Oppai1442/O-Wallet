@@ -94,3 +94,10 @@ Google authorization and vault unlocking are separate:
 - **Switch Google account on this device** clears local ciphertext, vault config, account binding and remembered DEK, but does not delete Drive data.
 
 Do not enable remembered unlock on shared/untrusted devices.
+
+
+## OCR teaching and batch import
+
+OCR teaching, region editing, inline-label cleanup, date parsing and semantic duplicate detection all execute in the browser. Raw screenshots are not sent to an O-Wallet backend. During multi-image OCR, each accepted source image is encrypted locally before it is written to IndexedDB/Drive.
+
+Semantic duplicate warnings are advisory. Exact-looking matches are deselected by default in the batch review UI, but the user can explicitly choose to save them. This mechanism is not a cryptographic or synchronization conflict check and does not delete existing records.

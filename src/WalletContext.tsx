@@ -83,6 +83,7 @@ interface WalletContextValue {
   lock: () => void
   refresh: () => Promise<void>
   saveEntity: <T extends WalletEntity>(entity: T) => Promise<void>
+  saveEntities: <T extends WalletEntity>(entities: T[]) => Promise<void>
   deleteTransaction: (id: string) => Promise<void>
   connectGoogle: () => Promise<GoogleSession>
   disconnectGoogle: () => void
@@ -488,6 +489,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     await notifyMutation()
   }, [repository, notifyMutation, t])
 
+  const saveEntities = useCallback(async <T extends WalletEntity>(entities: T[]) => {
+    if (!repository) throw new Error(t('error.vaultLocked'))
+    await repository.putMany(entities)
+    await notifyMutation()
+  }, [repository, notifyMutation, t])
+
   const deleteTransaction = useCallback(async (id: string) => {
     if (!repository) return
     await repository.tombstoneTransaction(id)
@@ -532,6 +539,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     lock,
     refresh,
     saveEntity,
+    saveEntities,
     deleteTransaction,
     connectGoogle,
     disconnectGoogle,
@@ -544,7 +552,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }), [
     status, vaultConfig, repository, transactions, accounts, categories, settings,
     googleSession, googleBinding, devicePreferences, syncBusy, syncMessage, lastSync, error,
-    createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity,
+    createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities,
     deleteTransaction, connectGoogle, disconnectGoogle, switchLocalAccount,
     restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences,
   ])

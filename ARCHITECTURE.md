@@ -73,14 +73,34 @@ Current OCR flow:
 File/Blob
   -> dynamically loaded Tesseract.js Web Worker
   -> text + word bounding boxes
-  -> optional normalized user-selected regions
-       amount / time / merchant / balance / description / generic / ignore
-  -> region-aware parser
+  -> reconstructed OCR lines
+       ├─ generic heuristic parser
+       ├─ user "Explain OCR" semantic mapping
+       └─ normalized editable regions
+            amount / time / merchant / balance / description / generic / ignore
+  -> inline-label cleanup / field parser
   -> prefilled transaction form
   -> user confirms/edits
 ```
 
-Region rectangles are stored as normalized 0..1 coordinates, so a template is not tied to one exact screenshot resolution. Named OCR templates are stored inside the encrypted `settings` record and therefore follow the user through Drive sync. The parser still remains heuristic; future bank-specific semantic profiles can build on top of the same spatial layer.
+Region rectangles are stored as normalized 0..1 coordinates, so a template is not tied to one exact screenshot resolution. Regions can be moved, resized, relabelled and configured to strip short inline labels such as `Nội dung:`. The teaching UI can turn any reconstructed OCR line into a semantic region, which lets a user explain bank-specific layouts without writing regex or code. Named OCR templates are stored inside the encrypted `settings` record and therefore follow the user through Drive sync.
+
+The date parser includes common numeric formats plus bank UI forms such as `29 thg 10, 2022 17:33`. The parser remains heuristic; future prebuilt bank-specific semantic profiles can build on top of the same spatial/teaching layer.
+
+### Multi-image OCR
+
+```text
+N screenshots
+  -> reuse one Tesseract worker
+  -> OCR sequentially (bounded memory)
+  -> one transaction draft per image
+  -> semantic duplicate check against local transactions + earlier drafts in the same OCR batch
+  -> review queue (edit / include / skip)
+  -> encrypt one source image per accepted transaction
+  -> bulk-save accepted transaction records
+```
+
+Semantic duplicate detection is separate from synchronization conflict resolution. Sync conflicts compare versions of the same UUID. OCR duplicate detection compares different transaction UUIDs that have matching amount/account/time and similar recipient/description text.
 
 The OCR dependency is code-split: the transaction modal is lazy-loaded and Tesseract itself is imported only when OCR is actually requested. This keeps normal navigation lighter.
 
@@ -98,3 +118,12 @@ F5 / reload
 That last ordering is important on a new device: remote records are pulled before local defaults are created, preventing duplicate seed accounts/categories and ensuring desktop-created transactions appear on mobile immediately after unlock.
 
 O-Wallet also binds a local vault to the Google account used for sync. A mismatched account is blocked, and a different remote vault is never overwritten automatically.
+
+
+## Batch and recurring transaction materialization
+
+O-Wallet does not require a server-side scheduler. Multiple-date and recurring input is materialized on the client into normal encrypted transaction records immediately. A batch identifier is stored as optional metadata so related generated records can be recognized later.
+
+Future records sync like any other record but are **not effective** for balance, budget, dashboard, or analytics calculations until `occurredAt <= current device time`. The UI refreshes its current-time boundary periodically and when the tab regains focus.
+
+Batch persistence uses `WalletRepository.putMany()` with encrypted chunks to avoid triggering a full repository refresh and Drive sync for every generated record.

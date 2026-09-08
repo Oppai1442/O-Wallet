@@ -1,9 +1,11 @@
 import type { Category, Transaction } from '../types'
+import { effectiveTransactions } from './scheduling'
 
 export type RangeKey = '7d' | '30d' | '3m' | '6m' | '1y' | 'all'
 
-export function rangeStart(range: RangeKey, transactions: Transaction[]) {
-  const now = new Date()
+export function rangeStart(range: RangeKey, transactions: Transaction[], nowMs = Date.now()) {
+  const now = new Date(nowMs)
+  const effective = effectiveTransactions(transactions, nowMs)
   switch (range) {
     case '7d': return new Date(now.getTime() - 7 * 86_400_000)
     case '30d': return new Date(now.getTime() - 30 * 86_400_000)
@@ -11,15 +13,15 @@ export function rangeStart(range: RangeKey, transactions: Transaction[]) {
     case '6m': return new Date(now.getFullYear(), now.getMonth() - 6, now.getDate())
     case '1y': return new Date(now.getFullYear() - 1, now.getMonth(), now.getDate())
     case 'all': {
-      const earliest = transactions.reduce<number>((min, item) => Math.min(min, new Date(item.occurredAt).getTime()), Date.now())
+      const earliest = effective.reduce<number>((min, item) => Math.min(min, new Date(item.occurredAt).getTime()), Date.now())
       return new Date(earliest)
     }
   }
 }
 
-export function filteredTransactions(transactions: Transaction[], range: RangeKey) {
-  const start = rangeStart(range, transactions).getTime()
-  return transactions.filter((item) => !item.deleted && new Date(item.occurredAt).getTime() >= start)
+export function filteredTransactions(transactions: Transaction[], range: RangeKey, now = Date.now()) {
+  const start = rangeStart(range, transactions, now).getTime()
+  return effectiveTransactions(transactions, now).filter((item) => new Date(item.occurredAt).getTime() >= start)
 }
 
 export function summarize(transactions: Transaction[]) {

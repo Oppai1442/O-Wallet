@@ -4,6 +4,7 @@ import { useWallet } from '../WalletContext'
 import { accountDisplayName, categoryDisplayName, useI18n, type Language } from '../i18n'
 import { bytesToHuman, formatMoney } from '../lib/format'
 import { accountBalance } from '../lib/finance'
+import { useCurrentTime } from '../lib/useCurrentTime'
 import { findExistingDriveLayout, openDriveFolderUrl } from '../lib/drive'
 import type {
   Account,
@@ -72,9 +73,10 @@ export function Settings() {
       .catch(() => setDriveFolder(undefined))
   }, [googleSession, lastSync])
 
+  const now = useCurrentTime()
   const accountBalances = useMemo(
-    () => accounts.map((account) => ({ account, balance: accountBalance(account, transactions) })),
-    [accounts, transactions],
+    () => accounts.map((account) => ({ account, balance: accountBalance(account, transactions, now) })),
+    [accounts, transactions, now],
   )
   const expenseCategories = categories.filter((category) => category.kind !== 'income')
   const budgets = settings?.budgets ?? []

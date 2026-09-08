@@ -62,6 +62,31 @@ export class WalletRepository {
     return row
   }
 
+  async putMany<T extends WalletEntity>(entities: T[]) {
+    if (entities.length === 0) return []
+    const deviceId = await getDeviceId()
+    const allRows: EncryptedRecordRow[] = []
+    const chunkSize = 250
+
+    for (let offset = 0; offset < entities.length; offset += chunkSize) {
+      const chunk = entities.slice(offset, offset + chunkSize)
+      const existing = await db.records.bulkGet(chunk.map((entity) => entity.id))
+      const rows = await Promise.all(chunk.map(async (entity, index) => ({
+        id: entity.id,
+        kind: recordKind(entity),
+        version: (existing[index]?.version ?? 0) + 1,
+        updatedAt: entity.updatedAt,
+        deviceId,
+        deleted: entity.deleted,
+        payload: await encryptJson(this.key, entity),
+      } satisfies EncryptedRecordRow)))
+      await db.records.bulkPut(rows)
+      allRows.push(...rows)
+    }
+
+    return allRows
+  }
+
   async tombstoneTransaction(id: string) {
     const transaction = await this.get<Transaction>(id)
     if (!transaction) return

@@ -4,7 +4,7 @@ O-Wallet is a private, local-first expense tracker built as a static PWA.
 
 **No O-Wallet runtime backend is required.** The production deployment is static HTML/CSS/JS. The browser performs OCR, encryption, analytics and sync; encrypted cloud data is stored in the user's own Google Drive.
 
-Current release: **v0.4.0**
+Current release: **v0.6.0**
 
 ## Highlights
 
@@ -19,10 +19,16 @@ Current release: **v0.4.0**
 - Optional per-device remembered vault unlock (15 minutes to 30 days); default remains password-on-reload.
 - Local account switching clears only browser-side O-Wallet data and never deletes the Drive folder.
 - Tesseract.js OCR runs in the browser with Vietnamese + English recognition assets and can parse user-selected spatial regions.
+- OCR regions are editable after creation: move, resize, change semantic field, and optionally strip inline labels such as `Nội dung:` / `Recipient:`.
+- OCR teaching mode lists detected text lines and lets the user explain what each line represents; those semantic mappings become reusable spatial regions.
 - OCR region templates can be named, encrypted in synced settings and reused across devices.
+- Multi-image OCR creates one draft transaction per screenshot, provides a review/repair queue, and saves selected drafts in one pass.
+- Semantic duplicate detection warns about likely duplicate OCR imports; exact matches are skipped by default until the user explicitly re-selects them.
 - Screenshot bytes are encrypted directly; images are **not** converted to base64 before encryption.
 - Dashboard and analytics with range filters, cash-flow charts, category pie charts and monthly budget progress.
 - Advanced transaction search/filtering, tags, edit and duplicate actions.
+- Batch transaction creation: pick many calendar dates in one pass with one shared time.
+- Recurring batch generation by weekday through a chosen end date. Future generated transactions are stored and synced immediately, but balances, budgets and analytics ignore them until their occurrence time.
 - Decrypted JSON/CSV export is available as an explicit local action.
 - Privacy Policy and Terms of Service pages included for public OAuth deployments.
 
@@ -64,7 +70,10 @@ Implemented:
 - per-user Google Drive folder creation and encrypted binary sync;
 - expense, income and transfer transactions;
 - multiple accounts and custom categories;
-- local OCR screenshot import with heuristic transaction prefill;
+- local OCR screenshot import with heuristic transaction prefill, inline-label cleanup and common Vietnamese bank date formats;
+- OCR teaching workflow for assigning detected lines to amount/time/recipient/balance/description semantics;
+- editable OCR regions with move/resize/relabel controls;
+- multi-image OCR review queue with one transaction per image and semantic duplicate warnings;
 - encrypted image preservation and viewer;
 - dashboard and analytics;
 - light / dark / system themes;
@@ -83,7 +92,7 @@ Implemented:
 
 Still intentionally early-stage / needs hardening before serious public use:
 
-- bank-specific semantic pattern packs beyond the generic spatial region templates;
+- bank-specific prebuilt semantic pattern packs beyond user-created templates;
 - import/restore from decrypted JSON/CSV exports;
 - automated integration tests against Google Drive;
 - password-change and recovery-key rotation flows;
@@ -446,6 +455,15 @@ ARCHITECTURE.md
 
 Giao diện hỗ trợ **Tiếng Việt / English**. Phần tiếng Việt dùng cách diễn đạt trung lập, phù hợp cho ứng dụng public.
 
+## v0.5.0 notes
+
+- Add transaction now supports **Once**, **Multiple dates**, and **Repeat** creation modes.
+- Multiple-date mode uses a built-in multi-select calendar and one shared time for all selected dates.
+- Repeat mode selects weekdays, a start date, an end date and a shared time, then materializes the matching transactions immediately.
+- Batch writes are encrypted and committed in chunks, followed by one refresh/sync notification instead of one refresh per record.
+- Future transactions remain visible in the transaction list with a Future/Scheduled badge, but are excluded from balances, budgets, dashboard summaries and analytics until their occurrence time passes.
+- Current-time calculations refresh periodically and on tab focus/visibility changes, so a scheduled transaction becomes effective without requiring a full page reload.
+
 ## v0.4.0 notes
 
 This release expands the app beyond the initial core:
@@ -458,3 +476,14 @@ This release expands the app beyond the initial core:
 - region templates live inside encrypted `settings`, so a layout created on one device can follow the user through Drive sync;
 - preferences such as language, theme, defaults and preferred remember durations are stored in encrypted synced settings. Actual OAuth tokens and remembered DEKs remain device-local by design;
 - monthly category budgets, tags, advanced transaction filtering, edit/duplicate actions and local JSON/CSV export were added.
+
+## v0.6.0 OCR workflow notes
+
+For irregular bank layouts, O-Wallet now supports two complementary ways to teach the parser:
+
+1. **Spatial regions** — draw a rectangle on the screenshot and assign it to Amount, Time, Recipient, Balance, Description, Generic context, or Ignore. Existing rectangles can be moved/resized/relabelled.
+2. **Explain OCR results** — run OCR first, then assign a semantic meaning to each detected OCR line. O-Wallet converts that line's bounding box into a normalized region. This is useful for text such as `Nội dung: gửi xe` or bank-specific date renderings such as `29 thg 10, 2022 17:33`.
+
+Field regions strip short inline labels by default, so a region containing `Nội dung: gửi xe` produces `gửi xe` rather than storing the label itself. This behavior can be disabled per region.
+
+Selecting multiple images exposes **Batch OCR**. OCR is processed sequentially with one reusable Tesseract worker, producing one editable draft per image. Existing wallet transactions **and earlier drafts in the same batch** are checked for semantic duplicates using amount/account/time plus recipient/description similarity. Exact-looking matches are deselected by default. This is distinct from Drive synchronization conflicts: sync conflict resolution handles competing versions of the same UUID, while OCR duplicate detection looks for separate transaction UUIDs that appear to represent the same real-world transaction.

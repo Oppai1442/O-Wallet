@@ -1,5 +1,13 @@
 import type { Worker } from 'tesseract.js'
-import type { OcrBox, OcrField, OcrRegion, OcrResult, ParsedTransactionCandidate, TransactionType } from '../types'
+import type {
+  OcrBox,
+  OcrDetectedLine,
+  OcrField,
+  OcrRegion,
+  OcrResult,
+  ParsedTransactionCandidate,
+  TransactionType,
+} from '../types'
 
 let workerPromise: Promise<Worker> | undefined
 let progressSink: ((progress: number, status: string) => void) | undefined
@@ -89,24 +97,104 @@ function normalizeLine(line: string) {
   return line.replace(/\s+/g, ' ').trim()
 }
 
-export function parseDateTimeText(text: string) {
-  const patterns = [
-    /(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+|,\s*)(\d{1,2}):(\d{2})(?::(\d{2}))?/,
-    /(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s+|,\s*)(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/,
-  ]
+const LABEL_PATTERNS: Record<OcrField, RegExp[]> = {
+  amount: [
+    /^(?:số\s*tiền|so\s*tien|amount|giá\s*trị|gia\s*tri|transaction\s*amount|số\s*tiền\s*giao\s*dịch)\s*[:：\-–—]?\s*/i,
+  ],
+  occurredAt: [
+    /^(?:thời\s*gian|thoi\s*gian|ngày\s*giao\s*dịch|ngay\s*giao\s*dich|transaction\s*(?:date|time)|date\s*&?\s*time|ngày|ngay)\s*[:：\-–—]?\s*/i,
+  ],
+  merchant: [
+    /^(?:tên\s*người\s*nhận|ten\s*nguoi\s*nhan|người\s*nhận|nguoi\s*nhan|recipient|beneficiary|merchant|đơn\s*vị|don\s*vi|người\s*thụ\s*hưởng|nguoi\s*thu\s*huong)\s*[:：\-–—]?\s*/i,
+  ],
+  balanceAfter: [
+    /^(?:số\s*dư(?:\s*sau\s*giao\s*dịch)?|so\s*du(?:\s*sau\s*giao\s*dich)?|balance(?:\s*after)?|available\s*balance)\s*[:：\-–—]?\s*/i,
+  ],
+  description: [
+    /^(?:nội\s*dung(?:\s*chuyển\s*khoản)?|noi\s*dung(?:\s*chuyen\s*khoan)?|description|remark|message|memo|diễn\s*giải|dien\s*giai)\s*[:：\-–—]?\s*/i,
+  ],
+  generic: [],
+  ignore: [],
+}
 
-  let match = text.match(patterns[0])
+export function stripFieldLabel(raw: string, field: OcrField) {
+  const normalized = normalizeLine(raw)
+  if (!normalized) return normalized
+  for (const pattern of LABEL_PATTERNS[field]) {
+    const stripped = normalized.replace(pattern, '').trim()
+    if (stripped !== normalized) return stripped
+  }
+  return normalized
+}
+
+function extractLabeledValue(lines: string[], index: number, field: OcrField) {
+  const current = lines[index] ?? ''
+  const stripped = stripFieldLabel(current, field)
+  if (stripped && stripped !== current) return stripped
+  const next = lines[index + 1]
+  return next ? stripFieldLabel(next, field) : undefined
+}
+
+function validDate(year: number, month: number, day: number, hour: number, minute: number, second = 0) {
+  const date = new Date(year, month - 1, day, hour, minute, second)
+  if (
+    date.getFullYear() !== year
+    || date.getMonth() !== month - 1
+    || date.getDate() !== day
+    || date.getHours() !== hour
+    || date.getMinutes() !== minute
+  ) return undefined
+  return date.toISOString()
+}
+
+const MONTH_NAMES: Record<string, number> = {
+  jan: 1, january: 1,
+  feb: 2, february: 2,
+  mar: 3, march: 3,
+  apr: 4, april: 4,
+  may: 5,
+  jun: 6, june: 6,
+  jul: 7, july: 7,
+  aug: 8, august: 8,
+  sep: 9, sept: 9, september: 9,
+  oct: 10, october: 10,
+  nov: 11, november: 11,
+  dec: 12, december: 12,
+}
+
+export function parseDateTimeText(text: string) {
+  const source = normalizeLine(text)
+  let match = source.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})(?:\s+|,\s*)(\d{1,2}):(\d{2})(?::(\d{2}))?/)
   if (match) {
     const [, day, month, year, hour, minute, second = '0'] = match
-    const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second))
-    if (!Number.isNaN(date.getTime())) return date.toISOString()
+    return validDate(Number(year), Number(month), Number(day), Number(hour), Number(minute), Number(second))
   }
 
-  match = text.match(patterns[1])
+  match = source.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s+|,\s*)(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/)
   if (match) {
     const [, hour, minute, second = '0', day, month, year] = match
-    const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second))
-    if (!Number.isNaN(date.getTime())) return date.toISOString()
+    return validDate(Number(year), Number(month), Number(day), Number(hour), Number(minute), Number(second))
+  }
+
+  // Vietnamese bank UIs commonly render dates as "29 thg 10, 2022 17:33".
+  match = source.match(/(\d{1,2})\s*(?:thg|tháng|thang)\s*(\d{1,2})\s*,?\s*(\d{4})\s*(?:,|\s)\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/i)
+  if (match) {
+    const [, day, month, year, hour, minute, second = '0'] = match
+    return validDate(Number(year), Number(month), Number(day), Number(hour), Number(minute), Number(second))
+  }
+
+  match = source.match(/(\d{1,2})\s+([A-Za-z]{3,9})\s*,?\s*(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/)
+  if (match) {
+    const [, day, monthName, year, hour, minute, second = '0'] = match
+    const month = MONTH_NAMES[monthName.toLowerCase()]
+    if (month) return validDate(Number(year), month, Number(day), Number(hour), Number(minute), Number(second))
+  }
+
+  match = source.match(/([A-Za-z]{3,9})\s+(\d{1,2})\s*,?\s*(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/)
+  if (match) {
+    const [, monthName, day, year, hour, minute, second = '0'] = match
+    const month = MONTH_NAMES[monthName.toLowerCase()]
+    if (month) return validDate(Number(year), month, Number(day), Number(hour), Number(minute), Number(second))
   }
   return undefined
 }
@@ -150,11 +238,11 @@ export function parseTransactionFromOcr(result: OcrResult): ParsedTransactionCan
 
   const occurredAt = parseDateTimeText(result.text)
 
-  const merchantIndex = lower.findIndex((line) => /người nhận|nguoi nhan|merchant|đơn vị|don vi|recipient|đến|den:/.test(line))
-  const merchant = merchantIndex >= 0 ? lines[merchantIndex + 1] || lines[merchantIndex] : undefined
+  const merchantIndex = lower.findIndex((line) => /tên người nhận|ten nguoi nhan|người nhận|nguoi nhan|merchant|đơn vị|don vi|recipient|beneficiary|người thụ hưởng|nguoi thu huong/.test(line))
+  const merchant = merchantIndex >= 0 ? extractLabeledValue(lines, merchantIndex, 'merchant') : undefined
 
-  const descIndex = lower.findIndex((line) => /nội dung|noi dung|description|remark|message/.test(line))
-  const description = descIndex >= 0 ? lines[descIndex + 1] || lines[descIndex] : undefined
+  const descIndex = lower.findIndex((line) => /nội dung|noi dung|description|remark|message|memo|diễn giải|dien giai/.test(line))
+  const description = descIndex >= 0 ? extractLabeledValue(lines, descIndex, 'description') : undefined
 
   return {
     type,
@@ -176,7 +264,13 @@ function regionBox(region: OcrRegion, width: number, height: number) {
   }
 }
 
-function textFromBoxes(boxes: OcrBox[]) {
+interface GroupedLine {
+  y: number
+  height: number
+  words: OcrBox[]
+}
+
+function groupBoxesIntoLines(boxes: OcrBox[]) {
   const sorted = [...boxes].sort((a, b) => {
     const ay = (a.bbox.y0 + a.bbox.y1) / 2
     const by = (b.bbox.y0 + b.bbox.y1) / 2
@@ -184,7 +278,7 @@ function textFromBoxes(boxes: OcrBox[]) {
     if (Math.abs(ay - by) > averageHeight * 0.55) return ay - by
     return a.bbox.x0 - b.bbox.x0
   })
-  const lines: Array<{ y: number; height: number; words: OcrBox[] }> = []
+  const lines: GroupedLine[] = []
   for (const box of sorted) {
     const y = (box.bbox.y0 + box.bbox.y1) / 2
     const h = Math.max(1, box.bbox.y1 - box.bbox.y0)
@@ -195,11 +289,36 @@ function textFromBoxes(boxes: OcrBox[]) {
       line.height = Math.max(line.height, h)
     } else lines.push({ y, height: h, words: [box] })
   }
-  return lines
-    .sort((a, b) => a.y - b.y)
-    .map((line) => line.words.sort((a, b) => a.bbox.x0 - b.bbox.x0).map((word) => word.text).join(' '))
-    .join('\n')
-    .trim()
+  return lines.sort((a, b) => a.y - b.y)
+}
+
+function lineText(line: GroupedLine) {
+  return line.words.sort((a, b) => a.bbox.x0 - b.bbox.x0).map((word) => word.text).join(' ').trim()
+}
+
+function textFromBoxes(boxes: OcrBox[]) {
+  return groupBoxesIntoLines(boxes).map(lineText).filter(Boolean).join('\n').trim()
+}
+
+export function buildDetectedLines(result: OcrResult, width: number, height: number): OcrDetectedLine[] {
+  if (!width || !height) return []
+  return groupBoxesIntoLines(result.boxes).map((line, index) => {
+    const words = line.words
+    const x0 = Math.min(...words.map((word) => word.bbox.x0))
+    const y0 = Math.min(...words.map((word) => word.bbox.y0))
+    const x1 = Math.max(...words.map((word) => word.bbox.x1))
+    const y1 = Math.max(...words.map((word) => word.bbox.y1))
+    const confidence = words.reduce((sum, word) => sum + word.confidence, 0) / Math.max(1, words.length)
+    return {
+      id: `line-${index}-${Math.round(x0)}-${Math.round(y0)}`,
+      text: lineText(line),
+      confidence,
+      x: Math.max(0, x0 / width),
+      y: Math.max(0, y0 / height),
+      width: Math.min(1, Math.max(0, (x1 - x0) / width)),
+      height: Math.min(1, Math.max(0, (y1 - y0) / height)),
+    }
+  }).filter((line) => line.text)
 }
 
 export function extractRegionTexts(result: OcrResult, regions: OcrRegion[], width: number, height: number) {
@@ -212,6 +331,13 @@ export function extractRegionTexts(result: OcrResult, regions: OcrRegion[], widt
     })
     return { region, text: textFromBoxes(boxes) }
   })
+}
+
+function cleanRegionText(text: string, region: OcrRegion) {
+  const flattened = normalizeLine(text.split(/\r?\n/).filter(Boolean).join(' '))
+  if (!flattened) return flattened
+  if (region.stripLabel === false || region.field === 'generic' || region.field === 'ignore') return flattened
+  return stripFieldLabel(flattened, region.field)
 }
 
 export function parseTransactionFromRegions(
@@ -228,23 +354,29 @@ export function parseTransactionFromRegions(
     .filter(Boolean)
     .join('\n')
   const base = selectedText ? parseTransactionFromOcr({ ...result, text: selectedText }) : parseTransactionFromOcr(result)
-  const first = (field: OcrField) => extracted.find((item) => item.region.field === field && item.text)?.text
-  const amountText = first('amount')
-  const timeText = first('occurredAt')
-  const merchantText = first('merchant')
-  const balanceText = first('balanceAfter')
-  const descriptionText = first('description')
+  const fieldText = (field: OcrField) => extracted
+    .filter((item) => item.region.field === field && item.text)
+    .map((item) => cleanRegionText(item.text, item.region))
+    .filter(Boolean)
+    .join(' ')
+    .trim() || undefined
+
+  const amountText = fieldText('amount')
+  const timeText = fieldText('occurredAt')
+  const merchantText = fieldText('merchant')
+  const balanceText = fieldText('balanceAfter')
+  const descriptionText = fieldText('description')
 
   return {
     ...base,
     amount: amountText ? parseMoneyText(amountText) ?? base.amount : base.amount,
     occurredAt: timeText ? parseDateTimeText(timeText) ?? base.occurredAt : base.occurredAt,
-    merchant: merchantText ? normalizeLine(merchantText.split(/\r?\n/).filter(Boolean).join(' ')) : base.merchant,
+    merchant: merchantText || base.merchant,
     balanceAfter: balanceText ? parseMoneyText(balanceText) ?? base.balanceAfter : base.balanceAfter,
-    description: descriptionText ? normalizeLine(descriptionText.split(/\r?\n/).filter(Boolean).join(' ')) : base.description,
+    description: descriptionText || base.description,
     rawText: extracted
       .filter((item) => item.region.field !== 'ignore')
-      .map((item) => `[${item.region.field}] ${item.text}`)
+      .map((item) => `[${item.region.field}] ${cleanRegionText(item.text, item.region)}`)
       .join('\n\n') || result.text,
   }
 }

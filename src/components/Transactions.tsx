@@ -3,6 +3,8 @@ import { Copy, Image as ImageIcon, Pencil, Plus, Search, SlidersHorizontal, Tras
 import { useWallet } from '../WalletContext'
 import { accountDisplayName, categoryDisplayName, useI18n } from '../i18n'
 import { formatDateTime, formatMoney } from '../lib/format'
+import { isFutureTransaction } from '../lib/scheduling'
+import { useCurrentTime } from '../lib/useCurrentTime'
 import type { Transaction, TransactionType } from '../types'
 import { Badge, Button, Card, EmptyState, Input, Label, Select } from './ui'
 import { ImageViewer } from './ImageViewer'
@@ -14,6 +16,7 @@ type SortKey = 'newest' | 'oldest' | 'amountHigh' | 'amountLow'
 export function Transactions() {
   const { transactions, categories, accounts, deleteTransaction } = useWallet()
   const { t, locale } = useI18n()
+  const now = useCurrentTime()
   const [search, setSearch] = useState('')
   const [type, setType] = useState<'all' | TransactionType>('all')
   const [accountId, setAccountId] = useState('all')
@@ -114,6 +117,7 @@ export function Transactions() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="truncate font-bold text-slate-900 dark:text-white">{tx.merchant || tx.description || t('transaction.noDescription')}</span>
                     <Badge tone={tx.type === 'income' ? 'green' : tx.type === 'expense' ? 'red' : 'slate'}>{t(`transaction.${tx.type}`)}</Badge>
+                    {isFutureTransaction(tx, now) && <Badge tone="indigo">{t('transactions.scheduled')}</Badge>}
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500"><span>{formatDateTime(tx.occurredAt, locale)}</span><span>{categoryMap.get(tx.categoryId) ?? t('common.other')}</span><span>{accountMap.get(tx.accountId) ?? t('transactions.unknownAccount')}</span></div>
                   {(tx.tags?.length ?? 0) > 0 && <div className="mt-2 flex flex-wrap gap-1">{tx.tags?.map((tag) => <span key={tag} className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300">#{tag}</span>)}</div>}
