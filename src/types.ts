@@ -44,6 +44,35 @@ export interface BudgetConfig {
   monthlyLimit: number
 }
 
+export interface AccountCatalogue {
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TransactionRule {
+  id: string
+  name: string
+  enabled: boolean
+  merchantContains?: string
+  descriptionContains?: string
+  amountEquals?: number
+  transactionType?: TransactionType
+  categoryId?: string
+  accountId?: string
+  createdAt: string
+  updatedAt: string
+}
+
+
+export interface ExternalImportTrace {
+  adapterId: string
+  sourceId: string
+  sourceRowIds?: string[]
+  sourceFileName?: string
+}
+
 export interface TransactionBatchInfo {
   id: string
   mode: 'multi-date' | 'recurring' | 'ocr-batch'
@@ -66,6 +95,7 @@ export interface Transaction {
   note?: string
   tags?: string[]
   batch?: TransactionBatchInfo
+  importSource?: ExternalImportTrace
   imageIds: string[]
   createdAt: string
   updatedAt: string
@@ -75,6 +105,7 @@ export interface Transaction {
 export interface Account {
   id: string
   name: string
+  catalogueId?: string
   currency: string
   openingBalance: number
   archived: boolean
@@ -86,6 +117,9 @@ export interface Account {
 export interface Category {
   id: string
   name: string
+  /** Hierarchy is unlimited. Missing nodeType on old data is treated as an item. */
+  nodeType?: 'group' | 'item'
+  parentId?: string
   icon: string
   kind: 'expense' | 'income' | 'both'
   archived: boolean
@@ -107,6 +141,8 @@ export interface AppSettings {
   rememberDefaults?: DeviceSessionPreferences
   ocrTemplates?: OcrTemplate[]
   budgets?: BudgetConfig[]
+  accountCatalogues?: AccountCatalogue[]
+  transactionRules?: TransactionRule[]
   transactionDefaults?: {
     accountId?: string
     categoryId?: string

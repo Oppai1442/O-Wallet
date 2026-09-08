@@ -67,12 +67,12 @@ export function Onboarding() {
       <div className="absolute right-4 top-4 sm:right-6 sm:top-6"><LanguageSwitcher compact /></div>
       <div className="grid w-full gap-8 lg:grid-cols-[1fr_1.05fr]">
         <section className="flex flex-col justify-center">
-          <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"><Wallet size={28} /></div>
-          <h1 className="text-4xl font-black tracking-tight text-slate-950 dark:text-white sm:text-5xl">O-Wallet</h1>
-          <p className="mt-4 max-w-xl text-base leading-7 text-slate-600 dark:text-slate-300">{t('onboarding.tagline')}</p>
-          <div className="mt-7 grid gap-3 text-sm text-slate-600 dark:text-slate-300 sm:grid-cols-2 lg:grid-cols-1">
+          <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/20"><Wallet size={28} /></div>
+          <h1 className="text-4xl font-semibold tracking-tight text-stone-950 dark:text-white sm:text-5xl">O-Wallet</h1>
+          <p className="mt-4 max-w-xl text-base leading-7 text-stone-600 dark:text-stone-300">{t('onboarding.tagline')}</p>
+          <div className="mt-7 grid gap-3 text-sm text-stone-600 dark:text-stone-300 sm:grid-cols-2 lg:grid-cols-1">
             <div className="flex items-center gap-3"><ShieldCheck className="text-emerald-500" size={20} /> {t('onboarding.noBackend')}</div>
-            <div className="flex items-center gap-3"><KeyRound className="text-indigo-500" size={20} /> {t('onboarding.passwordLocal')}</div>
+            <div className="flex items-center gap-3"><KeyRound className="text-blue-500" size={20} /> {t('onboarding.passwordLocal')}</div>
             <div className="flex items-center gap-3"><CloudDownload className="text-sky-500" size={20} /> {t('onboarding.crossDevice')}</div>
           </div>
           <Button variant="secondary" className="mt-8 w-fit" onClick={restore} disabled={!googleConfigured || busy}>
@@ -82,24 +82,24 @@ export function Onboarding() {
         </section>
 
         <Card className="p-5 sm:p-7">
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">{t('onboarding.createTitle')}</h2>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('onboarding.createHint')}</p>
+          <h2 className="text-xl font-bold text-stone-900 dark:text-white">{t('onboarding.createTitle')}</h2>
+          <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{t('onboarding.createHint')}</p>
 
           <div className="mt-6 grid gap-4 sm:grid-cols-2">
             <div><Label>{t('onboarding.password')}</Label><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t('onboarding.passwordPlaceholder')} /></div>
             <div><Label>{t('onboarding.confirmPassword')}</Label><Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} /></div>
           </div>
 
-          <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 dark:border-indigo-500/20 dark:bg-indigo-500/10">
+          <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-500/20 dark:bg-blue-500/10">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-xs font-bold uppercase tracking-wide text-indigo-500">{t('onboarding.recoveryKey')}</div>
-                <div className="mt-1 break-all font-mono text-sm font-semibold text-slate-900 dark:text-slate-100">{recoveryKey}</div>
+                <div className="text-xs font-bold uppercase tracking-wide text-blue-500">{t('onboarding.recoveryKey')}</div>
+                <div className="mt-1 break-all font-mono text-sm font-semibold text-stone-900 dark:text-stone-100">{recoveryKey}</div>
               </div>
               <div className="flex shrink-0 flex-col gap-1 sm:flex-row"><Button variant="ghost" onClick={async () => { await navigator.clipboard.writeText(recoveryKey); setCopied(true); setSavedRecovery(true) }}><Copy size={17} /> {copied ? t('common.copied') : t('common.copy')}</Button><Button variant="ghost" onClick={downloadRecovery}><Download size={17} /> {t('common.file')}</Button></div>
             </div>
-            <p className="mt-3 text-xs leading-5 text-slate-600 dark:text-slate-400">{t('onboarding.recoveryWarning')}</p>
-            <label className="mt-3 flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300"><input type="checkbox" checked={savedRecovery} onChange={(e) => setSavedRecovery(e.target.checked)} className="h-4 w-4 rounded" /> {t('onboarding.recoverySaved')}</label>
+            <p className="mt-3 text-xs leading-5 text-stone-600 dark:text-stone-400">{t('onboarding.recoveryWarning')}</p>
+            <label className="mt-3 flex items-center gap-2 text-sm font-medium text-stone-700 dark:text-stone-300"><input type="checkbox" checked={savedRecovery} onChange={(e) => setSavedRecovery(e.target.checked)} className="h-4 w-4 rounded" /> {t('onboarding.recoverySaved')}</label>
           </div>
 
           <div className="mt-5 grid gap-4">

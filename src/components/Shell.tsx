@@ -39,15 +39,15 @@ export function Shell() {
   ]
 
   return (
-    <div className="min-h-[100dvh] bg-transparent text-slate-900 dark:text-slate-100">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-20 border-r border-slate-200/80 bg-white/90 p-3 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/90 md:flex md:flex-col xl:w-64 xl:p-4">
+    <div className="min-h-[100dvh] bg-transparent text-stone-900 dark:text-stone-100">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-20 border-r border-stone-200/80 bg-white p-3 dark:border-stone-800 dark:bg-stone-950 md:flex md:flex-col xl:w-64 xl:p-4">
         <div className="flex items-center justify-center gap-3 py-2 xl:justify-start xl:px-2">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white"><Wallet size={21} /></div>
-          <div className="hidden xl:block"><div className="font-black tracking-tight">O-Wallet</div><div className="text-xs text-slate-500">{t('app.shortTagline')}</div></div>
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-900 dark:border-stone-700 dark:bg-stone-900 dark:text-white"><Wallet size={21} /></div>
+          <div className="hidden xl:block"><div className="font-semibold tracking-tight">O-Wallet</div><div className="text-xs text-stone-500">{t('app.shortTagline')}</div></div>
         </div>
         <nav className="mt-8 space-y-1">
           {nav.map((item) => (
-            <button key={item.id} title={item.label} onClick={() => setPage(item.id)} className={`flex w-full items-center justify-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition xl:justify-start ${page === item.id ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-900'}`}>
+            <button key={item.id} title={item.label} onClick={() => setPage(item.id)} className={`flex w-full items-center justify-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition xl:justify-start ${page === item.id ? 'bg-stone-100 text-stone-950 dark:bg-stone-900 dark:text-white' : 'text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-900'}`}>
               <item.icon size={18} /> <span className="hidden xl:inline">{item.label}</span>
             </button>
           ))}
@@ -59,10 +59,10 @@ export function Shell() {
       </aside>
 
       <div className="md:pl-20 xl:pl-64">
-        <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-[#f5f7fb]/88 px-4 py-3 backdrop-blur-xl dark:border-slate-800 dark:bg-[#0b0d12]/88 sm:px-6">
+        <header className="sticky top-0 z-30 border-b border-stone-200/70 bg-[#f7f7f5]/92 px-4 py-3 backdrop-blur-xl dark:border-stone-800 dark:bg-[#0c0c0b]/92 sm:px-6">
           <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-3">
-            <div className="flex items-center gap-2 md:hidden"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white"><Wallet size={19} /></div><span className="font-black">O-Wallet</span></div>
-            <div className="hidden min-w-0 truncate text-xs text-slate-500 md:block">
+            <div className="flex items-center gap-2 md:hidden"><div className="flex h-9 w-9 items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-900 dark:border-stone-700 dark:bg-stone-900 dark:text-white"><Wallet size={19} /></div><span className="font-semibold">O-Wallet</span></div>
+            <div className="hidden min-w-0 truncate text-xs text-stone-500 md:block">
               {googleConnectionState === 'connected' && googleSession && t('nav.driveConnected', { email: googleSession.user.email })}
               {googleConnectionState === 'reconnecting' && t('nav.driveReconnecting')}
               {googleConnectionState === 'attention' && t('nav.driveReconnectNeeded')}
@@ -79,8 +79,8 @@ export function Shell() {
 
         <main className="mx-auto max-w-[1500px] px-3 pb-8 pt-4 sm:px-5 sm:pt-5 lg:px-6"><Main page={page} /></main>
         <footer className="mx-auto max-w-[1500px] px-3 pb-28 sm:px-5 md:pb-8 lg:px-6">
-          <div className="flex items-center justify-center border-t border-slate-200/70 pt-5 text-xs text-slate-500 dark:border-slate-800">
-            <a href="https://oppai1442.github.io/all/" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-900 dark:hover:text-slate-200">
+          <div className="flex items-center justify-center border-t border-stone-200/70 pt-5 text-xs text-stone-500 dark:border-stone-800">
+            <a href="https://oppai1442.github.io/all/" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 transition hover:bg-stone-100 hover:text-stone-800 dark:hover:bg-stone-900 dark:hover:text-stone-200">
               <span className="font-semibold">{t('footer.projectHub')}</span>
               <span>·</span>
               <span>{t('footer.moreProjects')}</span>
@@ -90,10 +90,10 @@ export function Shell() {
         </footer>
       </div>
 
-      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-2 pt-2 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/95 md:hidden">
+      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-stone-200 bg-white/95 px-2 pt-2 backdrop-blur-xl dark:border-stone-800 dark:bg-stone-950/95 md:hidden">
         <div className="mx-auto grid max-w-lg grid-cols-5 gap-1">
           {nav.slice(0, 2).map((item) => <MobileNav key={item.id} active={page === item.id} icon={<item.icon size={19} />} label={item.label} onClick={() => setPage(item.id)} />)}
-          <button aria-label={t('nav.addTransaction')} onClick={() => setShowAdd(true)} className="mx-auto -mt-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"><Plus size={25} /></button>
+          <button aria-label={t('nav.addTransaction')} onClick={() => setShowAdd(true)} className="mx-auto -mt-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-stone-950 text-white shadow-lg shadow-stone-950/20 dark:bg-white dark:text-stone-950"><Plus size={25} /></button>
           {nav.slice(2).map((item) => <MobileNav key={item.id} active={page === item.id} icon={<item.icon size={19} />} label={item.label} onClick={() => setPage(item.id)} />)}
         </div>
       </nav>
@@ -104,5 +104,5 @@ export function Shell() {
 }
 
 function MobileNav({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) {
-  return <button onClick={onClick} className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-[10px] font-semibold ${active ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500'}`}>{icon}<span className="max-w-full truncate">{label}</span></button>
+  return <button onClick={onClick} className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-[10px] font-semibold ${active ? 'text-blue-600 dark:text-blue-400' : 'text-stone-500'}`}>{icon}<span className="max-w-full truncate">{label}</span></button>
 }

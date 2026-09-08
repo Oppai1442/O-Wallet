@@ -25,20 +25,20 @@ export function OcrTeachingPanel({
   ]
 
   return (
-    <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+    <div className="space-y-3 rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
       <div className="flex items-start gap-2">
-        <BrainCircuit className="mt-0.5 shrink-0 text-indigo-500" size={18} />
+        <BrainCircuit className="mt-0.5 shrink-0 text-blue-500" size={18} />
         <div className="min-w-0">
-          <div className="font-bold text-slate-800 dark:text-slate-100">{t('ocr.teachTitle')}</div>
-          <p className="mt-0.5 text-xs leading-5 text-slate-500">{t('ocr.teachHint')}</p>
+          <div className="font-bold text-stone-800 dark:text-stone-100">{t('ocr.teachTitle')}</div>
+          <p className="mt-0.5 text-xs leading-5 text-stone-500">{t('ocr.teachHint')}</p>
         </div>
       </div>
       <div className="max-h-80 space-y-2 overflow-auto pr-1">
         {lines.map((line) => (
-          <div key={line.id} className="grid min-w-0 gap-2 rounded-xl border border-slate-200 p-2.5 dark:border-slate-700 sm:grid-cols-[minmax(0,1fr)_190px] sm:items-center">
+          <div key={line.id} className="grid min-w-0 gap-2 rounded-xl border border-stone-200 p-2.5 dark:border-stone-700 sm:grid-cols-[minmax(0,1fr)_190px] sm:items-center">
             <div className="min-w-0">
-              <div className="break-words text-sm font-semibold text-slate-800 dark:text-slate-100">{line.text}</div>
-              <div className="mt-1 text-[11px] text-slate-400">{t('ocr.confidence', { value: Math.round(line.confidence) })}</div>
+              <div className="break-words text-sm font-semibold text-stone-800 dark:text-stone-100">{line.text}</div>
+              <div className="mt-1 text-[11px] text-stone-400">{t('ocr.confidence', { value: Math.round(line.confidence) })}</div>
             </div>
             <Select value={mappings[line.id] ?? ''} onChange={(e) => onMap(line, e.target.value as OcrField | '')}>
               {options.map((option) => <option key={option.value || 'none'} value={option.value}>{option.label}</option>)}

@@ -18,7 +18,8 @@ import { totalBalance } from '../lib/finance'
 import { formatCompactMoney, formatDateTime, formatMoney } from '../lib/format'
 import { effectiveTransactions } from '../lib/scheduling'
 import { useCurrentTime } from '../lib/useCurrentTime'
-import { categoryDisplayName, useI18n } from '../i18n'
+import { useI18n } from '../i18n'
+import { categoryPath } from '../lib/categories'
 import { Badge, Card, EmptyState, Select } from './ui'
 
 const PIE_COLORS = ['#6366f1', '#14b8a6', '#f59e0b', '#f43f5e', '#8b5cf6', '#06b6d4', '#84cc16', '#64748b']
@@ -33,7 +34,7 @@ export function Dashboard() {
   const filtered = useMemo(() => filteredTransactions(transactions, range, now), [transactions, range, now])
   const summary = useMemo(() => summarize(filtered), [filtered])
   const trend = useMemo(() => trendData(filtered, range, locale), [filtered, range, locale])
-  const pie = useMemo(() => categoryBreakdown(filtered, categories, (category) => categoryDisplayName(category, t), t('common.other')), [filtered, categories, t])
+  const pie = useMemo(() => categoryBreakdown(filtered, categories, (category) => categoryPath(category, categories), t('common.other')), [filtered, categories, t])
   const balance = useMemo(() => totalBalance(accounts, transactions, now), [accounts, transactions, now])
   const budgetRows = useMemo(() => {
     const budgets = settings?.budgets ?? []
@@ -50,14 +51,14 @@ export function Dashboard() {
       return {
         ...budget,
         spent,
-        name: category ? categoryDisplayName(category, t) : t('common.other'),
+        name: category ? categoryPath(category, categories) : t('common.other'),
         percent: budget.monthlyLimit > 0 ? Math.min(150, spent / budget.monthlyLimit * 100) : 0,
       }
     }).sort((a, b) => b.percent - a.percent)
   }, [settings?.budgets, currentTransactions, categories, t, now])
 
   const cards = [
-    { label: t('dashboard.balance'), value: balance, icon: WalletCards, tone: 'text-indigo-500' },
+    { label: t('dashboard.balance'), value: balance, icon: WalletCards, tone: 'text-blue-500' },
     { label: t('dashboard.income'), value: summary.income, icon: ArrowUpRight, tone: 'text-emerald-500' },
     { label: t('dashboard.expense'), value: summary.expense, icon: ArrowDownRight, tone: 'text-rose-500' },
     { label: t('dashboard.net'), value: summary.net, icon: PiggyBank, tone: summary.net >= 0 ? 'text-emerald-500' : 'text-rose-500' },
@@ -67,9 +68,9 @@ export function Dashboard() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">{t('dashboard.title')}</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('dashboard.subtitle')}</p>
-          {futureCount > 0 && <p className="mt-1 text-xs font-semibold text-indigo-500">{t('dashboard.futurePending', { count: futureCount })}</p>}
+          <h1 className="text-2xl font-semibold tracking-tight text-stone-950 dark:text-white">{t('dashboard.title')}</h1>
+          <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{t('dashboard.subtitle')}</p>
+          {futureCount > 0 && <p className="mt-1 text-xs font-semibold text-blue-500">{t('dashboard.futurePending', { count: futureCount })}</p>}
         </div>
         <Select className="w-36" value={range} onChange={(e) => setRange(e.target.value as RangeKey)}>
           <option value="7d">{t('range.7d')}</option>
@@ -81,30 +82,36 @@ export function Dashboard() {
         </Select>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {cards.map((item) => (
-          <Card className="p-4" key={item.label}>
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-500 dark:text-slate-400">{item.label}</div>
-              <item.icon className={item.tone} size={19} />
-            </div>
-            <div className="mt-3 text-xl font-black tracking-tight text-slate-950 dark:text-white">{formatMoney(item.value, 'VND', locale)}</div>
-          </Card>
-        ))}
-      </div>
+      <Card className="overflow-hidden">
+        <div className="grid lg:grid-cols-[1.25fr_2fr]">
+          <div className="border-b border-stone-100 p-5 sm:p-6 lg:border-b-0 lg:border-r dark:border-stone-800">
+            <div className="text-xs font-semibold uppercase tracking-[.14em] text-stone-400">{t('dashboard.balance')}</div>
+            <div className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-stone-950 dark:text-white sm:text-4xl">{formatMoney(balance, 'VND', locale)}</div>
+            <div className="mt-3 text-xs text-stone-500">{t('dashboard.selectedRange', { range: t(`range.${range}`) })}</div>
+          </div>
+          <div className="grid grid-cols-1 divide-y divide-stone-100 sm:grid-cols-3 sm:divide-x sm:divide-y-0 dark:divide-stone-800">
+            {cards.slice(1).map((item) => (
+              <div className="p-5" key={item.label}>
+                <div className="flex items-center gap-2 text-sm text-stone-500"><item.icon className={item.tone} size={17} />{item.label}</div>
+                <div className="mt-3 text-xl font-semibold tracking-tight text-stone-900 dark:text-stone-100">{formatMoney(item.value, 'VND', locale)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Card>
 
       {budgetRows.length > 0 && (
         <Card className="p-4 sm:p-5">
           <div className="flex flex-wrap items-end justify-between gap-2">
-            <div><div className="font-bold text-slate-900 dark:text-white">{t('dashboard.budgets')}</div><div className="text-xs text-slate-500">{t('dashboard.budgetsHint')}</div></div>
+            <div><div className="font-bold text-stone-900 dark:text-white">{t('dashboard.budgets')}</div><div className="text-xs text-stone-500">{t('dashboard.budgetsHint')}</div></div>
             <Badge>{t('settings.month')}</Badge>
           </div>
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {budgetRows.map((budget) => (
-              <div key={budget.id} className="rounded-2xl border border-slate-200 p-3 dark:border-slate-800">
-                <div className="flex items-center justify-between gap-3 text-sm"><span className="truncate font-bold text-slate-800 dark:text-slate-100">{budget.name}</span><span className={budget.percent >= 100 ? 'font-bold text-rose-600' : 'font-semibold text-slate-500'}>{Math.round(budget.percent)}%</span></div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className={`h-full rounded-full ${budget.percent >= 100 ? 'bg-rose-500' : budget.percent >= 80 ? 'bg-amber-500' : 'bg-indigo-500'}`} style={{ width: `${Math.min(100, budget.percent)}%` }} /></div>
-                <div className="mt-2 text-xs text-slate-500">{formatMoney(budget.spent, settings?.defaultCurrency ?? 'VND', locale)} / {formatMoney(budget.monthlyLimit, settings?.defaultCurrency ?? 'VND', locale)}</div>
+              <div key={budget.id} className="rounded-2xl border border-stone-200 p-3 dark:border-stone-800">
+                <div className="flex items-center justify-between gap-3 text-sm"><span className="truncate font-bold text-stone-800 dark:text-stone-100">{budget.name}</span><span className={budget.percent >= 100 ? 'font-bold text-rose-600' : 'font-semibold text-stone-500'}>{Math.round(budget.percent)}%</span></div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800"><div className={`h-full rounded-full ${budget.percent >= 100 ? 'bg-rose-500' : budget.percent >= 80 ? 'bg-amber-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, budget.percent)}%` }} /></div>
+                <div className="mt-2 text-xs text-stone-500">{formatMoney(budget.spent, settings?.defaultCurrency ?? 'VND', locale)} / {formatMoney(budget.monthlyLimit, settings?.defaultCurrency ?? 'VND', locale)}</div>
               </div>
             ))}
           </div>
@@ -114,8 +121,8 @@ export function Dashboard() {
       <div className="grid gap-5 xl:grid-cols-[1.7fr_1fr]">
         <Card className="p-4 sm:p-5">
           <div className="mb-4">
-            <div className="font-bold text-slate-900 dark:text-white">{t('dashboard.cashflow')}</div>
-            <div className="text-xs text-slate-500">{t('dashboard.selectedRange', { range: t(`range.${range}`) })}</div>
+            <div className="font-bold text-stone-900 dark:text-white">{t('dashboard.cashflow')}</div>
+            <div className="text-xs text-stone-500">{t('dashboard.selectedRange', { range: t(`range.${range}`) })}</div>
           </div>
           {trend.length ? (
             <div className="h-72 w-full">
@@ -138,8 +145,8 @@ export function Dashboard() {
         </Card>
 
         <Card className="p-4 sm:p-5">
-          <div className="font-bold text-slate-900 dark:text-white">{t('dashboard.expenseByCategory')}</div>
-          <div className="text-xs text-slate-500">{t('dashboard.total', { value: formatMoney(summary.expense, 'VND', locale) })}</div>
+          <div className="font-bold text-stone-900 dark:text-white">{t('dashboard.expenseByCategory')}</div>
+          <div className="text-xs text-stone-500">{t('dashboard.total', { value: formatMoney(summary.expense, 'VND', locale) })}</div>
           {pie.length ? (
             <>
               <div className="h-52">
@@ -155,8 +162,8 @@ export function Dashboard() {
               <div className="space-y-2">
                 {pie.slice(0, 5).map((item, index) => (
                   <div className="flex items-center justify-between gap-3 text-sm" key={item.id}>
-                    <div className="flex min-w-0 items-center gap-2"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length] }} /><span className="truncate text-slate-600 dark:text-slate-300">{item.name}</span></div>
-                    <span className="font-semibold text-slate-900 dark:text-slate-100">{formatCompactMoney(item.value, locale)}</span>
+                    <div className="flex min-w-0 items-center gap-2"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length] }} /><span className="truncate text-stone-600 dark:text-stone-300">{item.name}</span></div>
+                    <span className="font-semibold text-stone-900 dark:text-stone-100">{formatCompactMoney(item.value, locale)}</span>
                   </div>
                 ))}
               </div>
@@ -166,16 +173,16 @@ export function Dashboard() {
       </div>
 
       <Card className="overflow-hidden">
-        <div className="border-b border-slate-100 px-4 py-4 font-bold text-slate-900 dark:border-slate-800 dark:text-white">{t('dashboard.recent')}</div>
+        <div className="border-b border-stone-100 px-4 py-4 font-bold text-stone-900 dark:border-stone-800 dark:text-white">{t('dashboard.recent')}</div>
         {currentTransactions.length === 0 ? <div className="p-4"><EmptyState title={t('dashboard.noTransactionsTitle')} text={t('dashboard.noTransactionsText')} /></div> : (
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+          <div className="divide-y divide-stone-100 dark:divide-stone-800">
             {currentTransactions.slice(0, 6).map((tx) => (
               <div key={tx.id} className="flex items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
-                  <div className="truncate font-semibold text-slate-800 dark:text-slate-100">{tx.merchant || tx.description || t('transaction.noDescription')}</div>
-                  <div className="mt-1 flex items-center gap-2 text-xs text-slate-500"><span>{formatDateTime(tx.occurredAt, locale)}</span>{tx.imageIds.length > 0 && <Badge tone="indigo">{t('dashboard.images', { count: tx.imageIds.length })}</Badge>}</div>
+                  <div className="truncate font-semibold text-stone-800 dark:text-stone-100">{tx.merchant || tx.description || t('transaction.noDescription')}</div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-stone-500"><span>{formatDateTime(tx.occurredAt, locale)}</span>{tx.imageIds.length > 0 && <Badge tone="indigo">{t('dashboard.images', { count: tx.imageIds.length })}</Badge>}</div>
                 </div>
-                <div className={`shrink-0 font-bold ${tx.type === 'income' ? 'text-emerald-600' : tx.type === 'expense' ? 'text-rose-600' : 'text-slate-700 dark:text-slate-300'}`}>{tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : ''}{formatMoney(tx.amount, tx.currency, locale)}</div>
+                <div className={`shrink-0 font-bold ${tx.type === 'income' ? 'text-emerald-600' : tx.type === 'expense' ? 'text-rose-600' : 'text-stone-700 dark:text-stone-300'}`}>{tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : ''}{formatMoney(tx.amount, tx.currency, locale)}</div>
               </div>
             ))}
           </div>

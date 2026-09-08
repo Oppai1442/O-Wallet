@@ -4,7 +4,7 @@ O-Wallet is a private, local-first expense tracker built as a static PWA.
 
 **No O-Wallet runtime backend is required.** The production deployment is static HTML/CSS/JS. The browser performs OCR, encryption, analytics and sync; encrypted cloud data is stored in the user's own Google Drive.
 
-Current release: **v0.6.3**
+Current release: **v0.8.0**
 
 ## Highlights
 
@@ -27,11 +27,47 @@ Current release: **v0.6.3**
 - Screenshot bytes are encrypted directly; images are **not** converted to base64 before encryption.
 - Dashboard and analytics with range filters, cash-flow charts, category pie charts and monthly budget progress.
 - Advanced transaction search/filtering, tags, edit and duplicate actions.
+- Account groups (catalogues), editable account names and removable accounts.
+- Unlimited-depth category trees. Parent nodes are organizational groups; only leaf items are selectable on transactions.
+- Category picker searches the complete route, so typing `mua` can match paths such as `Y tế › Mua thuốc`.
+- OCR automation rules can map recipient/description/amount/type patterns to a category and/or account.
+- v0.8.0 redesign uses a quieter neutral visual system with a finance-oriented dashboard hierarchy.
 - Batch transaction creation: pick many calendar dates in one pass with one shared time.
 - Recurring batch generation by weekday through a chosen end date. Future generated transactions are stored and synced immediately, but balances, budgets and analytics ignore them until their occurrence time.
 - Decrypted JSON/CSV export is available as an explicit local action.
+- Local import from other apps. v0.7.0 includes a Money Manager Android backup adapter for `.mmbak` / SQLite files; parsing runs inside a browser Web Worker and the original backup is never uploaded to O-Wallet.
 - Privacy Policy and Terms of Service pages included for public OAuth deployments.
 - Footer links to **O-Lab**, the project hub at `https://oppai1442.github.io/all/`.
+
+
+## v0.8.0 account, category and rule model
+
+### Accounts
+
+Accounts are ordinary user data. They may be renamed, grouped into user-created catalogues, archived/removed and recreated. O-Wallet no longer treats `Ví chính` / `Main wallet` as a protected system account. If an older account with that name exists, it behaves exactly like any other account.
+
+### Categories
+
+New vaults start with **no categories**. Category nodes support unlimited nesting:
+
+```text
+Y tế
+└─ Thuốc
+   └─ Mua thuốc
+```
+
+Only leaf items can be assigned to transactions. Group nodes exist only to organize the tree. Existing old flat categories remain compatible and are treated as leaf items. Unused legacy built-in categories from pre-v0.8 vaults are removed automatically; categories already referenced by transactions, budgets or defaults are preserved.
+
+### Automation rules
+
+Rules live inside encrypted synced settings. A rule can match one or more of:
+
+- recipient contains text;
+- description contains text;
+- exact amount;
+- transaction type.
+
+A matching rule can assign a category and/or account after OCR. Rules are evaluated on-device; no rule content is sent to an O-Wallet backend.
 
 ## Architecture
 
@@ -70,7 +106,9 @@ Implemented:
 - encrypted IndexedDB records and images;
 - per-user Google Drive folder creation and encrypted binary sync;
 - expense, income and transfer transactions;
-- multiple accounts and custom categories;
+- multiple accounts with user-defined account groups;
+- unlimited-depth hierarchical categories with no built-in category set for new vaults;
+- editable/removable accounts (including older `Ví chính` / `Main wallet` starter accounts);
 - local OCR screenshot import with heuristic transaction prefill, inline-label cleanup and common Vietnamese bank date formats;
 - OCR teaching workflow for assigning detected lines to amount/time/recipient/balance/description semantics;
 - editable OCR regions with move/resize/relabel controls;
@@ -85,6 +123,8 @@ Implemented:
 - transaction tags, edit/duplicate and advanced filters;
 - OCR spatial region selection + reusable encrypted templates;
 - local JSON/CSV export;
+- local Money Manager `.mmbak` / SQLite migration with account/category mapping, transfer-pair collapsing, duplicate detection and safe handling of ambiguous balance-adjustment rows;
+- rule-based OCR classification using recipient, description, amount and transaction type;
 - PWA manifest/service worker;
 - GitHub Actions Pages deployment workflow;
 - public `privacy.html` and `terms.html`;
@@ -94,7 +134,7 @@ Implemented:
 Still intentionally early-stage / needs hardening before serious public use:
 
 - bank-specific prebuilt semantic pattern packs beyond user-created templates;
-- import/restore from decrypted JSON/CSV exports;
+- import/restore from decrypted JSON/CSV exports and additional third-party app formats;
 - automated integration tests against Google Drive;
 - password-change and recovery-key rotation flows;
 - sync compaction/indexing for very large histories;
@@ -116,6 +156,8 @@ cp .env.example .env
 npm install
 npm run dev
 ```
+
+`npm install` also installs `sql.js`, which O-Wallet uses to read supported SQLite backup files locally in the browser. No SQLite server or native runtime is required.
 
 Set:
 
@@ -455,6 +497,34 @@ ARCHITECTURE.md
 10. Không đưa `client_secret` vào frontend.
 
 Giao diện hỗ trợ **Tiếng Việt / English**. Phần tiếng Việt dùng cách diễn đạt trung lập, phù hợp cho ứng dụng public.
+
+## Importing from another app
+
+Open **Settings → Import data from another app** and choose a supported backup file. The original file is read into memory on the current device and parsed in a dedicated Web Worker; it is not uploaded to an O-Wallet backend. Once confirmed, the converted entities are saved like normal O-Wallet data, encrypted locally, and can then sync to the user's own Google Drive.
+
+The first adapter targets the Android Money Manager backup schema identified by the `ASSETS`, `INOUTCOME`, and `ZCATEGORY` tables. Supported file extensions include `.mmbak`, `.db`, `.sqlite`, and `.sqlite3`.
+
+Current Money Manager mapping:
+
+- normal income and expense rows become O-Wallet income/expense transactions;
+- Money Manager's mirrored transfer rows are collapsed into one O-Wallet transfer rather than imported twice;
+- deleted source rows are ignored;
+- accounts and categories can be merged with existing O-Wallet items by name;
+- source IDs are retained as import metadata so importing the same backup again updates records originating from that backup instead of blindly duplicating them;
+- O-Wallet also runs its normal semantic duplicate detector against existing non-imported transactions;
+- ambiguous Money Manager balance-adjustment groups are skipped by default. The import review shows examples and lets the user explicitly treat each group as income or expense if they know what those records mean.
+
+Money Manager `.mmbak` files can contain **photo references without the actual JPEG/PNG bytes**. In that case O-Wallet imports the transaction but cannot reconstruct its old attachment from the backup file alone.
+
+The importer code is adapter-oriented (`src/lib/importers/` + a worker), so additional third-party formats can be added without putting app-specific SQLite parsing into the main wallet data layer.
+
+## v0.7.0 external backup import notes
+
+- Added local SQLite backup parsing through `sql.js` in a module Web Worker.
+- Added a Money Manager Android adapter for accounts, categories, normal transactions, mirrored transfers, tags when present, and attachment metadata.
+- Added preview, date-range summary, duplicate controls, category/account merge options, and an explicit review path for ambiguous balance adjustments.
+- Imported source IDs are stored on each migrated transaction for deterministic re-import/update behavior.
+- The SQL.js WASM asset is included in PWA precaching so the importer can work after it has been fetched by the installed build.
 
 ## v0.5.0 notes
 

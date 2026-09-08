@@ -1,20 +1,23 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Cloud, Download, ExternalLink, FolderOpen, LockKeyhole, Plus, RefreshCw, Trash2, Unplug } from 'lucide-react'
 import { useWallet } from '../WalletContext'
-import { accountDisplayName, categoryDisplayName, useI18n, type Language } from '../i18n'
+import { accountDisplayName, useI18n, type Language } from '../i18n'
+import { categoryPath, selectableCategories } from '../lib/categories'
 import { bytesToHuman, formatMoney } from '../lib/format'
-import { accountBalance } from '../lib/finance'
-import { useCurrentTime } from '../lib/useCurrentTime'
 import { findExistingDriveLayout, openDriveFolderUrl } from '../lib/drive'
 import type {
-  Account,
   AppSettings,
   BudgetConfig,
-  Category,
   RememberDuration,
   ThemeMode,
   VaultRememberDuration,
 } from '../types'
+import { ExternalImport } from './ExternalImport'
+import { AccountManager } from './AccountManager'
+import { CategoryManager } from './CategoryManager'
+import { RuleManager } from './RuleManager'
+import { CategoryPicker } from './CategoryPicker'
+import { AccountSelect } from './AccountSelect'
 import { Badge, Button, Card, Input, Label, Select } from './ui'
 
 function downloadText(filename: string, text: string, mime = 'application/json') {
@@ -40,6 +43,7 @@ export function Settings() {
     transactions,
     repository,
     saveEntity,
+    saveEntities,
     googleSession,
     googleBinding,
     googleRememberedUser,
@@ -61,10 +65,6 @@ export function Settings() {
   const { t, locale, language, setLanguage } = useI18n()
   const [storage, setStorage] = useState({ recordCount: 0, imageCount: 0, imageBytes: 0 })
   const [driveFolder, setDriveFolder] = useState<string>()
-  const [accountName, setAccountName] = useState('')
-  const [openingBalance, setOpeningBalance] = useState('0')
-  const [categoryName, setCategoryName] = useState('')
-  const [categoryKind, setCategoryKind] = useState<Category['kind']>('expense')
   const [budgetCategoryId, setBudgetCategoryId] = useState('')
   const [budgetLimit, setBudgetLimit] = useState('')
 
@@ -76,12 +76,7 @@ export function Settings() {
       .catch(() => setDriveFolder(undefined))
   }, [googleSession, lastSync])
 
-  const now = useCurrentTime()
-  const accountBalances = useMemo(
-    () => accounts.map((account) => ({ account, balance: accountBalance(account, transactions, now) })),
-    [accounts, transactions, now],
-  )
-  const expenseCategories = categories.filter((category) => category.kind !== 'income')
+  const expenseCategories = selectableCategories(categories, 'expense')
   const budgets = settings?.budgets ?? []
   const templates = settings?.ocrTemplates ?? []
 
@@ -101,41 +96,6 @@ export function Settings() {
       : { ...devicePreferences, vaultRemember: value as VaultRememberDuration }
     await updateDevicePreferences(next)
     await updateSettings({ rememberDefaults: next })
-  }
-
-  async function addAccount() {
-    if (!accountName.trim()) return
-    const now = new Date().toISOString()
-    const account: Account = {
-      id: crypto.randomUUID(),
-      name: accountName.trim(),
-      currency: settings?.defaultCurrency ?? 'VND',
-      openingBalance: Number(openingBalance) || 0,
-      archived: false,
-      createdAt: now,
-      updatedAt: now,
-      deleted: false,
-    }
-    await saveEntity(account)
-    setAccountName('')
-    setOpeningBalance('0')
-  }
-
-  async function addCategory() {
-    if (!categoryName.trim()) return
-    const now = new Date().toISOString()
-    const category: Category = {
-      id: crypto.randomUUID(),
-      name: categoryName.trim(),
-      icon: 'Shapes',
-      kind: categoryKind,
-      archived: false,
-      createdAt: now,
-      updatedAt: now,
-      deleted: false,
-    }
-    await saveEntity(category)
-    setCategoryName('')
   }
 
   async function addBudget() {
@@ -172,7 +132,7 @@ export function Settings() {
 
   function exportCsv() {
     const header = ['id', 'type', 'amount', 'currency', 'occurredAt', 'category', 'account', 'merchant', 'balanceAfter', 'description', 'note', 'tags', 'images']
-    const categoryMap = new Map(categories.map((item) => [item.id, categoryDisplayName(item, t)]))
+    const categoryMap = new Map(categories.map((item) => [item.id, categoryPath(item, categories)]))
     const accountMap = new Map(accounts.map((item) => [item.id, accountDisplayName(item, t)]))
     const rows = transactions.map((tx) => [
       tx.id, tx.type, tx.amount, tx.currency, tx.occurredAt,
@@ -186,15 +146,15 @@ export function Settings() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">{t('settings.title')}</h1>
-        <p className="mt-1 text-sm text-slate-500">{t('settings.subtitle')}</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-stone-950 dark:text-white">{t('settings.title')}</h1>
+        <p className="mt-1 text-sm text-stone-500">{t('settings.subtitle')}</p>
       </div>
 
       <Card className="p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="font-bold text-slate-900 dark:text-white">{t('settings.driveSync')}</h2>
-            <p className="mt-1 max-w-2xl text-sm text-slate-500">{t('settings.driveHint')}</p>
+            <h2 className="font-bold text-stone-900 dark:text-white">{t('settings.driveSync')}</h2>
+            <p className="mt-1 max-w-2xl text-sm text-stone-500">{t('settings.driveHint')}</p>
           </div>
           {googleConnectionState === 'connected' && <Badge tone="green">{t('common.connected')}</Badge>}
           {googleConnectionState === 'reconnecting' && <Badge tone="amber">{t('common.reconnecting')}</Badge>}
@@ -207,102 +167,110 @@ export function Settings() {
         {googleSession ? (
           <div className="mt-4 flex flex-wrap items-center gap-3">
             {googleSession.user.picture && <img src={googleSession.user.picture} className="h-10 w-10 rounded-full" alt={t('settings.googleProfileAlt')} />}
-            <div className="mr-auto min-w-0"><div className="truncate text-sm font-bold text-slate-800 dark:text-slate-100">{googleSession.user.name}</div><div className="truncate text-xs text-slate-500">{googleSession.user.email}</div></div>
+            <div className="mr-auto min-w-0"><div className="truncate text-sm font-bold text-stone-800 dark:text-stone-100">{googleSession.user.name}</div><div className="truncate text-xs text-stone-500">{googleSession.user.email}</div></div>
             <Button variant="secondary" onClick={() => void syncNow()} disabled={syncBusy}><RefreshCw className={syncBusy ? 'animate-spin' : ''} size={17} />{syncBusy ? syncMessage || t('common.syncing') : t('settings.syncNow')}</Button>
             {driveFolder && <Button variant="secondary" onClick={() => window.open(openDriveFolderUrl(driveFolder), '_blank', 'noopener,noreferrer')}><FolderOpen size={17} /> {t('settings.openDrive')}</Button>}
             <Button variant="ghost" onClick={disconnectGoogle}><Unplug size={17} /> {t('settings.disconnect')}</Button>
           </div>
         ) : (googleRememberedUser || googleBinding) ? (
-          <div className="mt-4 rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/40">
+          <div className="mt-4 rounded-xl border border-stone-200/80 bg-stone-50/70 p-3 dark:border-stone-800 dark:bg-stone-950/40">
             <div className="flex flex-wrap items-center gap-3">
               {(googleRememberedUser?.picture || googleBinding?.picture) && <img src={googleRememberedUser?.picture ?? googleBinding?.picture} className="h-10 w-10 rounded-full" alt={t('settings.googleProfileAlt')} />}
               <div className="mr-auto min-w-0">
-                <div className="truncate text-sm font-bold text-slate-800 dark:text-slate-100">{googleRememberedUser?.name ?? googleBinding?.name}</div>
-                <div className="truncate text-xs text-slate-500">{googleRememberedUser?.email ?? googleBinding?.email}</div>
+                <div className="truncate text-sm font-bold text-stone-800 dark:text-stone-100">{googleRememberedUser?.name ?? googleBinding?.name}</div>
+                <div className="truncate text-xs text-stone-500">{googleRememberedUser?.email ?? googleBinding?.email}</div>
               </div>
               <Button variant="secondary" onClick={() => void retryGoogleConnection()} disabled={!googleConfigured || googleConnectionState === 'reconnecting'}>
                 <RefreshCw className={googleConnectionState === 'reconnecting' ? 'animate-spin' : ''} size={17} />
                 {t('settings.reconnectGoogle')}
               </Button>
             </div>
-            <p className="mt-2 text-xs leading-5 text-slate-500">{googleConnectionState === 'reconnecting' ? t('settings.reconnectingHint') : t('settings.reconnectNeededHint')}</p>
+            <p className="mt-2 text-xs leading-5 text-stone-500">{googleConnectionState === 'reconnecting' ? t('settings.reconnectingHint') : t('settings.reconnectNeededHint')}</p>
           </div>
         ) : (
           <div className="mt-4"><Button onClick={() => void connectGoogle()} disabled={!googleConfigured}><Cloud size={17} /> {t('settings.connectGoogle')}</Button></div>
         )}
 
-        {lastSync && <div className="mt-3 text-xs text-slate-500">{t('settings.lastSync', { pulledRecords: lastSync.pulledRecords, pulledImages: lastSync.pulledImages, pushedRecords: lastSync.pushedRecords, pushedImages: lastSync.pushedImages, conflicts: lastSync.conflictsResolved })}</div>}
+        {lastSync && <div className="mt-3 text-xs text-stone-500">{t('settings.lastSync', { pulledRecords: lastSync.pulledRecords, pulledImages: lastSync.pulledImages, pushedRecords: lastSync.pushedRecords, pushedImages: lastSync.pushedImages, conflicts: lastSync.conflictsResolved })}</div>}
         {error && <div className="mt-3 text-sm text-rose-600">{error}</div>}
       </Card>
 
       <Card className="p-4 sm:p-5">
-        <div><h2 className="font-bold text-slate-900 dark:text-white">{t('settings.preferences')}</h2><p className="mt-1 text-sm text-slate-500">{t('settings.preferencesHint')}</p></div>
+        <div><h2 className="font-bold text-stone-900 dark:text-white">{t('settings.preferences')}</h2><p className="mt-1 text-sm text-stone-500">{t('settings.preferencesHint')}</p></div>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <div><Label>{t('common.language')}</Label><Select value={language} onChange={(e) => void changeLanguage(e.target.value as Language)}><option value="vi">{t('language.vi')}</option><option value="en">{t('language.en')}</option></Select></div>
           <div><Label>{t('settings.theme')}</Label><Select value={settings?.theme ?? 'system'} onChange={(e) => void updateSettings({ theme: e.target.value as ThemeMode })}><option value="system">{t('common.system')}</option><option value="light">{t('common.light')}</option><option value="dark">{t('common.dark')}</option></Select></div>
           <div><Label>{t('settings.defaultCurrency')}</Label><Input value={settings?.defaultCurrency ?? 'VND'} onChange={(e) => void updateSettings({ defaultCurrency: e.target.value.toUpperCase() || 'VND' })} /></div>
           <div><Label>{t('settings.autoSync')}</Label><Select value={settings?.autoSync ? 'on' : 'off'} onChange={(e) => void updateSettings({ autoSync: e.target.value === 'on' })}><option value="on">{t('common.on')}</option><option value="off">{t('common.off')}</option></Select></div>
-          <div><Label>{t('settings.googleRemember')}</Label><Select value={devicePreferences.googleRemember} onChange={(e) => void changeRemember('google', e.target.value as RememberDuration)}><option value="off">{t('settings.googleRememberOff')}</option><option value="tab">{t('settings.googleRememberTab')}</option><option value="1h">{t('settings.duration1h')}</option><option value="8h">{t('settings.duration8h')}</option><option value="1d">{t('settings.duration1d')}</option><option value="7d">{t('settings.duration7d')}</option><option value="30d">{t('settings.duration30d')}</option></Select><p className="mt-1.5 text-xs leading-5 text-slate-500">{t('settings.rememberSyncedHint')}</p></div>
-          <div><Label>{t('settings.vaultRemember')}</Label><Select value={devicePreferences.vaultRemember} onChange={(e) => void changeRemember('vault', e.target.value as VaultRememberDuration)}><option value="off">{t('settings.vaultRememberOff')}</option><option value="15m">{t('settings.duration15m')}</option><option value="1h">{t('settings.duration1h')}</option><option value="8h">{t('settings.duration8h')}</option><option value="1d">{t('settings.duration1d')}</option><option value="7d">{t('settings.duration7d')}</option><option value="30d">{t('settings.duration30d')}</option></Select><p className="mt-1.5 text-xs leading-5 text-slate-500">{t('settings.vaultRememberHint')}</p></div>
+          <div><Label>{t('settings.googleRemember')}</Label><Select value={devicePreferences.googleRemember} onChange={(e) => void changeRemember('google', e.target.value as RememberDuration)}><option value="off">{t('settings.googleRememberOff')}</option><option value="tab">{t('settings.googleRememberTab')}</option><option value="1h">{t('settings.duration1h')}</option><option value="8h">{t('settings.duration8h')}</option><option value="1d">{t('settings.duration1d')}</option><option value="7d">{t('settings.duration7d')}</option><option value="30d">{t('settings.duration30d')}</option></Select><p className="mt-1.5 text-xs leading-5 text-stone-500">{t('settings.rememberSyncedHint')}</p></div>
+          <div><Label>{t('settings.vaultRemember')}</Label><Select value={devicePreferences.vaultRemember} onChange={(e) => void changeRemember('vault', e.target.value as VaultRememberDuration)}><option value="off">{t('settings.vaultRememberOff')}</option><option value="15m">{t('settings.duration15m')}</option><option value="1h">{t('settings.duration1h')}</option><option value="8h">{t('settings.duration8h')}</option><option value="1d">{t('settings.duration1d')}</option><option value="7d">{t('settings.duration7d')}</option><option value="30d">{t('settings.duration30d')}</option></Select><p className="mt-1.5 text-xs leading-5 text-stone-500">{t('settings.vaultRememberHint')}</p></div>
           <div><Label>{t('settings.imageRetention')}</Label><Select value={settings?.imageRetention.mode ?? 'forever'} onChange={(e) => void updateSettings({ imageRetention: { mode: e.target.value as 'forever' | 'days', days: settings?.imageRetention.days ?? 90 } })}><option value="forever">{t('common.forever')}</option><option value="days">{t('common.days', { count: settings?.imageRetention.days ?? 90 })}</option></Select></div>
           {settings?.imageRetention.mode === 'days' && <div><Label>{t('settings.keepDays')}</Label><Input type="number" min="1" value={settings.imageRetention.days} onChange={(e) => void updateSettings({ imageRetention: { mode: 'days', days: Math.max(1, Number(e.target.value) || 1) } })} /></div>}
-          <div><Label>{t('settings.defaultAccount')}</Label><Select value={settings?.transactionDefaults?.accountId ?? ''} onChange={(e) => void updateSettings({ transactionDefaults: { ...settings?.transactionDefaults, accountId: e.target.value || undefined } })}><option value="">{t('common.none')}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{accountDisplayName(account, t)}</option>)}</Select></div>
-          <div><Label>{t('settings.defaultCategory')}</Label><Select value={settings?.transactionDefaults?.categoryId ?? ''} onChange={(e) => void updateSettings({ transactionDefaults: { ...settings?.transactionDefaults, categoryId: e.target.value || undefined } })}><option value="">{t('common.none')}</option>{categories.map((category) => <option key={category.id} value={category.id}>{categoryDisplayName(category, t)}</option>)}</Select></div>
+          <div><Label>{t('settings.defaultAccount')}</Label><AccountSelect accounts={accounts} catalogues={settings?.accountCatalogues ?? []} value={settings?.transactionDefaults?.accountId ?? ''} onChange={(value) => void updateSettings({ transactionDefaults: { ...settings?.transactionDefaults, accountId: value || undefined } })} includeEmpty /></div>
+          <div><Label>{t('settings.defaultCategory')}</Label><CategoryPicker categories={categories} value={settings?.transactionDefaults?.categoryId ?? ''} onChange={(value) => void updateSettings({ transactionDefaults: { ...settings?.transactionDefaults, categoryId: value || undefined } })} placeholder={t('common.none')} /></div>
         </div>
       </Card>
 
       <div className="grid gap-5 xl:grid-cols-2">
         <Card className="p-4 sm:p-5">
-          <h2 className="font-bold text-slate-900 dark:text-white">{t('settings.budgets')}</h2>
-          <p className="mt-1 text-sm text-slate-500">{t('settings.budgetsHint')}</p>
+          <h2 className="font-bold text-stone-900 dark:text-white">{t('settings.budgets')}</h2>
+          <p className="mt-1 text-sm text-stone-500">{t('settings.budgetsHint')}</p>
           <div className="mt-4 space-y-2">
             {budgets.map((budget) => {
               const category = categories.find((item) => item.id === budget.categoryId)
-              return <div key={budget.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800"><div className="min-w-0 flex-1"><div className="truncate font-bold text-slate-800 dark:text-slate-100">{category ? categoryDisplayName(category, t) : budget.categoryId}</div><div className="text-xs text-slate-500">{formatMoney(budget.monthlyLimit, settings?.defaultCurrency ?? 'VND', locale)} / {t('settings.month')}</div></div><Button variant="ghost" className="px-2 text-rose-500" onClick={() => void removeBudget(budget.id)}><Trash2 size={16} /></Button></div>
+              return <div key={budget.id} className="flex items-center gap-3 rounded-xl border border-stone-200 p-3 dark:border-stone-800"><div className="min-w-0 flex-1"><div className="truncate font-bold text-stone-800 dark:text-stone-100">{category ? categoryPath(category, categories) : budget.categoryId}</div><div className="text-xs text-stone-500">{formatMoney(budget.monthlyLimit, settings?.defaultCurrency ?? 'VND', locale)} / {t('settings.month')}</div></div><Button variant="ghost" className="px-2 text-rose-500" onClick={() => void removeBudget(budget.id)}><Trash2 size={16} /></Button></div>
             })}
           </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_180px_auto]"><Select value={budgetCategoryId} onChange={(e) => setBudgetCategoryId(e.target.value)}><option value="">{t('settings.chooseCategory')}</option>{expenseCategories.map((category) => <option key={category.id} value={category.id}>{categoryDisplayName(category, t)}</option>)}</Select><Input type="number" min="1" value={budgetLimit} onChange={(e) => setBudgetLimit(e.target.value)} placeholder={t('settings.budgetLimit')} /><Button onClick={() => void addBudget()}><Plus size={17} /> {t('common.add')}</Button></div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_180px_auto]"><Select value={budgetCategoryId} onChange={(e) => setBudgetCategoryId(e.target.value)}><option value="">{t('settings.chooseCategory')}</option>{expenseCategories.map((category) => <option key={category.id} value={category.id}>{categoryPath(category, categories)}</option>)}</Select><Input type="number" min="1" value={budgetLimit} onChange={(e) => setBudgetLimit(e.target.value)} placeholder={t('settings.budgetLimit')} /><Button onClick={() => void addBudget()}><Plus size={17} /> {t('common.add')}</Button></div>
         </Card>
 
         <Card className="p-4 sm:p-5">
-          <h2 className="font-bold text-slate-900 dark:text-white">{t('settings.ocrTemplates')}</h2>
-          <p className="mt-1 text-sm text-slate-500">{t('settings.ocrTemplatesHint')}</p>
-          <div className="mt-4 space-y-2">{templates.length === 0 ? <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500 dark:bg-slate-950">{t('settings.noOcrTemplates')}</div> : templates.map((template) => <div key={template.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800"><div className="min-w-0 flex-1"><div className="truncate font-bold text-slate-800 dark:text-slate-100">{template.name}</div><div className="text-xs text-slate-500">{t('settings.regionCount', { count: template.regions.length })}</div></div><Button variant="ghost" className="px-2 text-rose-500" onClick={() => void removeTemplate(template.id)}><Trash2 size={16} /></Button></div>)}</div>
+          <h2 className="font-bold text-stone-900 dark:text-white">{t('settings.ocrTemplates')}</h2>
+          <p className="mt-1 text-sm text-stone-500">{t('settings.ocrTemplatesHint')}</p>
+          <div className="mt-4 space-y-2">{templates.length === 0 ? <div className="rounded-xl bg-stone-50 p-3 text-sm text-stone-500 dark:bg-stone-950">{t('settings.noOcrTemplates')}</div> : templates.map((template) => <div key={template.id} className="flex items-center gap-3 rounded-xl border border-stone-200 p-3 dark:border-stone-800"><div className="min-w-0 flex-1"><div className="truncate font-bold text-stone-800 dark:text-stone-100">{template.name}</div><div className="text-xs text-stone-500">{t('settings.regionCount', { count: template.regions.length })}</div></div><Button variant="ghost" className="px-2 text-rose-500" onClick={() => void removeTemplate(template.id)}><Trash2 size={16} /></Button></div>)}</div>
         </Card>
       </div>
 
+      <ExternalImport />
+
       <div className="grid gap-5 xl:grid-cols-2">
         <Card className="p-4 sm:p-5">
-          <h2 className="font-bold text-slate-900 dark:text-white">{t('settings.localStorage')}</h2>
-          <div className="mt-4 grid grid-cols-3 gap-3"><div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950"><div className="text-xs text-slate-500">{t('settings.records')}</div><div className="mt-1 font-black text-slate-900 dark:text-white">{storage.recordCount}</div></div><div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950"><div className="text-xs text-slate-500">{t('settings.images')}</div><div className="mt-1 font-black text-slate-900 dark:text-white">{storage.imageCount}</div></div><div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950"><div className="text-xs text-slate-500">{t('settings.encryptedImageBytes')}</div><div className="mt-1 font-black text-slate-900 dark:text-white">{bytesToHuman(storage.imageBytes)}</div></div></div>
-          <div className="mt-4"><h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">{t('settings.export')}</h3><p className="mt-1 text-xs text-slate-500">{t('settings.exportHint')}</p><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={exportJson}><Download size={16} /> JSON</Button><Button variant="secondary" onClick={exportCsv}><Download size={16} /> CSV</Button></div></div>
+          <h2 className="font-bold text-stone-900 dark:text-white">{t('settings.localStorage')}</h2>
+          <div className="mt-4 grid grid-cols-3 gap-3"><div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-950"><div className="text-xs text-stone-500">{t('settings.records')}</div><div className="mt-1 font-semibold text-stone-900 dark:text-white">{storage.recordCount}</div></div><div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-950"><div className="text-xs text-stone-500">{t('settings.images')}</div><div className="mt-1 font-semibold text-stone-900 dark:text-white">{storage.imageCount}</div></div><div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-950"><div className="text-xs text-stone-500">{t('settings.encryptedImageBytes')}</div><div className="mt-1 font-semibold text-stone-900 dark:text-white">{bytesToHuman(storage.imageBytes)}</div></div></div>
+          <div className="mt-4"><h3 className="text-sm font-bold text-stone-800 dark:text-stone-100">{t('settings.export')}</h3><p className="mt-1 text-xs text-stone-500">{t('settings.exportHint')}</p><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={exportJson}><Download size={16} /> JSON</Button><Button variant="secondary" onClick={exportCsv}><Download size={16} /> CSV</Button></div></div>
         </Card>
 
         <Card className="p-4 sm:p-5">
-          <h2 className="font-bold text-slate-900 dark:text-white">{t('settings.security')}</h2>
-          <p className="mt-1 text-sm text-slate-500">{t('settings.securityHint')}</p>
+          <h2 className="font-bold text-stone-900 dark:text-white">{t('settings.security')}</h2>
+          <p className="mt-1 text-sm text-stone-500">{t('settings.securityHint')}</p>
           <div className="mt-4 flex flex-wrap gap-2"><Button variant="secondary" onClick={lock}><LockKeyhole size={17} /> {t('settings.lockVault')}</Button><Button variant="danger" onClick={() => void confirmSwitchAccount()}>{t('settings.switchAccount')}</Button></div>
-          <div className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500 dark:bg-slate-950">{t('settings.securityQuestionsHint')}</div>
+          <div className="mt-4 rounded-xl bg-stone-50 p-3 text-xs leading-5 text-stone-500 dark:bg-stone-950">{t('settings.securityQuestionsHint')}</div>
           <div className="mt-3 rounded-xl bg-rose-50 p-3 text-xs leading-5 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{t('settings.switchAccountHint')}</div>
         </Card>
       </div>
 
-      <Card className="p-4 sm:p-5">
-        <div className="flex items-center justify-between"><div><h2 className="font-bold text-slate-900 dark:text-white">{t('settings.accounts')}</h2><p className="text-xs text-slate-500">{t('settings.accountsHint')}</p></div><Badge>{accounts.length}</Badge></div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{accountBalances.map(({ account, balance }) => <div key={account.id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-800"><div className="font-bold text-slate-800 dark:text-slate-100">{accountDisplayName(account, t)}</div><div className="mt-1 text-sm text-slate-500">{formatMoney(balance, account.currency, locale)}</div></div>)}</div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_180px_auto]"><Input value={accountName} onChange={(e) => setAccountName(e.target.value)} placeholder={t('settings.accountPlaceholder')} /><Input type="number" value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value)} placeholder={t('settings.openingBalance')} /><Button onClick={addAccount}><Plus size={17} /> {t('common.add')}</Button></div>
-      </Card>
+      <AccountManager
+        accounts={accounts}
+        transactions={transactions}
+        settings={settings}
+        onSaveAccount={async (account) => { await saveEntity(account) }}
+        onSaveAccounts={async (items) => { await saveEntities(items) }}
+        onSaveSettings={updateSettings}
+      />
 
-      <Card className="p-4 sm:p-5">
-        <div className="flex items-center justify-between"><div><h2 className="font-bold text-slate-900 dark:text-white">{t('settings.categories')}</h2><p className="text-xs text-slate-500">{t('settings.categoriesHint')}</p></div><Badge>{categories.length}</Badge></div>
-        <div className="mt-4 flex flex-wrap gap-2">{categories.map((category) => <Badge key={category.id} tone={category.kind === 'income' ? 'green' : category.kind === 'expense' ? 'red' : 'slate'}>{categoryDisplayName(category, t)}</Badge>)}</div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_180px_auto]"><Input value={categoryName} onChange={(e) => setCategoryName(e.target.value)} placeholder={t('settings.categoryPlaceholder')} /><Select value={categoryKind} onChange={(e) => setCategoryKind(e.target.value as Category['kind'])}><option value="expense">{t('settings.kindExpense')}</option><option value="income">{t('settings.kindIncome')}</option><option value="both">{t('settings.kindBoth')}</option></Select><Button onClick={addCategory}><Plus size={17} /> {t('common.add')}</Button></div>
-      </Card>
+      <CategoryManager
+        categories={categories}
+        transactions={transactions}
+        onSave={async (category) => { await saveEntity(category) }}
+        onSaveMany={async (items) => { await saveEntities(items) }}
+      />
 
-      <Card className="p-4 text-xs text-slate-500 sm:p-5">
-        <div className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-200"><ExternalLink size={15} /> {t('settings.deploymentNote')}</div>
+      <RuleManager settings={settings} categories={categories} accounts={accounts} onSaveSettings={updateSettings} />
+
+      <Card className="p-4 text-xs text-stone-500 sm:p-5">
+        <div className="flex items-center gap-2 font-bold text-stone-700 dark:text-stone-200"><ExternalLink size={15} /> {t('settings.deploymentNote')}</div>
         <p className="mt-2">{t('settings.deploymentText')}</p>
-        <div className="mt-3 flex flex-wrap gap-3"><a className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400" href="./privacy.html" target="_blank" rel="noreferrer">{t('settings.privacy')}</a><a className="font-semibold text-indigo-600 hover:underline dark:text-indigo-400" href="./terms.html" target="_blank" rel="noreferrer">{t('settings.terms')}</a></div>
+        <div className="mt-3 flex flex-wrap gap-3"><a className="font-semibold text-blue-600 hover:underline dark:text-blue-400" href="./privacy.html" target="_blank" rel="noreferrer">{t('settings.privacy')}</a><a className="font-semibold text-blue-600 hover:underline dark:text-blue-400" href="./terms.html" target="_blank" rel="noreferrer">{t('settings.terms')}</a></div>
       </Card>
     </div>
   )

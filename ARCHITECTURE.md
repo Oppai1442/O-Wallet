@@ -149,3 +149,48 @@ reconnecting -- 3 silent failures --> attention
 ```
 
 The local vault is independent from this state machine. Drive being temporarily unavailable does not block viewing/editing the encrypted local cache.
+
+## External backup import pipeline (v0.7.0)
+
+Third-party backups are treated as untrusted local input. They do not pass through Drive or an O-Wallet server before parsing.
+
+```text
+selected .mmbak / SQLite file
+        |
+        v
+ArrayBuffer (browser memory)
+        | transferred, not copied
+        v
+module Web Worker
+        |
+        +-- sql.js / SQLite WASM
+        +-- adapter format detection
+        +-- source-specific normalization
+        v
+ExternalImportBundle
+        |
+        +-- preview / ambiguous-row review
+        +-- account + category mapping
+        +-- semantic duplicate detection
+        v
+normal O-Wallet entities
+        |
+        +-- encrypt locally
+        +-- bulk-write IndexedDB
+        `-- normal encrypted Drive sync
+```
+
+The first adapter recognizes the Money Manager Android schema (`ASSETS`, `INOUTCOME`, `ZCATEGORY`). Money Manager stores transfers as two mirrored source rows; the adapter pairs the reverse account edges at the same timestamp/amount and materializes one O-Wallet transfer. Each imported transaction carries `importSource` metadata containing the adapter ID, stable source ID and original row IDs. This makes a later re-import deterministic and separate from heuristic duplicate detection.
+
+Rows whose semantics cannot be determined safely are never guessed by the worker. For the currently observed Money Manager balance-reconciliation codes, the worker returns them as ambiguous rows and the Settings UI asks the user whether to skip, treat as income, or treat as expense.
+
+Photo records in a Money Manager backup are interpreted only as references. If the SQLite file does not contain image bytes, O-Wallet cannot recreate those attachments.
+
+
+## Account catalogues, hierarchical categories and OCR rules (v0.8.0)
+
+Account catalogues and OCR automation rules are stored inside the encrypted `settings` entity so they sync with the rest of a user's vault without introducing new Drive record kinds. `Account.catalogueId` is optional.
+
+Categories remain individual encrypted `category` records and now support `parentId` plus `nodeType: group | item`. Missing `nodeType` from older data is treated as `item` for backward compatibility. Only item nodes are selectable for transactions. Category paths are reconstructed client-side by walking parent IDs, with cycle protection.
+
+OCR rules are evaluated only after local OCR parsing. The first enabled matching rule may assign a leaf category and/or active account. Matching is currently deterministic: normalized substring matching for recipient/description, exact numeric amount, and optional transaction type.

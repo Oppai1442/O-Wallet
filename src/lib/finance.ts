@@ -16,5 +16,5 @@ export function accountBalance(account: Account, transactions: Transaction[], no
 }
 
 export function totalBalance(accounts: Account[], transactions: Transaction[], now = Date.now()) {
-  return accounts.reduce((sum, account) => sum + accountBalance(account, transactions, now), 0)
+  return accounts.filter((account) => !account.archived).reduce((sum, account) => sum + accountBalance(account, transactions, now), 0)
 }

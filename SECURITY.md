@@ -106,3 +106,22 @@ Semantic duplicate warnings are advisory. Exact-looking matches are deselected b
 ## Google token migration in v0.6.2
 
 Older O-Wallet builds could keep the current bearer token inside the long-duration local session object. v0.6.2 migrates that format: a still-valid token is moved to `sessionStorage`, and the long-lived `localStorage` record is rewritten without `accessToken` / `expiresAt`. Expired tokens are discarded. This reduces the lifetime of bearer credentials in persistent browser storage, but XSS on an active O-Wallet origin can still access the current session token and remains a threat.
+
+## Importing third-party backup files
+
+The external-data importer is local-only by design:
+
+- the user-selected backup is read with the browser File API;
+- its `ArrayBuffer` is transferred to a dedicated Web Worker;
+- SQLite parsing runs with `sql.js` / WebAssembly inside that worker;
+- the original backup bytes are not written to O-Wallet IndexedDB and are not uploaded to Google Drive or an O-Wallet backend;
+- only the normalized entities the user confirms are passed to the normal O-Wallet repository, encrypted, and synchronized.
+
+Backup files are untrusted input. Adapters use fixed SQL statements rather than source-controlled SQL strings, validate required tables before parsing, reject malformed rows, and close the in-memory database when parsing ends. Parsing in a worker also isolates expensive SQLite work from the main UI thread, although it is not a security sandbox against browser/runtime vulnerabilities in the SQLite/WASM dependency. Keep `sql.js` updated as part of dependency maintenance.
+
+Source-specific semantics that are not reliable enough to infer are surfaced for explicit user choice instead of being silently converted. Attachment metadata does not imply that the original image bytes are present; O-Wallet does not attempt to follow filesystem paths embedded in a backup.
+
+
+## v0.8.0 metadata additions
+
+Account group names, category hierarchy metadata and OCR automation rules are encrypted inside normal O-Wallet records/settings before Drive sync. Rule text can contain recipient names or spending patterns, so it is intentionally not kept as plaintext application metadata.

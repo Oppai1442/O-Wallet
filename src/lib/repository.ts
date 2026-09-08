@@ -1,4 +1,3 @@
-import { DEFAULT_CATEGORIES } from '../constants'
 import type {
   Account,
   AppSettings,
@@ -149,27 +148,24 @@ export class WalletRepository {
   }
 
   async ensureDefaults() {
-    const accounts = await this.getAll<Account>('account')
-    if (accounts.length === 0) {
-      const now = new Date().toISOString()
-      await this.put<Account>({
-        id: crypto.randomUUID(),
-        name: 'Ví chính',
-        currency: 'VND',
-        openingBalance: 0,
-        archived: false,
-        createdAt: now,
-        updatedAt: now,
-        deleted: false,
-      })
+    // v0.8: categories start empty. Remove untouched legacy built-ins from older vaults,
+    // but never remove a category that is already referenced by transaction history.
+    const legacyDefaultIds = new Set(['food', 'shopping', 'transport', 'bills', 'entertainment', 'health', 'salary', 'other'])
+    const [existingCategories, existingTransactions, existingSettings] = await Promise.all([
+      this.getAll<Category>('category'),
+      this.getAll<Transaction>('transaction'),
+      this.get<AppSettings>('settings'),
+    ])
+    const usedCategoryIds = new Set(existingTransactions.map((tx) => tx.categoryId))
+    for (const budget of existingSettings?.budgets ?? []) usedCategoryIds.add(budget.categoryId)
+    if (existingSettings?.transactionDefaults?.categoryId) usedCategoryIds.add(existingSettings.transactionDefaults.categoryId)
+    for (const category of existingCategories) {
+      if (legacyDefaultIds.has(category.id) && !usedCategoryIds.has(category.id)) {
+        await this.put<Category>({ ...category, deleted: true, updatedAt: new Date().toISOString() })
+      }
     }
 
-    const categories = await this.getAll<Category>('category')
-    if (categories.length === 0) {
-      for (const category of DEFAULT_CATEGORIES) await this.put(category)
-    }
-
-    const settings = await this.get<AppSettings>('settings')
+    const settings = existingSettings
     if (!settings) {
       const now = new Date().toISOString()
       await this.put<AppSettings>({
@@ -181,6 +177,8 @@ export class WalletRepository {
         rememberDefaults: { googleRemember: 'tab', vaultRemember: 'off' },
         ocrTemplates: [],
         budgets: [],
+        accountCatalogues: [],
+        transactionRules: [],
         transactionDefaults: {},
         createdAt: now,
         updatedAt: now,

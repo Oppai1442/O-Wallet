@@ -10,8 +10,8 @@ const FIELD_TONES: Record<OcrField, string> = {
   occurredAt: 'border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-300',
   merchant: 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-300',
   balanceAfter: 'border-cyan-500 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300',
-  description: 'border-indigo-500 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300',
-  ignore: 'border-slate-500 bg-slate-500/15 text-slate-700 dark:text-slate-300',
+  description: 'border-blue-500 bg-blue-500/10 text-blue-700 dark:text-blue-300',
+  ignore: 'border-stone-500 bg-stone-500/15 text-stone-700 dark:text-stone-300',
 }
 
 type ResizeEdge = 'nw' | 'ne' | 'sw' | 'se'
@@ -176,16 +176,16 @@ export function OcrRegionEditor({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100"><Crop size={17} /> {t('ocr.regions')}</div>
+        <div className="flex items-center gap-2 text-sm font-bold text-stone-800 dark:text-stone-100"><Crop size={17} /> {t('ocr.regions')}</div>
         <Select className="ml-auto min-w-44" value={field} onChange={(e) => setField(e.target.value as OcrField)}>
           {fields.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </Select>
       </div>
-      <p className="text-xs leading-5 text-slate-500">{t('ocr.regionHintEditable')}</p>
+      <p className="text-xs leading-5 text-stone-500">{t('ocr.regionHintEditable')}</p>
 
       <div
         ref={surfaceRef}
-        className="relative mx-auto w-full max-w-2xl touch-none select-none overflow-hidden rounded-2xl border border-slate-200 bg-slate-950/5 dark:border-slate-700"
+        className="relative mx-auto w-full max-w-2xl touch-none select-none overflow-hidden rounded-2xl border border-stone-200 bg-stone-950/5 dark:border-stone-700"
         style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
         onPointerDown={beginDraw}
         onPointerMove={move}
@@ -214,7 +214,7 @@ export function OcrRegionEditor({
           return (
             <div
               key={region.id}
-              className={`absolute border-2 ${FIELD_TONES[region.field]} ${isDraft ? 'pointer-events-none' : 'cursor-move'} ${isSelected ? 'ring-2 ring-white/90 ring-offset-1 ring-offset-indigo-500/40' : ''}`}
+              className={`absolute border-2 ${FIELD_TONES[region.field]} ${isDraft ? 'pointer-events-none' : 'cursor-move'} ${isSelected ? 'ring-2 ring-white/90 ring-offset-1 ring-offset-blue-500/40' : ''}`}
               style={{
                 left: `${region.x * 100}%`,
                 top: `${region.y * 100}%`,
@@ -223,7 +223,7 @@ export function OcrRegionEditor({
               }}
               onPointerDown={isDraft ? undefined : (event) => beginMove(event, region)}
             >
-              <span className="pointer-events-none absolute left-0 top-0 max-w-full -translate-y-full truncate rounded-t-md bg-slate-950/85 px-1.5 py-0.5 text-[10px] font-bold text-white">
+              <span className="pointer-events-none absolute left-0 top-0 max-w-full -transtone-y-full truncate rounded-t-md bg-stone-950/85 px-1.5 py-0.5 text-[10px] font-bold text-white">
                 {index + 1}. {fieldLabel(region.field)}
               </span>
               {isSelected && !isDraft && (['nw', 'ne', 'sw', 'se'] as ResizeEdge[]).map((edge) => (
@@ -231,7 +231,7 @@ export function OcrRegionEditor({
                   type="button"
                   key={edge}
                   aria-label={t('ocr.resizeRegion')}
-                  className={`absolute h-3.5 w-3.5 rounded-full border-2 border-white bg-indigo-600 shadow ${edge === 'nw' ? '-left-2 -top-2 cursor-nwse-resize' : edge === 'ne' ? '-right-2 -top-2 cursor-nesw-resize' : edge === 'sw' ? '-bottom-2 -left-2 cursor-nesw-resize' : '-bottom-2 -right-2 cursor-nwse-resize'}`}
+                  className={`absolute h-3.5 w-3.5 rounded-full border-2 border-white bg-blue-600 shadow ${edge === 'nw' ? '-left-2 -top-2 cursor-nwse-resize' : edge === 'ne' ? '-right-2 -top-2 cursor-nesw-resize' : edge === 'sw' ? '-bottom-2 -left-2 cursor-nesw-resize' : '-bottom-2 -right-2 cursor-nwse-resize'}`}
                   onPointerDown={(event) => beginResize(event, region, edge)}
                 />
               ))}
@@ -241,18 +241,18 @@ export function OcrRegionEditor({
       </div>
 
       {selected && (
-        <div className="grid gap-2 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3 dark:border-indigo-500/30 dark:bg-indigo-500/10 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+        <div className="grid gap-2 rounded-xl border border-blue-200 bg-blue-50/70 p-3 dark:border-blue-500/30 dark:bg-blue-500/10 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
           <div className="grid min-w-0 gap-2 sm:grid-cols-[170px_minmax(0,1fr)] sm:items-center">
             <Select value={selected.field} onChange={(e) => updateRegion(selected.id, { field: e.target.value as OcrField, stripLabel: e.target.value !== 'generic' && e.target.value !== 'ignore' ? selected.stripLabel ?? true : false })}>
               {fields.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </Select>
-            <label className="flex min-w-0 items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+            <label className="flex min-w-0 items-center gap-2 text-xs font-semibold text-stone-600 dark:text-stone-300">
               <input type="checkbox" checked={selected.stripLabel ?? (selected.field !== 'generic' && selected.field !== 'ignore')} disabled={selected.field === 'generic' || selected.field === 'ignore'} onChange={(e) => updateRegion(selected.id, { stripLabel: e.target.checked })} />
               <span className="truncate">{t('ocr.stripInlineLabel')}</span>
             </label>
           </div>
           <div className="flex gap-2">
-            <span className="inline-flex items-center gap-1 text-xs text-slate-500"><Move size={14} /> {t('ocr.dragToMove')}</span>
+            <span className="inline-flex items-center gap-1 text-xs text-stone-500"><Move size={14} /> {t('ocr.dragToMove')}</span>
             <Button variant="ghost" className="h-8 px-2 text-xs text-rose-600" onClick={() => removeRegion(selected.id)}><Trash2 size={13} /> {t('common.delete')}</Button>
           </div>
         </div>
@@ -261,12 +261,12 @@ export function OcrRegionEditor({
       {regions.length > 0 && (
         <div className="space-y-2">
           {regions.map((region, index) => (
-            <div key={region.id} className={`grid gap-2 rounded-xl border px-2.5 py-2 text-xs font-semibold sm:grid-cols-[auto_minmax(150px,220px)_1fr_auto] sm:items-center ${selectedId === region.id ? 'border-indigo-400 bg-indigo-50/60 dark:bg-indigo-500/10' : 'border-slate-200 dark:border-slate-700'}`}>
+            <div key={region.id} className={`grid gap-2 rounded-xl border px-2.5 py-2 text-xs font-semibold sm:grid-cols-[auto_minmax(150px,220px)_1fr_auto] sm:items-center ${selectedId === region.id ? 'border-blue-400 bg-blue-50/60 dark:bg-blue-500/10' : 'border-stone-200 dark:border-stone-700'}`}>
               <button type="button" className="text-left" onClick={() => setSelectedId(region.id)}>#{index + 1}</button>
               <Select value={region.field} onChange={(e) => updateRegion(region.id, { field: e.target.value as OcrField })} onClick={(e) => e.stopPropagation()}>
                 {fields.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
               </Select>
-              <button type="button" className="min-w-0 truncate text-left font-normal text-slate-500" onClick={() => setSelectedId(region.id)}>{region.sourceLineId ? t('ocr.fromDetectedLine') : t('ocr.manualRegion')}</button>
+              <button type="button" className="min-w-0 truncate text-left font-normal text-stone-500" onClick={() => setSelectedId(region.id)}>{region.sourceLineId ? t('ocr.fromDetectedLine') : t('ocr.manualRegion')}</button>
               <button type="button" aria-label={t('ocr.removeRegion')} className="justify-self-end text-rose-500" onClick={() => removeRegion(region.id)}><Trash2 size={14} /></button>
             </div>
           ))}

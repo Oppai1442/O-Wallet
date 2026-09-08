@@ -41,17 +41,17 @@ export function Unlock() {
     <main className="relative flex min-h-screen items-center justify-center px-4 py-10">
       <div className="absolute right-4 top-4 sm:right-6 sm:top-6"><LanguageSwitcher compact /></div>
       <Card className="w-full max-w-md p-6 sm:p-8">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-950 text-white dark:bg-white dark:text-slate-950"><Wallet size={28} /></div>
-        <h1 className="mt-5 text-center text-2xl font-black text-slate-950 dark:text-white">{t('unlock.title')}</h1>
-        <p className="mt-1 text-center text-sm text-slate-500 dark:text-slate-400">{t('unlock.memoryHint')}</p>
-        {googleBinding && <p className="mt-2 text-center text-xs text-slate-400">{t('unlock.boundAccount', { email: googleBinding.email })}</p>}
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-stone-950 text-white dark:bg-white dark:text-stone-950"><Wallet size={28} /></div>
+        <h1 className="mt-5 text-center text-2xl font-semibold text-stone-950 dark:text-white">{t('unlock.title')}</h1>
+        <p className="mt-1 text-center text-sm text-stone-500 dark:text-stone-400">{t('unlock.memoryHint')}</p>
+        {googleBinding && <p className="mt-2 text-center text-xs text-stone-400">{t('unlock.boundAccount', { email: googleBinding.email })}</p>}
 
         {mode === 'password' ? (
           <div className="mt-6">
             <Label>{t('onboarding.password')}</Label>
             <Input autoFocus type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void submitPassword() }} />
             <Button className="mt-4 w-full" onClick={submitPassword} disabled={!password || busy}><LockKeyhole size={17} /> {busy ? t('unlock.unlocking') : t('unlock.button')}</Button>
-            <button className="mt-4 w-full text-sm font-semibold text-indigo-600 hover:underline dark:text-indigo-400" onClick={() => setMode('recovery')}>{t('unlock.forgot')}</button>
+            <button className="mt-4 w-full text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400" onClick={() => setMode('recovery')}>{t('unlock.forgot')}</button>
           </div>
         ) : (
           <div className="mt-6 space-y-4">
@@ -63,13 +63,13 @@ export function Unlock() {
               </div>
             ))}
             <Button className="w-full" onClick={submitRecovery} disabled={!recoveryKey || answers.some((answer) => !answer.trim()) || busy}><KeyRound size={17} /> {t('unlock.recovery')}</Button>
-            <button className="w-full text-sm font-semibold text-indigo-600 hover:underline dark:text-indigo-400" onClick={() => setMode('password')}>{t('unlock.back')}</button>
+            <button className="w-full text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400" onClick={() => setMode('password')}>{t('unlock.back')}</button>
           </div>
         )}
 
-        <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-800">
+        <div className="mt-6 border-t border-stone-200 pt-4 dark:border-stone-800">
           <Button variant="ghost" className="w-full" onClick={() => void changeAccount()} disabled={busy}>{t('unlock.switchAccount')}</Button>
-          <p className="mt-2 text-center text-xs leading-5 text-slate-500">{t('unlock.switchAccountHint')}</p>
+          <p className="mt-2 text-center text-xs leading-5 text-stone-500">{t('unlock.switchAccountHint')}</p>
         </div>
 
         {error && <p className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</p>}

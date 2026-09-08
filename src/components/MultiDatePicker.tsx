@@ -44,14 +44,14 @@ export function MultiDatePicker({ selected, onChange }: { selected: string[]; on
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+    <div className="rounded-2xl border border-stone-200 bg-white p-3 dark:border-stone-800 dark:bg-stone-900">
       <div className="flex items-center justify-between gap-2">
         <Button variant="ghost" className="px-2" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1, 12))}><ChevronLeft size={17} /></Button>
-        <div className="text-sm font-black text-slate-900 dark:text-white">{new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(month)}</div>
+        <div className="text-sm font-semibold text-stone-900 dark:text-white">{new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(month)}</div>
         <Button variant="ghost" className="px-2" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1, 12))}><ChevronRight size={17} /></Button>
       </div>
 
-      <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[11px] font-bold uppercase tracking-wide text-slate-400">
+      <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[11px] font-bold uppercase tracking-wide text-stone-400">
         {weekDays.map((day) => <div key={day} className="py-1">{day}</div>)}
       </div>
       <div className="grid grid-cols-7 gap-1">
@@ -65,7 +65,7 @@ export function MultiDatePicker({ selected, onChange }: { selected: string[]; on
               type="button"
               key={key}
               onClick={() => toggle(key)}
-              className={`aspect-square rounded-xl text-sm font-bold transition ${active ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800'} ${isToday && !active ? 'ring-1 ring-inset ring-indigo-400' : ''}`}
+              className={`aspect-square rounded-xl text-sm font-bold transition ${active ? 'bg-blue-600 text-white shadow-sm' : 'text-stone-700 hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800'} ${isToday && !active ? 'ring-1 ring-inset ring-blue-400' : ''}`}
             >
               {day}
             </button>
@@ -73,8 +73,8 @@ export function MultiDatePicker({ selected, onChange }: { selected: string[]; on
         })}
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 text-xs dark:border-slate-800">
-        <span className="font-semibold text-slate-500">{t('schedule.selectedDates', { count: selected.length })}</span>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-stone-100 pt-3 text-xs dark:border-stone-800">
+        <span className="font-semibold text-stone-500">{t('schedule.selectedDates', { count: selected.length })}</span>
         {selected.length > 0 && <Button variant="ghost" className="px-2 py-1 text-xs" onClick={() => onChange([])}><RotateCcw size={14} /> {t('schedule.clearDates')}</Button>}
       </div>
     </div>
