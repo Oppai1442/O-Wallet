@@ -43,11 +43,11 @@ export function Onboarding() {
   }
 
   function downloadRecovery() {
-    const text = `O-Wallet Recovery Key\n=====================\n\n${recoveryKey}\n\n${t('onboarding.recoveryFileNote')}\n`
+    const text = `${t('onboarding.recoveryFileHeading')}\n=====================\n\n${recoveryKey}\n\n${t('onboarding.recoveryFileNote')}\n`
     const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }))
     const a = document.createElement('a')
     a.href = url
-    a.download = 'O-Wallet-recovery-key.txt'
+    a.download = 'O-Wallet-recovery-code.txt'
     a.click()
     URL.revokeObjectURL(url)
     setSavedRecovery(true)

@@ -6,7 +6,7 @@
 2. Each user owns the Google Drive files created by O-Wallet.
 3. Transaction content and image content are encrypted before Drive upload.
 4. The encryption password and unwrapped DEK are never intentionally uploaded.
-5. Google OAuth access tokens are never sent to an O-Wallet backend. By default they are persisted only in `sessionStorage` to survive reloads in the current tab; longer local reconnect windows are optional.
+5. Google OAuth access tokens are never sent to an O-Wallet backend. Active bearer tokens are persisted only in `sessionStorage` to survive reloads in the current tab; longer remember windows persist account/reconnect metadata only.
 
 ## Key hierarchy
 
@@ -88,7 +88,7 @@ The UI only enforces 8 characters for V1 usability. A public release should add 
 
 Google authorization and vault unlocking are separate:
 
-- Google connection defaults to the current tab session. The access token is copied to `sessionStorage`, so F5/reload does not immediately disconnect the app. Google access tokens are short-lived. Longer reconnect windows keep local account/reconnect metadata and attempt silent renewal when possible, but a pure static frontend cannot guarantee long-lived refresh without user interaction.
+- Google connection defaults to the current tab session. The access token is kept in `sessionStorage`, so F5/reload does not immediately disconnect the app. Long remember windows store only account/reconnect metadata in `localStorage`. O-Wallet performs pre-expiry silent renewal, a short retry burst after expiry/reload, and later focus/online retries. Google can still require explicit user interaction because the app has no backend refresh-token service.
 - Vault remembered unlock is disabled by default. If the user enables it, O-Wallet stores the non-extractable DEK `CryptoKey` in IndexedDB until the selected expiry. This improves convenience but reduces protection against someone who can use the same browser profile. The preferred remember duration may be synced as an encrypted setting, but the actual DEK never follows that preference into Drive.
 - Explicit **Lock vault** clears the remembered DEK immediately.
 - **Switch Google account on this device** clears local ciphertext, vault config, account binding and remembered DEK, but does not delete Drive data.
@@ -101,3 +101,8 @@ Do not enable remembered unlock on shared/untrusted devices.
 OCR teaching, region editing, inline-label cleanup, date parsing and semantic duplicate detection all execute in the browser. Raw screenshots are not sent to an O-Wallet backend. During multi-image OCR, each accepted source image is encrypted locally before it is written to IndexedDB/Drive.
 
 Semantic duplicate warnings are advisory. Exact-looking matches are deselected by default in the batch review UI, but the user can explicitly choose to save them. This mechanism is not a cryptographic or synchronization conflict check and does not delete existing records.
+
+
+## Google token migration in v0.6.2
+
+Older O-Wallet builds could keep the current bearer token inside the long-duration local session object. v0.6.2 migrates that format: a still-valid token is moved to `sessionStorage`, and the long-lived `localStorage` record is rewritten without `accessToken` / `expiresAt`. Expired tokens are discarded. This reduces the lifetime of bearer credentials in persistent browser storage, but XSS on an active O-Wallet origin can still access the current session token and remains a threat.

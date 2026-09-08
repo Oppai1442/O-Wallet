@@ -85,3 +85,12 @@ button, [role="button"] {
     animation-iteration-count: 1 !important;
   }
 }
+
+@keyframes ow-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.ow-fade-in {
+  animation: ow-fade-in 160ms ease-out both;
+}

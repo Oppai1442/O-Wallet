@@ -19,8 +19,26 @@ type TokenClient = {
   requestAccessToken: (options?: { prompt?: GooglePrompt; login_hint?: string }) => void
 }
 
-type StoredGoogleSession = {
+type StoredGoogleRecord = {
+  version: 3
+  user: GoogleUser
+  accessToken?: string
+  expiresAt?: number
+  rememberUntil: number
+  mode: RememberDuration
+}
+
+type LegacyStoredGoogleSessionV1 = {
   session: GoogleSession
+  rememberUntil: number
+  mode: RememberDuration
+}
+
+type LegacyStoredGoogleSessionV2 = {
+  version: 2
+  user: GoogleUser
+  accessToken?: string
+  expiresAt?: number
   rememberUntil: number
   mode: RememberDuration
 }
@@ -53,7 +71,6 @@ declare global {
 }
 
 let scriptPromise: Promise<void> | undefined
-
 
 function safeStorageGet(storage: Storage, key: string) {
   try { return storage.getItem(key) } catch { return null }
@@ -106,9 +123,7 @@ async function fetchGoogleUser(accessToken: string): Promise<GoogleUser> {
 
 export async function connectGoogle(prompt: GooglePrompt = 'select_account', loginHint?: string): Promise<GoogleSession> {
   const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
-  if (!clientId || clientId.startsWith('your-client-id')) {
-    throw new Error('error.googleClientMissing')
-  }
+  if (!clientId || clientId.startsWith('your-client-id')) throw new Error('error.googleClientMissing')
 
   await loadGoogleIdentityScript()
   if (!window.google?.accounts?.oauth2) throw new Error('error.googleNotReady')
@@ -150,15 +165,47 @@ function durationMs(duration: RememberDuration) {
   }
 }
 
-function parseStored(raw: string | null): StoredGoogleSession | undefined {
+function normalizeStored(raw: string | null): StoredGoogleRecord | undefined {
   if (!raw) return undefined
   try {
-    const value = JSON.parse(raw) as StoredGoogleSession
-    if (!value?.session?.user?.sub || !value.rememberUntil) return undefined
-    return value
+    const value = JSON.parse(raw) as StoredGoogleRecord | LegacyStoredGoogleSessionV1 | LegacyStoredGoogleSessionV2
+    if ('session' in value) {
+      if (!value.session?.user?.sub || !value.rememberUntil) return undefined
+      return {
+        version: 3,
+        user: value.session.user,
+        accessToken: value.session.accessToken,
+        expiresAt: value.session.expiresAt,
+        rememberUntil: value.rememberUntil,
+        mode: value.mode,
+      }
+    }
+    if (!value.user?.sub || !value.rememberUntil) return undefined
+    return {
+      version: 3,
+      user: value.user,
+      accessToken: value.accessToken,
+      expiresAt: value.expiresAt,
+      rememberUntil: value.rememberUntil,
+      mode: value.mode,
+    }
   } catch {
     return undefined
   }
+}
+
+function writeSessionRecord(record: StoredGoogleRecord) {
+  safeStorageSet(sessionStorage, TAB_SESSION_KEY, JSON.stringify(record))
+}
+
+function writeDeviceReconnectRecord(record: StoredGoogleRecord) {
+  const metadataOnly: StoredGoogleRecord = {
+    version: 3,
+    user: record.user,
+    rememberUntil: record.rememberUntil,
+    mode: record.mode,
+  }
+  safeStorageSet(localStorage, DEVICE_SESSION_KEY, JSON.stringify(metadataOnly))
 }
 
 export function persistGoogleSession(session: GoogleSession, mode: RememberDuration) {
@@ -166,32 +213,64 @@ export function persistGoogleSession(session: GoogleSession, mode: RememberDurat
   safeStorageRemove(localStorage, DEVICE_SESSION_KEY)
   if (mode === 'off') return
 
-  const rememberUntil = mode === 'tab'
-    ? session.expiresAt
-    : Date.now() + durationMs(mode)
-  const value: StoredGoogleSession = { session, rememberUntil, mode }
-  const serialized = JSON.stringify(value)
-  if (mode === 'tab') safeStorageSet(sessionStorage, TAB_SESSION_KEY, serialized)
-  else safeStorageSet(localStorage, DEVICE_SESSION_KEY, serialized)
+  const rememberUntil = mode === 'tab' ? session.expiresAt : Date.now() + durationMs(mode)
+  const record: StoredGoogleRecord = {
+    version: 3,
+    user: session.user,
+    accessToken: session.accessToken,
+    expiresAt: session.expiresAt,
+    rememberUntil,
+    mode,
+  }
+
+  // Active bearer tokens live only in sessionStorage. Longer choices persist only
+  // account/reconnect metadata in localStorage, so closing the browser does not leave
+  // a bearer token sitting in long-lived storage.
+  writeSessionRecord(record)
+  if (mode !== 'tab') writeDeviceReconnectRecord(record)
 }
 
 export function loadStoredGoogleState(): StoredGoogleState {
-  const tab = parseStored(safeStorageGet(sessionStorage, TAB_SESSION_KEY))
-  const device = parseStored(safeStorageGet(localStorage, DEVICE_SESSION_KEY))
-  const stored = tab ?? device
-  if (!stored) return {}
+  let tab = normalizeStored(safeStorageGet(sessionStorage, TAB_SESSION_KEY))
+  let device = normalizeStored(safeStorageGet(localStorage, DEVICE_SESSION_KEY))
 
-  if (stored.rememberUntil <= Date.now()) {
-    if (tab) safeStorageRemove(sessionStorage, TAB_SESSION_KEY)
-    if (device) safeStorageRemove(localStorage, DEVICE_SESSION_KEY)
-    return {}
+  // Migrate old builds that stored the active token inside localStorage. If it is still
+  // valid, move it to sessionStorage; localStorage is rewritten as metadata-only.
+  if (device?.accessToken || device?.expiresAt) {
+    if (device.accessToken && device.expiresAt && device.expiresAt > Date.now()) {
+      writeSessionRecord(device)
+      tab = device
+    }
+    writeDeviceReconnectRecord(device)
+    device = { ...device, accessToken: undefined, expiresAt: undefined }
   }
 
+  if (tab && tab.rememberUntil <= Date.now()) {
+    safeStorageRemove(sessionStorage, TAB_SESSION_KEY)
+    tab = undefined
+  }
+  if (device && device.rememberUntil <= Date.now()) {
+    safeStorageRemove(localStorage, DEVICE_SESSION_KEY)
+    device = undefined
+  }
+
+  if (tab && (!tab.accessToken || !tab.expiresAt || tab.expiresAt <= Date.now())) {
+    safeStorageRemove(sessionStorage, TAB_SESSION_KEY)
+    tab = undefined
+  }
+
+  const metadata = device ?? tab
+  if (!metadata) return {}
+
+  const session = tab?.accessToken && tab.expiresAt && tab.expiresAt > Date.now()
+    ? { accessToken: tab.accessToken, expiresAt: tab.expiresAt, user: tab.user }
+    : undefined
+
   return {
-    session: stored.session.expiresAt > Date.now() ? stored.session : undefined,
-    user: stored.session.user,
-    reconnectUntil: stored.rememberUntil,
-    mode: stored.mode,
+    session,
+    user: metadata.user,
+    reconnectUntil: metadata.rememberUntil,
+    mode: metadata.mode,
   }
 }
 

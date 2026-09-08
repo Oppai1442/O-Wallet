@@ -108,11 +108,14 @@ The OCR dependency is code-split: the transaction modal is lazy-loaded and Tesse
 
 ```text
 F5 / reload
-  -> restore Google token from sessionStorage if still valid
-  -> load local vault config
+  -> load local vault config + device preferences first
+  -> restore active Google token from sessionStorage if still valid
+  -> otherwise restore remembered Google account/reconnect metadata
   -> if remembered unlock is enabled and unexpired, restore the IndexedDB CryptoKey
   -> otherwise show password unlock
-  -> once unlocked + Google-connected, sync Drive before creating local defaults
+  -> render local UI without waiting for Google network renewal
+  -> in background: silent Google renewal (3 attempts)
+  -> on success: sync Drive; on failure: mark reconnect required
 ```
 
 That last ordering is important on a new device: remote records are pulled before local defaults are created, preventing duplicate seed accounts/categories and ensuring desktop-created transactions appear on mobile immediately after unlock.
@@ -127,3 +130,22 @@ O-Wallet does not require a server-side scheduler. Multiple-date and recurring i
 Future records sync like any other record but are **not effective** for balance, budget, dashboard, or analytics calculations until `occurredAt <= current device time`. The UI refreshes its current-time boundary periodically and when the tab regains focus.
 
 Batch persistence uses `WalletRepository.putMany()` with encrypted chunks to avoid triggering a full repository refresh and Drive sync for every generated record.
+
+
+### Google reconnect state machine (v0.6.2)
+
+```text
+disconnected
+    | explicit Connect
+    v
+connected ---- token near expiry ----> silent renew
+    |                                  | success
+    | token expires                    +------> connected
+    v
+reconnecting -- 3 silent failures --> attention
+    ^                                    |
+    | focus / online retry               | user Reconnect
+    +------------------------------------+
+```
+
+The local vault is independent from this state machine. Drive being temporarily unavailable does not block viewing/editing the encrypted local cache.

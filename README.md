@@ -4,18 +4,18 @@ O-Wallet is a private, local-first expense tracker built as a static PWA.
 
 **No O-Wallet runtime backend is required.** The production deployment is static HTML/CSS/JS. The browser performs OCR, encryption, analytics and sync; encrypted cloud data is stored in the user's own Google Drive.
 
-Current release: **v0.6.0**
+Current release: **v0.6.2**
 
 ## Highlights
 
 - React + Vite + TypeScript + Tailwind CSS.
 - Installable PWA with mobile bottom navigation and desktop sidebar.
-- Vietnamese and English UI. Vietnamese copy uses neutral product language.
+- Vietnamese and English UI. Vietnamese copy uses neutral, plain-language product wording for regular users.
 - IndexedDB via Dexie; transaction and image payloads are AES-256-GCM ciphertext.
 - Google Identity Services + Google Drive API with `drive.file`.
 - Visible `O-Wallet/` folder in each user's own Google Drive.
 - Cross-device sync with UUID + version + timestamp + device ID + tombstones.
-- Google session survives reload by default within the current tab; longer per-device reconnect windows are configurable.
+- Google session survives reload within the current tab; longer remember windows persist only reconnect metadata, retry silent renewal automatically, and expose a manual reconnect action when Google requires interaction.
 - Optional per-device remembered vault unlock (15 minutes to 30 days); default remains password-on-reload.
 - Local account switching clears only browser-side O-Wallet data and never deletes the Drive folder.
 - Tesseract.js OCR runs in the browser with Vietnamese + English recognition assets and can parse user-selected spatial regions.
@@ -31,6 +31,7 @@ Current release: **v0.6.0**
 - Recurring batch generation by weekday through a chosen end date. Future generated transactions are stored and synced immediately, but balances, budgets and analytics ignore them until their occurrence time.
 - Decrypted JSON/CSV export is available as an explicit local action.
 - Privacy Policy and Terms of Service pages included for public OAuth deployments.
+- Footer links to **O-Lab**, the project hub at `https://oppai1442.github.io/all/`.
 
 ## Architecture
 
@@ -411,7 +412,7 @@ Vault unlock
   password after reload (default) | 15m | 1h | 8h | 1d | 7d | 30d
 ```
 
-The Google access token itself is short-lived. `current tab` stores the active token in `sessionStorage`, which fixes ordinary F5/reload logout. Longer windows keep the last account/reconnect window locally and O-Wallet attempts a silent token renewal when Google/browser state allows it; the user may still be asked to reconnect.
+The Google access token itself is short-lived. Active bearer tokens are stored only in `sessionStorage`, which fixes ordinary F5/reload logout in the same tab. Longer windows store only account + reconnect metadata in `localStorage`. O-Wallet renews silently shortly before expiry, retries a remembered session several times after reload/expiry, and retries again on `focus` / `online`. If Google requires interaction, the UI changes to **Reconnect required** instead of pretending Drive is disconnected.
 
 Remembered vault unlock is intentionally **off by default**. When enabled, the browser persists the non-extractable DEK `CryptoKey` in IndexedDB on that device. This is a convenience/security trade-off and should not be enabled on shared devices.
 
@@ -421,7 +422,7 @@ The **Switch Google account on this device** action removes the local vault conf
 
 - The reference architecture has no central O-Wallet financial-data backend.
 - Financial data and image payloads are encrypted client-side before Drive upload.
-- By default, the Google OAuth access token is kept in `sessionStorage` so a page reload in the same tab stays connected until the token expires. Users may opt into a longer local reconnect window; long windows are best-effort because a static frontend has no refresh-token backend.
+- The Google OAuth bearer token is kept in `sessionStorage`, not long-lived `localStorage`. Longer remember windows persist only account/reconnect metadata. Silent renewal is retried automatically, but long windows remain best-effort because a static frontend has no refresh-token backend.
 - Vault auto-unlock is disabled by default. If explicitly enabled, the non-extractable DEK `CryptoKey` is stored in IndexedDB on that device until the selected expiry.
 - Google Drive still sees storage/sync metadata such as file sizes, modification times and application metadata needed for merging.
 - The static host and Google remain third-party infrastructure providers and may process normal network/account metadata under their own policies.
@@ -487,3 +488,14 @@ For irregular bank layouts, O-Wallet now supports two complementary ways to teac
 Field regions strip short inline labels by default, so a region containing `Nội dung: gửi xe` produces `gửi xe` rather than storing the label itself. This behavior can be disabled per region.
 
 Selecting multiple images exposes **Batch OCR**. OCR is processed sequentially with one reusable Tesseract worker, producing one editable draft per image. Existing wallet transactions **and earlier drafts in the same batch** are checked for semantic duplicates using amount/account/time plus recipient/description similarity. Exact-looking matches are deselected by default. This is distinct from Drive synchronization conflicts: sync conflict resolution handles competing versions of the same UUID, while OCR duplicate detection looks for separate transaction UUIDs that appear to represent the same real-world transaction.
+
+
+## v0.6.2 Google session / startup notes
+
+- Startup no longer waits for Google Identity Services before showing the local vault. Local IndexedDB state is hydrated first; Drive reconnection runs in the background.
+- A short 140 ms delayed splash suppresses the one-frame loading flash on fast devices, while longer boots still show a stable O-Wallet loader.
+- Remembered Google sessions use three silent renewal attempts (`0 ms`, `1.2 s`, `4 s`) after an expired token is detected. Focus/online events trigger later retries with a cooldown.
+- While the app remains open, O-Wallet attempts silent renewal roughly 90 seconds before token expiry.
+- If silent renewal cannot proceed, the UI shows **Reconnect required** and a user-initiated reconnect button. Local encrypted data remains available.
+- Legacy builds that stored an access token in long-lived local storage are migrated: a still-valid token is moved to `sessionStorage`, while `localStorage` retains only reconnect metadata.
+- The project-portfolio footer is branded **O-Lab** and links to `https://oppai1442.github.io/all/`.

@@ -42,10 +42,13 @@ export function Settings() {
     saveEntity,
     googleSession,
     googleBinding,
+    googleRememberedUser,
+    googleConnectionState,
     googleConfigured,
     devicePreferences,
     updateDevicePreferences,
     connectGoogle,
+    retryGoogleConnection,
     disconnectGoogle,
     switchLocalAccount,
     syncNow,
@@ -193,21 +196,39 @@ export function Settings() {
             <h2 className="font-bold text-slate-900 dark:text-white">{t('settings.driveSync')}</h2>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">{t('settings.driveHint')}</p>
           </div>
-          {googleSession ? <Badge tone="green">{t('common.connected')}</Badge> : <Badge>{t('common.disconnected')}</Badge>}
+          {googleConnectionState === 'connected' && <Badge tone="green">{t('common.connected')}</Badge>}
+          {googleConnectionState === 'reconnecting' && <Badge tone="amber">{t('common.reconnecting')}</Badge>}
+          {googleConnectionState === 'attention' && <Badge tone="red">{t('common.actionRequired')}</Badge>}
+          {googleConnectionState === 'disconnected' && <Badge>{t('common.disconnected')}</Badge>}
         </div>
 
         {!googleConfigured && <div className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">{t('settings.clientMissing')}</div>}
 
         {googleSession ? (
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            {googleSession.user.picture && <img src={googleSession.user.picture} className="h-10 w-10 rounded-full" alt="Google profile" />}
+            {googleSession.user.picture && <img src={googleSession.user.picture} className="h-10 w-10 rounded-full" alt={t('settings.googleProfileAlt')} />}
             <div className="mr-auto min-w-0"><div className="truncate text-sm font-bold text-slate-800 dark:text-slate-100">{googleSession.user.name}</div><div className="truncate text-xs text-slate-500">{googleSession.user.email}</div></div>
-            <Button variant="secondary" onClick={() => void syncNow()} disabled={syncBusy}><RefreshCw className={syncBusy ? 'animate-spin' : ''} size={17} />{syncBusy ? syncMessage || 'Sync…' : t('settings.syncNow')}</Button>
+            <Button variant="secondary" onClick={() => void syncNow()} disabled={syncBusy}><RefreshCw className={syncBusy ? 'animate-spin' : ''} size={17} />{syncBusy ? syncMessage || t('common.syncing') : t('settings.syncNow')}</Button>
             {driveFolder && <Button variant="secondary" onClick={() => window.open(openDriveFolderUrl(driveFolder), '_blank', 'noopener,noreferrer')}><FolderOpen size={17} /> {t('settings.openDrive')}</Button>}
             <Button variant="ghost" onClick={disconnectGoogle}><Unplug size={17} /> {t('settings.disconnect')}</Button>
           </div>
+        ) : (googleRememberedUser || googleBinding) ? (
+          <div className="mt-4 rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/40">
+            <div className="flex flex-wrap items-center gap-3">
+              {(googleRememberedUser?.picture || googleBinding?.picture) && <img src={googleRememberedUser?.picture ?? googleBinding?.picture} className="h-10 w-10 rounded-full" alt={t('settings.googleProfileAlt')} />}
+              <div className="mr-auto min-w-0">
+                <div className="truncate text-sm font-bold text-slate-800 dark:text-slate-100">{googleRememberedUser?.name ?? googleBinding?.name}</div>
+                <div className="truncate text-xs text-slate-500">{googleRememberedUser?.email ?? googleBinding?.email}</div>
+              </div>
+              <Button variant="secondary" onClick={() => void retryGoogleConnection()} disabled={!googleConfigured || googleConnectionState === 'reconnecting'}>
+                <RefreshCw className={googleConnectionState === 'reconnecting' ? 'animate-spin' : ''} size={17} />
+                {t('settings.reconnectGoogle')}
+              </Button>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-slate-500">{googleConnectionState === 'reconnecting' ? t('settings.reconnectingHint') : t('settings.reconnectNeededHint')}</p>
+          </div>
         ) : (
-          <div className="mt-4">{googleBinding && <p className="mb-3 text-xs text-slate-500">{t('settings.boundAccount', { email: googleBinding.email })}</p>}<Button onClick={() => void connectGoogle()} disabled={!googleConfigured}><Cloud size={17} /> {t('settings.connectGoogle')}</Button></div>
+          <div className="mt-4"><Button onClick={() => void connectGoogle()} disabled={!googleConfigured}><Cloud size={17} /> {t('settings.connectGoogle')}</Button></div>
         )}
 
         {lastSync && <div className="mt-3 text-xs text-slate-500">{t('settings.lastSync', { pulledRecords: lastSync.pulledRecords, pulledImages: lastSync.pulledImages, pushedRecords: lastSync.pushedRecords, pushedImages: lastSync.pushedImages, conflicts: lastSync.conflictsResolved })}</div>}

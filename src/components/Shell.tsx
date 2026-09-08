@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
-import { BarChart3, Home, LockKeyhole, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon, Wallet } from 'lucide-react'
+import { BarChart3, ExternalLink, Home, LockKeyhole, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon, Wallet } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { useI18n } from '../i18n'
 import { Analytics } from './Analytics'
@@ -20,7 +20,7 @@ function Main({ page }: { page: Page }) {
 }
 
 export function Shell() {
-  const { googleSession, syncBusy, syncMessage, syncNow, lock } = useWallet()
+  const { googleSession, googleRememberedUser, googleConnectionState, syncBusy, syncMessage, syncNow, retryGoogleConnection, lock } = useWallet()
   const { t } = useI18n()
   const [page, setPage] = useState<Page>('home')
   const [showAdd, setShowAdd] = useState(false)
@@ -43,7 +43,7 @@ export function Shell() {
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-20 border-r border-slate-200/80 bg-white/90 p-3 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/90 md:flex md:flex-col xl:w-64 xl:p-4">
         <div className="flex items-center justify-center gap-3 py-2 xl:justify-start xl:px-2">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white"><Wallet size={21} /></div>
-          <div className="hidden xl:block"><div className="font-black tracking-tight">O-Wallet</div><div className="text-xs text-slate-500">local-first</div></div>
+          <div className="hidden xl:block"><div className="font-black tracking-tight">O-Wallet</div><div className="text-xs text-slate-500">{t('app.shortTagline')}</div></div>
         </div>
         <nav className="mt-8 space-y-1">
           {nav.map((item) => (
@@ -62,15 +62,32 @@ export function Shell() {
         <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-[#f5f7fb]/88 px-4 py-3 backdrop-blur-xl dark:border-slate-800 dark:bg-[#0b0d12]/88 sm:px-6">
           <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-3">
             <div className="flex items-center gap-2 md:hidden"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white"><Wallet size={19} /></div><span className="font-black">O-Wallet</span></div>
-            <div className="hidden min-w-0 truncate text-xs text-slate-500 md:block">{googleSession ? t('nav.driveConnected', { email: googleSession.user.email }) : t('nav.driveDisconnected')}</div>
+            <div className="hidden min-w-0 truncate text-xs text-slate-500 md:block">
+              {googleConnectionState === 'connected' && googleSession && t('nav.driveConnected', { email: googleSession.user.email })}
+              {googleConnectionState === 'reconnecting' && t('nav.driveReconnecting')}
+              {googleConnectionState === 'attention' && t('nav.driveReconnectNeeded')}
+              {googleConnectionState === 'disconnected' && t('nav.driveDisconnected')}
+            </div>
             <div className="ml-auto flex items-center gap-2">
-              {googleSession && <Button variant="secondary" className="px-3" onClick={() => void syncNow()} disabled={syncBusy}><RefreshCw size={16} className={syncBusy ? 'animate-spin' : ''} /><span className="hidden sm:inline">{syncBusy ? syncMessage || 'Sync…' : t('nav.sync')}</span></Button>}
+              {googleConnectionState === 'connected' && googleSession && <Button variant="secondary" className="px-3" onClick={() => void syncNow()} disabled={syncBusy}><RefreshCw size={16} className={syncBusy ? 'animate-spin' : ''} /><span className="hidden sm:inline">{syncBusy ? syncMessage || t('common.syncing') : t('nav.sync')}</span></Button>}
+              {googleConnectionState === 'reconnecting' && googleRememberedUser && <Button variant="secondary" className="px-3" disabled><RefreshCw size={16} className="animate-spin" /><span className="hidden sm:inline">{t('common.reconnecting')}</span></Button>}
+              {googleConnectionState === 'attention' && googleRememberedUser && <Button variant="secondary" className="px-3" onClick={() => void retryGoogleConnection()}><RefreshCw size={16} /><span className="hidden sm:inline">{t('settings.reconnectGoogle')}</span></Button>}
               <Button className="hidden sm:inline-flex md:hidden" onClick={() => setShowAdd(true)}><Plus size={16} /> {t('common.add')}</Button>
             </div>
           </div>
         </header>
 
-        <main className="mx-auto max-w-[1500px] px-3 pb-28 pt-4 sm:px-5 sm:pt-5 lg:px-6 md:pb-10"><Main page={page} /></main>
+        <main className="mx-auto max-w-[1500px] px-3 pb-8 pt-4 sm:px-5 sm:pt-5 lg:px-6"><Main page={page} /></main>
+        <footer className="mx-auto max-w-[1500px] px-3 pb-28 sm:px-5 md:pb-8 lg:px-6">
+          <div className="flex items-center justify-center border-t border-slate-200/70 pt-5 text-xs text-slate-500 dark:border-slate-800">
+            <a href="https://oppai1442.github.io/all/" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-900 dark:hover:text-slate-200">
+              <span className="font-semibold">{t('footer.projectHub')}</span>
+              <span>·</span>
+              <span>{t('footer.moreProjects')}</span>
+              <ExternalLink size={13} />
+            </a>
+          </div>
+        </footer>
       </div>
 
       <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-2 pt-2 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/95 md:hidden">
