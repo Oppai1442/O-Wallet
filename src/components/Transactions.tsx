@@ -1,19 +1,33 @@
-import { useMemo, useState } from 'react'
-import { Image as ImageIcon, Plus, Search, Trash2 } from 'lucide-react'
+import { lazy, Suspense, useMemo, useState } from 'react'
+import { Copy, Image as ImageIcon, Pencil, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { accountDisplayName, categoryDisplayName, useI18n } from '../i18n'
 import { formatDateTime, formatMoney } from '../lib/format'
-import type { TransactionType } from '../types'
-import { Badge, Button, Card, EmptyState, Input, Select } from './ui'
+import type { Transaction, TransactionType } from '../types'
+import { Badge, Button, Card, EmptyState, Input, Label, Select } from './ui'
 import { ImageViewer } from './ImageViewer'
-import { TransactionModal } from './TransactionModal'
+
+const TransactionModal = lazy(() => import('./TransactionModal').then((module) => ({ default: module.TransactionModal })))
+
+type SortKey = 'newest' | 'oldest' | 'amountHigh' | 'amountLow'
 
 export function Transactions() {
   const { transactions, categories, accounts, deleteTransaction } = useWallet()
   const { t, locale } = useI18n()
   const [search, setSearch] = useState('')
   const [type, setType] = useState<'all' | TransactionType>('all')
+  const [accountId, setAccountId] = useState('all')
+  const [categoryId, setCategoryId] = useState('all')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
+  const [minAmount, setMinAmount] = useState('')
+  const [maxAmount, setMaxAmount] = useState('')
+  const [imageFilter, setImageFilter] = useState<'all' | 'with' | 'without'>('all')
+  const [sort, setSort] = useState<SortKey>('newest')
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
+  const [editTx, setEditTx] = useState<Transaction>()
+  const [duplicateTx, setDuplicateTx] = useState<Transaction>()
   const [viewImage, setViewImage] = useState<string>()
   const [deleting, setDeleting] = useState<string>()
 
@@ -21,13 +35,38 @@ export function Transactions() {
   const accountMap = useMemo(() => new Map(accounts.map((item) => [item.id, accountDisplayName(item, t)])), [accounts, t])
   const filtered = useMemo(() => {
     const q = search.trim().toLocaleLowerCase(locale)
-    return transactions.filter((tx) => {
+    const min = minAmount ? Number(minAmount) : undefined
+    const max = maxAmount ? Number(maxAmount) : undefined
+    const from = fromDate ? new Date(`${fromDate}T00:00:00`).getTime() : undefined
+    const to = toDate ? new Date(`${toDate}T23:59:59.999`).getTime() : undefined
+    const result = transactions.filter((tx) => {
       if (type !== 'all' && tx.type !== type) return false
+      if (accountId !== 'all' && tx.accountId !== accountId && tx.destinationAccountId !== accountId) return false
+      if (categoryId !== 'all' && tx.categoryId !== categoryId) return false
+      if (min !== undefined && tx.amount < min) return false
+      if (max !== undefined && tx.amount > max) return false
+      const time = new Date(tx.occurredAt).getTime()
+      if (from !== undefined && time < from) return false
+      if (to !== undefined && time > to) return false
+      if (imageFilter === 'with' && tx.imageIds.length === 0) return false
+      if (imageFilter === 'without' && tx.imageIds.length > 0) return false
       if (!q) return true
-      return [tx.merchant, tx.description, tx.note, categoryMap.get(tx.categoryId), accountMap.get(tx.accountId)]
+      return [tx.merchant, tx.description, tx.note, ...(tx.tags ?? []), categoryMap.get(tx.categoryId), accountMap.get(tx.accountId)]
         .filter(Boolean).join(' ').toLocaleLowerCase(locale).includes(q)
     })
-  }, [transactions, search, type, categoryMap, accountMap, locale])
+    return result.sort((a, b) => {
+      if (sort === 'oldest') return a.occurredAt.localeCompare(b.occurredAt)
+      if (sort === 'amountHigh') return b.amount - a.amount
+      if (sort === 'amountLow') return a.amount - b.amount
+      return b.occurredAt.localeCompare(a.occurredAt)
+    })
+  }, [transactions, search, type, accountId, categoryId, fromDate, toDate, minAmount, maxAmount, imageFilter, sort, categoryMap, accountMap, locale])
+
+  const advancedActive = accountId !== 'all' || categoryId !== 'all' || fromDate || toDate || minAmount || maxAmount || imageFilter !== 'all' || sort !== 'newest'
+
+  function clearAdvanced() {
+    setAccountId('all'); setCategoryId('all'); setFromDate(''); setToDate(''); setMinAmount(''); setMaxAmount(''); setImageFilter('all'); setSort('newest')
+  }
 
   async function remove(id: string) {
     if (!confirm(t('transactions.deleteConfirm'))) return
@@ -43,29 +82,49 @@ export function Transactions() {
       </div>
 
       <Card className="p-3 sm:p-4">
-        <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto]">
           <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} /><Input className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('transactions.search')} /></div>
           <Select value={type} onChange={(e) => setType(e.target.value as 'all' | TransactionType)}><option value="all">{t('transactions.allTypes')}</option><option value="expense">{t('transaction.expense')}</option><option value="income">{t('transaction.income')}</option><option value="transfer">{t('transaction.transfer')}</option></Select>
+          <Button variant={advancedActive ? 'secondary' : 'ghost'} onClick={() => setShowAdvanced((value) => !value)}><SlidersHorizontal size={17} /> {t('transactions.filters')}</Button>
         </div>
+
+        {showAdvanced && (
+          <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4 dark:border-slate-800 sm:grid-cols-2 lg:grid-cols-4">
+            <div><Label>{t('transactions.account')}</Label><Select value={accountId} onChange={(e) => setAccountId(e.target.value)}><option value="all">{t('common.all')}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{accountDisplayName(account, t)}</option>)}</Select></div>
+            <div><Label>{t('transactions.category')}</Label><Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}><option value="all">{t('common.all')}</option>{categories.map((category) => <option key={category.id} value={category.id}>{categoryDisplayName(category, t)}</option>)}</Select></div>
+            <div><Label>{t('transactions.fromDate')}</Label><Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></div>
+            <div><Label>{t('transactions.toDate')}</Label><Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} /></div>
+            <div><Label>{t('transactions.minAmount')}</Label><Input type="number" min="0" value={minAmount} onChange={(e) => setMinAmount(e.target.value)} /></div>
+            <div><Label>{t('transactions.maxAmount')}</Label><Input type="number" min="0" value={maxAmount} onChange={(e) => setMaxAmount(e.target.value)} /></div>
+            <div><Label>{t('transactions.imagesFilter')}</Label><Select value={imageFilter} onChange={(e) => setImageFilter(e.target.value as typeof imageFilter)}><option value="all">{t('common.all')}</option><option value="with">{t('transactions.withImages')}</option><option value="without">{t('transactions.withoutImages')}</option></Select></div>
+            <div><Label>{t('transactions.sort')}</Label><Select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}><option value="newest">{t('transactions.sortNewest')}</option><option value="oldest">{t('transactions.sortOldest')}</option><option value="amountHigh">{t('transactions.sortAmountHigh')}</option><option value="amountLow">{t('transactions.sortAmountLow')}</option></Select></div>
+            {advancedActive && <div className="sm:col-span-2 lg:col-span-4"><Button variant="ghost" onClick={clearAdvanced}><X size={16} /> {t('transactions.clearFilters')}</Button></div>}
+          </div>
+        )}
       </Card>
+
+      <div className="text-xs font-semibold text-slate-500">{t('transactions.filteredCount', { count: filtered.length })}</div>
 
       <Card className="overflow-hidden">
         {filtered.length === 0 ? <div className="p-4"><EmptyState title={t('transactions.emptyTitle')} text={t('transactions.emptyText')} /></div> : (
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
             {filtered.map((tx) => (
-              <div key={tx.id} className="grid gap-3 px-4 py-4 lg:grid-cols-[minmax(0,1.4fr)_180px_150px_auto] lg:items-center">
+              <div key={tx.id} className="grid gap-3 px-4 py-4 xl:grid-cols-[minmax(0,1.4fr)_190px_160px_auto] xl:items-center">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="truncate font-bold text-slate-900 dark:text-white">{tx.merchant || tx.description || t('transaction.noDescription')}</span>
                     <Badge tone={tx.type === 'income' ? 'green' : tx.type === 'expense' ? 'red' : 'slate'}>{t(`transaction.${tx.type}`)}</Badge>
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500"><span>{formatDateTime(tx.occurredAt, locale)}</span><span>{categoryMap.get(tx.categoryId) ?? t('common.other')}</span><span>{accountMap.get(tx.accountId) ?? t('transactions.unknownAccount')}</span></div>
+                  {(tx.tags?.length ?? 0) > 0 && <div className="mt-2 flex flex-wrap gap-1">{tx.tags?.map((tag) => <span key={tag} className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300">#{tag}</span>)}</div>}
                   {tx.note && <div className="mt-1 truncate text-xs text-slate-400">{tx.note}</div>}
                 </div>
                 <div className="text-sm text-slate-500">{tx.balanceAfter !== undefined ? <>{t('transactions.balanceAfter')} <span className="font-semibold text-slate-700 dark:text-slate-300">{formatMoney(tx.balanceAfter, tx.currency, locale)}</span></> : '—'}</div>
                 <div className={`font-black ${tx.type === 'income' ? 'text-emerald-600' : tx.type === 'expense' ? 'text-rose-600' : 'text-slate-700 dark:text-slate-300'}`}>{tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : ''}{formatMoney(tx.amount, tx.currency, locale)}</div>
-                <div className="flex justify-end gap-1">
+                <div className="flex flex-wrap justify-end gap-1">
                   {tx.imageIds.map((id, index) => <Button key={id} variant="ghost" className="px-2" title={t('transactions.imageTitle', { index: index + 1 })} onClick={() => setViewImage(id)}><ImageIcon size={17} /></Button>)}
+                  <Button variant="ghost" className="px-2" title={t('transactions.edit')} onClick={() => setEditTx(tx)}><Pencil size={17} /></Button>
+                  <Button variant="ghost" className="px-2" title={t('transactions.duplicate')} onClick={() => setDuplicateTx(tx)}><Copy size={17} /></Button>
                   <Button variant="ghost" className="px-2 text-rose-500" disabled={deleting === tx.id} onClick={() => remove(tx.id)}><Trash2 size={17} /></Button>
                 </div>
               </div>
@@ -74,7 +133,11 @@ export function Transactions() {
         )}
       </Card>
 
-      {showAdd && <TransactionModal onClose={() => setShowAdd(false)} />}
+      <Suspense fallback={null}>
+        {showAdd && <TransactionModal onClose={() => setShowAdd(false)} />}
+        {editTx && <TransactionModal transaction={editTx} onClose={() => setEditTx(undefined)} />}
+        {duplicateTx && <TransactionModal duplicateFrom={duplicateTx} onClose={() => setDuplicateTx(undefined)} />}
+      </Suspense>
       {viewImage && <ImageViewer imageId={viewImage} onClose={() => setViewImage(undefined)} />}
     </div>
   )

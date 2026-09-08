@@ -109,7 +109,7 @@ function vaultRememberMs(duration: VaultRememberDuration) {
 }
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const { t } = useI18n()
+  const { t, setLanguage } = useI18n()
   const [status, setStatus] = useState<VaultStatus>('loading')
   const [vaultConfig, setVaultConfigState] = useState<VaultConfig>()
   const [dek, setDek] = useState<CryptoKey>()
@@ -223,7 +223,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setAccounts(accts.filter((item) => !item.archived))
     setCategories(cats.filter((item) => !item.archived))
     setSettings(appSettings)
-  }, [])
+    if (appSettings?.language) setLanguage(appSettings.language)
+    if (appSettings?.rememberDefaults) {
+      await setDeviceSessionPreferences(appSettings.rememberDefaults)
+      setDevicePreferencesState(appSettings.rememberDefaults)
+    }
+  }, [setLanguage])
 
   const refresh = useCallback(async () => {
     if (!repository) return

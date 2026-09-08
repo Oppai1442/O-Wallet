@@ -67,28 +67,22 @@ Different UUIDs merge independently. Deletes are tombstones so a deleted record 
 
 ## OCR
 
-V1 OCR flow:
+Current OCR flow:
 
 ```text
 File/Blob
-  -> Tesseract.js Web Worker
-  -> text + blocks
-  -> generic Vietnamese transaction heuristics
+  -> dynamically loaded Tesseract.js Web Worker
+  -> text + word bounding boxes
+  -> optional normalized user-selected regions
+       amount / time / merchant / balance / description / generic / ignore
+  -> region-aware parser
   -> prefilled transaction form
   -> user confirms/edits
 ```
 
-V2 should insert a spatial reconstruction and bank-pattern layer between OCR and parsing:
+Region rectangles are stored as normalized 0..1 coordinates, so a template is not tied to one exact screenshot resolution. Named OCR templates are stored inside the encrypted `settings` record and therefore follow the user through Drive sync. The parser still remains heuristic; future bank-specific semantic profiles can build on top of the same spatial layer.
 
-```text
-OCR blocks
-  -> line/token reconstruction
-  -> bank/app layout profile
-  -> logical fields
-  -> transaction candidate
-```
-
-The generic parser in V1 is intentionally not presented as a replacement for bank-specific pattern work.
+The OCR dependency is code-split: the transaction modal is lazy-loaded and Tesseract itself is imported only when OCR is actually requested. This keeps normal navigation lighter.
 
 ## Reload/session lifecycle
 

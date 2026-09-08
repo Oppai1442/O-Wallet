@@ -3,6 +3,32 @@ export type ThemeMode = 'system' | 'light' | 'dark'
 export type ImageRetentionMode = 'forever' | 'days'
 export type RememberDuration = 'off' | 'tab' | '1h' | '8h' | '1d' | '7d' | '30d'
 export type VaultRememberDuration = 'off' | '15m' | '1h' | '8h' | '1d' | '7d' | '30d'
+export type AppLanguage = 'vi' | 'en'
+export type OcrField = 'generic' | 'amount' | 'occurredAt' | 'merchant' | 'balanceAfter' | 'description' | 'ignore'
+
+export interface OcrRegion {
+  id: string
+  field: OcrField
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface OcrTemplate {
+  id: string
+  name: string
+  aspectRatio?: number
+  regions: OcrRegion[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BudgetConfig {
+  id: string
+  categoryId: string
+  monthlyLimit: number
+}
 
 export interface Transaction {
   id: string
@@ -17,6 +43,7 @@ export interface Transaction {
   balanceAfter?: number
   description?: string
   note?: string
+  tags?: string[]
   imageIds: string[]
   createdAt: string
   updatedAt: string
@@ -48,12 +75,20 @@ export interface Category {
 export interface AppSettings {
   id: 'settings'
   theme: ThemeMode
+  language?: AppLanguage
   imageRetention: {
     mode: ImageRetentionMode
     days: number
   }
   defaultCurrency: string
   autoSync: boolean
+  rememberDefaults?: DeviceSessionPreferences
+  ocrTemplates?: OcrTemplate[]
+  budgets?: BudgetConfig[]
+  transactionDefaults?: {
+    accountId?: string
+    categoryId?: string
+  }
   createdAt: string
   updatedAt: string
   deleted: false
@@ -126,7 +161,6 @@ export interface GoogleSession {
   expiresAt: number
   user: GoogleUser
 }
-
 
 export interface DeviceSessionPreferences {
   googleRemember: RememberDuration

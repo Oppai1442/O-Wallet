@@ -22,7 +22,7 @@ import { Badge, Card, EmptyState, Select } from './ui'
 const PIE_COLORS = ['#6366f1', '#14b8a6', '#f59e0b', '#f43f5e', '#8b5cf6', '#06b6d4', '#84cc16', '#64748b']
 
 export function Dashboard() {
-  const { transactions, categories, accounts } = useWallet()
+  const { transactions, categories, accounts, settings } = useWallet()
   const { t, locale } = useI18n()
   const [range, setRange] = useState<RangeKey>('30d')
   const filtered = useMemo(() => filteredTransactions(transactions, range), [transactions, range])
@@ -30,6 +30,26 @@ export function Dashboard() {
   const trend = useMemo(() => trendData(filtered, range, locale), [filtered, range, locale])
   const pie = useMemo(() => categoryBreakdown(filtered, categories, (category) => categoryDisplayName(category, t), t('common.other')), [filtered, categories, t])
   const balance = useMemo(() => totalBalance(accounts, transactions), [accounts, transactions])
+  const budgetRows = useMemo(() => {
+    const budgets = settings?.budgets ?? []
+    if (!budgets.length) return []
+    const now = new Date()
+    const start = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime()
+    return budgets.map((budget) => {
+      const spent = transactions
+        .filter((tx) => tx.type === 'expense' && tx.categoryId === budget.categoryId)
+        .filter((tx) => { const time = new Date(tx.occurredAt).getTime(); return time >= start && time < end })
+        .reduce((sum, tx) => sum + tx.amount, 0)
+      const category = categories.find((item) => item.id === budget.categoryId)
+      return {
+        ...budget,
+        spent,
+        name: category ? categoryDisplayName(category, t) : t('common.other'),
+        percent: budget.monthlyLimit > 0 ? Math.min(150, spent / budget.monthlyLimit * 100) : 0,
+      }
+    }).sort((a, b) => b.percent - a.percent)
+  }, [settings?.budgets, transactions, categories, t])
 
   const cards = [
     { label: t('dashboard.balance'), value: balance, icon: WalletCards, tone: 'text-indigo-500' },
@@ -66,6 +86,24 @@ export function Dashboard() {
           </Card>
         ))}
       </div>
+
+      {budgetRows.length > 0 && (
+        <Card className="p-4 sm:p-5">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div><div className="font-bold text-slate-900 dark:text-white">{t('dashboard.budgets')}</div><div className="text-xs text-slate-500">{t('dashboard.budgetsHint')}</div></div>
+            <Badge>{t('settings.month')}</Badge>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {budgetRows.map((budget) => (
+              <div key={budget.id} className="rounded-2xl border border-slate-200 p-3 dark:border-slate-800">
+                <div className="flex items-center justify-between gap-3 text-sm"><span className="truncate font-bold text-slate-800 dark:text-slate-100">{budget.name}</span><span className={budget.percent >= 100 ? 'font-bold text-rose-600' : 'font-semibold text-slate-500'}>{Math.round(budget.percent)}%</span></div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className={`h-full rounded-full ${budget.percent >= 100 ? 'bg-rose-500' : budget.percent >= 80 ? 'bg-amber-500' : 'bg-indigo-500'}`} style={{ width: `${Math.min(100, budget.percent)}%` }} /></div>
+                <div className="mt-2 text-xs text-slate-500">{formatMoney(budget.spent, settings?.defaultCurrency ?? 'VND', locale)} / {formatMoney(budget.monthlyLimit, settings?.defaultCurrency ?? 'VND', locale)}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <div className="grid gap-5 xl:grid-cols-[1.7fr_1fr]">
         <Card className="p-4 sm:p-5">

@@ -4,7 +4,7 @@ O-Wallet is a private, local-first expense tracker built as a static PWA.
 
 **No O-Wallet runtime backend is required.** The production deployment is static HTML/CSS/JS. The browser performs OCR, encryption, analytics and sync; encrypted cloud data is stored in the user's own Google Drive.
 
-Current release: **v0.3.0**
+Current release: **v0.4.0**
 
 ## Highlights
 
@@ -18,9 +18,12 @@ Current release: **v0.3.0**
 - Google session survives reload by default within the current tab; longer per-device reconnect windows are configurable.
 - Optional per-device remembered vault unlock (15 minutes to 30 days); default remains password-on-reload.
 - Local account switching clears only browser-side O-Wallet data and never deletes the Drive folder.
-- Tesseract.js OCR runs in the browser with Vietnamese + English recognition assets.
+- Tesseract.js OCR runs in the browser with Vietnamese + English recognition assets and can parse user-selected spatial regions.
+- OCR region templates can be named, encrypted in synced settings and reused across devices.
 - Screenshot bytes are encrypted directly; images are **not** converted to base64 before encryption.
-- Dashboard and analytics with range filters, cash-flow charts and category pie charts.
+- Dashboard and analytics with range filters, cash-flow charts, category pie charts and monthly budget progress.
+- Advanced transaction search/filtering, tags, edit and duplicate actions.
+- Decrypted JSON/CSV export is available as an explicit local action.
 - Privacy Policy and Terms of Service pages included for public OAuth deployments.
 
 ## Architecture
@@ -67,6 +70,11 @@ Implemented:
 - light / dark / system themes;
 - Vietnamese / English language switch;
 - configurable image retention;
+- synced language/theme/default-account/default-category/remember-duration preferences;
+- monthly category budgets;
+- transaction tags, edit/duplicate and advanced filters;
+- OCR spatial region selection + reusable encrypted templates;
+- local JSON/CSV export;
 - PWA manifest/service worker;
 - GitHub Actions Pages deployment workflow;
 - public `privacy.html` and `terms.html`;
@@ -75,8 +83,8 @@ Implemented:
 
 Still intentionally early-stage / needs hardening before serious public use:
 
-- bank-specific spatial OCR pattern editor;
-- edit-transaction UI;
+- bank-specific semantic pattern packs beyond the generic spatial region templates;
+- import/restore from decrypted JSON/CSV exports;
 - automated integration tests against Google Drive;
 - password-change and recovery-key rotation flows;
 - sync compaction/indexing for very large histories;
@@ -437,3 +445,16 @@ ARCHITECTURE.md
 10. Không đưa `client_secret` vào frontend.
 
 Giao diện hỗ trợ **Tiếng Việt / English**. Phần tiếng Việt dùng cách diễn đạt trung lập, phù hợp cho ứng dụng public.
+
+## v0.4.0 notes
+
+This release expands the app beyond the initial core:
+
+- three responsive navigation/layout modes: phone bottom navigation, tablet icon rail, desktop full sidebar;
+- add/edit transaction dialog uses a wider two-pane desktop layout and a single-column mobile sheet;
+- the heavy transaction/OCR code path is code-split and preloaded after idle; Tesseract itself is loaded dynamically only when OCR is requested;
+- full-screen modal backdrop blur was removed to reduce GPU/compositor cost on phones;
+- OCR can use normalized image regions for amount, timestamp, merchant/recipient, balance, description, generic text or ignored areas;
+- region templates live inside encrypted `settings`, so a layout created on one device can follow the user through Drive sync;
+- preferences such as language, theme, defaults and preferred remember durations are stored in encrypted synced settings. Actual OAuth tokens and remembered DEKs remain device-local by design;
+- monthly category budgets, tags, advanced transaction filtering, edit/duplicate actions and local JSON/CSV export were added.

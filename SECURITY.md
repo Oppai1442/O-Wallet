@@ -43,7 +43,7 @@ IndexedDB contains:
 - non-secret sync metadata (UUID, version, updated time, device ID, tombstone flag, record kind);
 - vault key-wrapping metadata (salt, KDF parameters, wrapped DEK, recovery answer hashes).
 
-The local database does not intentionally store plaintext transaction JSON or plaintext image bytes after a save completes. If the user explicitly enables remembered vault unlock, IndexedDB also stores a non-extractable DEK `CryptoKey` and an expiry timestamp on that device. The default is disabled.
+The local database does not intentionally store plaintext transaction JSON or plaintext image bytes after a save completes. Synced preferences, OCR region templates and budget configuration live inside the encrypted `settings` record rather than plaintext browser configuration. If the user explicitly enables remembered vault unlock, IndexedDB also stores a non-extractable DEK `CryptoKey` and an expiry timestamp on that device. The default is disabled.
 
 ## Cloud storage
 
@@ -89,7 +89,7 @@ The UI only enforces 8 characters for V1 usability. A public release should add 
 Google authorization and vault unlocking are separate:
 
 - Google connection defaults to the current tab session. The access token is copied to `sessionStorage`, so F5/reload does not immediately disconnect the app. Google access tokens are short-lived. Longer reconnect windows keep local account/reconnect metadata and attempt silent renewal when possible, but a pure static frontend cannot guarantee long-lived refresh without user interaction.
-- Vault remembered unlock is disabled by default. If the user enables it, O-Wallet stores the non-extractable DEK `CryptoKey` in IndexedDB until the selected expiry. This improves convenience but reduces protection against someone who can use the same browser profile.
+- Vault remembered unlock is disabled by default. If the user enables it, O-Wallet stores the non-extractable DEK `CryptoKey` in IndexedDB until the selected expiry. This improves convenience but reduces protection against someone who can use the same browser profile. The preferred remember duration may be synced as an encrypted setting, but the actual DEK never follows that preference into Drive.
 - Explicit **Lock vault** clears the remembered DEK immediately.
 - **Switch Google account on this device** clears local ciphertext, vault config, account binding and remembered DEK, but does not delete Drive data.
 
