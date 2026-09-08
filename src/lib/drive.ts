@@ -171,7 +171,7 @@ export async function downloadDriveFile(token: string, fileId: string) {
   const response = await fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media`, {
     headers: authHeaders(token),
   })
-  if (!response.ok) throw new Error(`Không tải được Drive file (${response.status}).`)
+  if (!response.ok) throw new Error('error.driveDownload')
   return response.arrayBuffer()
 }
 

@@ -16,40 +16,42 @@ import { useWallet } from '../WalletContext'
 import { categoryBreakdown, filteredTransactions, summarize, trendData, type RangeKey } from '../lib/analytics'
 import { totalBalance } from '../lib/finance'
 import { formatCompactMoney, formatDateTime, formatMoney } from '../lib/format'
+import { categoryDisplayName, useI18n } from '../i18n'
 import { Badge, Card, EmptyState, Select } from './ui'
 
 const PIE_COLORS = ['#6366f1', '#14b8a6', '#f59e0b', '#f43f5e', '#8b5cf6', '#06b6d4', '#84cc16', '#64748b']
 
 export function Dashboard() {
   const { transactions, categories, accounts } = useWallet()
+  const { t, locale } = useI18n()
   const [range, setRange] = useState<RangeKey>('30d')
   const filtered = useMemo(() => filteredTransactions(transactions, range), [transactions, range])
   const summary = useMemo(() => summarize(filtered), [filtered])
-  const trend = useMemo(() => trendData(filtered, range), [filtered, range])
-  const pie = useMemo(() => categoryBreakdown(filtered, categories), [filtered, categories])
+  const trend = useMemo(() => trendData(filtered, range, locale), [filtered, range, locale])
+  const pie = useMemo(() => categoryBreakdown(filtered, categories, (category) => categoryDisplayName(category, t), t('common.other')), [filtered, categories, t])
   const balance = useMemo(() => totalBalance(accounts, transactions), [accounts, transactions])
 
   const cards = [
-    { label: 'Tổng số dư', value: balance, icon: WalletCards, tone: 'text-indigo-500' },
-    { label: 'Thu', value: summary.income, icon: ArrowUpRight, tone: 'text-emerald-500' },
-    { label: 'Chi', value: summary.expense, icon: ArrowDownRight, tone: 'text-rose-500' },
-    { label: 'Net', value: summary.net, icon: PiggyBank, tone: summary.net >= 0 ? 'text-emerald-500' : 'text-rose-500' },
+    { label: t('dashboard.balance'), value: balance, icon: WalletCards, tone: 'text-indigo-500' },
+    { label: t('dashboard.income'), value: summary.income, icon: ArrowUpRight, tone: 'text-emerald-500' },
+    { label: t('dashboard.expense'), value: summary.expense, icon: ArrowDownRight, tone: 'text-rose-500' },
+    { label: t('dashboard.net'), value: summary.net, icon: PiggyBank, tone: summary.net >= 0 ? 'text-emerald-500' : 'text-rose-500' },
   ]
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">Tổng quan</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Dữ liệu được tính trực tiếp trên thiết bị.</p>
+          <h1 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">{t('dashboard.title')}</h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('dashboard.subtitle')}</p>
         </div>
         <Select className="w-36" value={range} onChange={(e) => setRange(e.target.value as RangeKey)}>
-          <option value="7d">7 ngày</option>
-          <option value="30d">30 ngày</option>
-          <option value="3m">3 tháng</option>
-          <option value="6m">6 tháng</option>
-          <option value="1y">1 năm</option>
-          <option value="all">Tất cả</option>
+          <option value="7d">{t('range.7d')}</option>
+          <option value="30d">{t('range.30d')}</option>
+          <option value="3m">{t('range.3m')}</option>
+          <option value="6m">{t('range.6m')}</option>
+          <option value="1y">{t('range.1y')}</option>
+          <option value="all">{t('range.all')}</option>
         </Select>
       </div>
 
@@ -60,7 +62,7 @@ export function Dashboard() {
               <div className="text-sm font-semibold text-slate-500 dark:text-slate-400">{item.label}</div>
               <item.icon className={item.tone} size={19} />
             </div>
-            <div className="mt-3 text-xl font-black tracking-tight text-slate-950 dark:text-white">{formatMoney(item.value)}</div>
+            <div className="mt-3 text-xl font-black tracking-tight text-slate-950 dark:text-white">{formatMoney(item.value, 'VND', locale)}</div>
           </Card>
         ))}
       </div>
@@ -68,8 +70,8 @@ export function Dashboard() {
       <div className="grid gap-5 xl:grid-cols-[1.7fr_1fr]">
         <Card className="p-4 sm:p-5">
           <div className="mb-4">
-            <div className="font-bold text-slate-900 dark:text-white">Thu / chi theo thời gian</div>
-            <div className="text-xs text-slate-500">Khoảng đang chọn: {range.toUpperCase()}</div>
+            <div className="font-bold text-slate-900 dark:text-white">{t('dashboard.cashflow')}</div>
+            <div className="text-xs text-slate-500">{t('dashboard.selectedRange', { range: t(`range.${range}`) })}</div>
           </div>
           {trend.length ? (
             <div className="h-72 w-full">
@@ -81,19 +83,19 @@ export function Dashboard() {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.22} />
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tickFormatter={formatCompactMoney} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <Tooltip formatter={(value) => formatMoney(Number(value))} />
-                  <Area type="monotone" dataKey="income" stroke="#10b981" fill="url(#incomeFill)" strokeWidth={2} />
-                  <Area type="monotone" dataKey="expense" stroke="#f43f5e" fill="url(#expenseFill)" strokeWidth={2} />
+                  <YAxis tickFormatter={(value) => formatCompactMoney(Number(value), locale)} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <Tooltip formatter={(value) => formatMoney(Number(value), 'VND', locale)} />
+                  <Area type="monotone" dataKey="income" name={t('transaction.income')} stroke="#10b981" fill="url(#incomeFill)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="expense" name={t('transaction.expense')} stroke="#f43f5e" fill="url(#expenseFill)" strokeWidth={2} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
-          ) : <EmptyState title="Chưa có dữ liệu" text="Thêm transaction để chart bắt đầu có chuyện để kể." />}
+          ) : <EmptyState title={t('dashboard.noDataTitle')} text={t('dashboard.noDataText')} />}
         </Card>
 
         <Card className="p-4 sm:p-5">
-          <div className="font-bold text-slate-900 dark:text-white">Chi theo category</div>
-          <div className="text-xs text-slate-500">Tổng {formatMoney(summary.expense)}</div>
+          <div className="font-bold text-slate-900 dark:text-white">{t('dashboard.expenseByCategory')}</div>
+          <div className="text-xs text-slate-500">{t('dashboard.total', { value: formatMoney(summary.expense, 'VND', locale) })}</div>
           {pie.length ? (
             <>
               <div className="h-52">
@@ -102,7 +104,7 @@ export function Dashboard() {
                     <Pie data={pie} dataKey="value" nameKey="name" innerRadius={50} outerRadius={78} paddingAngle={2}>
                       {pie.map((item, index) => <Cell key={item.id} fill={PIE_COLORS[index % PIE_COLORS.length]} />)}
                     </Pie>
-                    <Tooltip formatter={(value) => formatMoney(Number(value))} />
+                    <Tooltip formatter={(value) => formatMoney(Number(value), 'VND', locale)} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -110,26 +112,26 @@ export function Dashboard() {
                 {pie.slice(0, 5).map((item, index) => (
                   <div className="flex items-center justify-between gap-3 text-sm" key={item.id}>
                     <div className="flex min-w-0 items-center gap-2"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length] }} /><span className="truncate text-slate-600 dark:text-slate-300">{item.name}</span></div>
-                    <span className="font-semibold text-slate-900 dark:text-slate-100">{formatCompactMoney(item.value)}</span>
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">{formatCompactMoney(item.value, locale)}</span>
                   </div>
                 ))}
               </div>
             </>
-          ) : <div className="mt-4"><EmptyState title="Chưa có khoản chi" text="Pie chart hiện đang ăn không khí." /></div>}
+          ) : <div className="mt-4"><EmptyState title={t('dashboard.noExpenseTitle')} text={t('dashboard.noExpenseText')} /></div>}
         </Card>
       </div>
 
       <Card className="overflow-hidden">
-        <div className="border-b border-slate-100 px-4 py-4 font-bold text-slate-900 dark:border-slate-800 dark:text-white">Giao dịch gần đây</div>
-        {transactions.length === 0 ? <div className="p-4"><EmptyState title="Chưa có transaction" text="Thêm giao dịch thủ công hoặc OCR screenshot." /></div> : (
+        <div className="border-b border-slate-100 px-4 py-4 font-bold text-slate-900 dark:border-slate-800 dark:text-white">{t('dashboard.recent')}</div>
+        {transactions.length === 0 ? <div className="p-4"><EmptyState title={t('dashboard.noTransactionsTitle')} text={t('dashboard.noTransactionsText')} /></div> : (
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
             {transactions.slice(0, 6).map((tx) => (
               <div key={tx.id} className="flex items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
-                  <div className="truncate font-semibold text-slate-800 dark:text-slate-100">{tx.merchant || tx.description || 'Không mô tả'}</div>
-                  <div className="mt-1 flex items-center gap-2 text-xs text-slate-500"><span>{formatDateTime(tx.occurredAt)}</span>{tx.imageIds.length > 0 && <Badge tone="indigo">{tx.imageIds.length} ảnh</Badge>}</div>
+                  <div className="truncate font-semibold text-slate-800 dark:text-slate-100">{tx.merchant || tx.description || t('transaction.noDescription')}</div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-slate-500"><span>{formatDateTime(tx.occurredAt, locale)}</span>{tx.imageIds.length > 0 && <Badge tone="indigo">{t('dashboard.images', { count: tx.imageIds.length })}</Badge>}</div>
                 </div>
-                <div className={`shrink-0 font-bold ${tx.type === 'income' ? 'text-emerald-600' : tx.type === 'expense' ? 'text-rose-600' : 'text-slate-700 dark:text-slate-300'}`}>{tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : ''}{formatMoney(tx.amount, tx.currency)}</div>
+                <div className={`shrink-0 font-bold ${tx.type === 'income' ? 'text-emerald-600' : tx.type === 'expense' ? 'text-rose-600' : 'text-slate-700 dark:text-slate-300'}`}>{tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : ''}{formatMoney(tx.amount, tx.currency, locale)}</div>
               </div>
             ))}
           </div>

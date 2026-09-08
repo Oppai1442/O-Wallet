@@ -18,6 +18,7 @@ import type {
   VaultConfig,
   WalletEntity,
 } from './types'
+import { localizeError, useI18n } from './i18n'
 import { createVault, unlockVaultWithPassword, unlockVaultWithRecovery } from './lib/crypto'
 import { getVaultConfig, setVaultConfig } from './lib/db'
 import { WalletRepository } from './lib/repository'
@@ -63,6 +64,7 @@ interface WalletContextValue {
 const WalletContext = createContext<WalletContextValue | null>(null)
 
 export function WalletProvider({ children }: { children: ReactNode }) {
+  const { t } = useI18n()
   const [status, setStatus] = useState<VaultStatus>('loading')
   const [vaultConfig, setVaultConfigState] = useState<VaultConfig>()
   const [dek, setDek] = useState<CryptoKey>()
@@ -136,11 +138,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setDek(created.dek)
       setStatus('unlocked')
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Không tạo được vault.'
+      const message = localizeError(e, t, 'error.createVault')
       setError(message)
       throw e
     }
-  }, [])
+  }, [t])
 
   const unlockWithPassword = useCallback(async (password: string) => {
     if (!vaultConfig) return
@@ -150,11 +152,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setDek(key)
       setStatus('unlocked')
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Không mở được vault.'
+      const message = localizeError(e, t, 'error.unlockVault')
       setError(message)
       throw e
     }
-  }, [vaultConfig])
+  }, [vaultConfig, t])
 
   const unlockWithRecovery = useCallback(async (recoveryKey: string, answers: string[]) => {
     if (!vaultConfig) return
@@ -164,11 +166,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setDek(key)
       setStatus('unlocked')
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Recovery thất bại.'
+      const message = localizeError(e, t, 'error.recoveryFailed')
       setError(message)
       throw e
     }
-  }, [vaultConfig])
+  }, [vaultConfig, t])
 
   const lock = useCallback(() => {
     setDek(undefined)
@@ -186,11 +188,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setGoogleSession(session)
       return session
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Không kết nối được Google.'
+      const message = localizeError(e, t, 'error.googleConnect')
       setError(message)
       throw e
     }
-  }, [])
+  }, [t])
 
   const disconnectGoogle = useCallback(() => {
     revokeGoogle(googleSession)
@@ -208,35 +210,35 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setStatus('locked')
       return true
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Không restore được vault config.'
+      const message = localizeError(e, t, 'error.restoreVault')
       setError(message)
       throw e
     }
-  }, [connectGoogle, googleSession])
+  }, [connectGoogle, googleSession, t])
 
   const syncNow = useCallback(async () => {
     if (!googleSession || !vaultConfig || !repository || syncBusy) return undefined
     if (googleSession.expiresAt <= Date.now()) {
-      setError('Google access token đã hết hạn. Kết nối Google lại rồi sync.')
+      setError(t('error.tokenExpired'))
       return undefined
     }
     setSyncBusy(true)
     setError(undefined)
     try {
-      const stats = await syncWalletToDrive(googleSession.accessToken, vaultConfig, setSyncMessage)
+      const stats = await syncWalletToDrive(googleSession.accessToken, vaultConfig, (step) => setSyncMessage(t(`sync.${step}`)))
       setLastSync(stats)
       await refresh()
       if (settings) await repository.enforceImageRetention(settings)
       return stats
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Sync thất bại.'
+      const message = localizeError(e, t, 'error.syncFailed')
       setError(message)
       throw e
     } finally {
       setSyncBusy(false)
       setSyncMessage('')
     }
-  }, [googleSession, vaultConfig, repository, syncBusy, refresh, settings])
+  }, [googleSession, vaultConfig, repository, syncBusy, refresh, settings, t])
 
   const notifyMutation = useCallback(async () => {
     await refresh()
@@ -248,10 +250,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, [refresh, settings?.autoSync, googleSession, syncNow])
 
   const saveEntity = useCallback(async <T extends WalletEntity>(entity: T) => {
-    if (!repository) throw new Error('Vault đang khóa.')
+    if (!repository) throw new Error(t('error.vaultLocked'))
     await repository.put(entity)
     await notifyMutation()
-  }, [repository, notifyMutation])
+  }, [repository, notifyMutation, t])
 
   const deleteTransaction = useCallback(async (id: string) => {
     if (!repository) return

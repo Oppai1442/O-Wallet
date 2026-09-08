@@ -110,9 +110,9 @@ export async function createVault(
   recoveryKey: string,
   questions: Array<{ questionId: string; answer: string }>,
 ): Promise<{ config: VaultConfig; dek: CryptoKey }> {
-  if (password.length < 8) throw new Error('Password phải có ít nhất 8 ký tự.')
+  if (password.length < 8) throw new Error('error.passwordTooShort')
   if (questions.length < 2 || questions.some((item) => !item.answer.trim())) {
-    throw new Error('Cần ít nhất 2 câu hỏi bảo mật có câu trả lời.')
+    throw new Error('error.securityQuestionsRequired')
   }
 
   const dekRaw = randomBytes(32)
@@ -174,7 +174,7 @@ export async function unlockVaultWithPassword(config: VaultConfig, password: str
     )
     return importAesKey(raw, ['encrypt', 'decrypt'])
   } catch {
-    throw new Error('Password không đúng.')
+    throw new Error('error.wrongPassword')
   }
 }
 
@@ -184,13 +184,13 @@ export async function unlockVaultWithRecovery(
   answers: string[],
 ) {
   if (answers.length !== config.recovery.questions.length) {
-    throw new Error('Thiếu câu trả lời bảo mật.')
+    throw new Error('error.missingSecurityAnswers')
   }
 
   for (let i = 0; i < config.recovery.questions.length; i += 1) {
     const expected = config.recovery.questions[i]
     const actual = await hashSecurityAnswer(answers[i], base64UrlToBytes(expected.answerSalt))
-    if (actual !== expected.answerHash) throw new Error('Câu trả lời bảo mật không đúng.')
+    if (actual !== expected.answerHash) throw new Error('error.wrongSecurityAnswer')
   }
 
   const key = await recoveryKeyToAesKey(recoveryKey)
@@ -202,7 +202,7 @@ export async function unlockVaultWithRecovery(
     )
     return importAesKey(raw, ['encrypt', 'decrypt'])
   } catch {
-    throw new Error('Recovery key không đúng.')
+    throw new Error('error.wrongRecoveryKey')
   }
 }
 

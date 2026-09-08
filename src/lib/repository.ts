@@ -100,10 +100,10 @@ export class WalletRepository {
     const row = await db.images.get(id)
     if (!row || row.deleted) return undefined
     const clear = await decryptBytes(this.key, row.payload)
-    if (clear.byteLength < 4) throw new Error('Corrupt image payload.')
+    if (clear.byteLength < 4) throw new Error('error.corruptImage')
     const headerLength = new DataView(clear.buffer, clear.byteOffset, clear.byteLength).getUint32(0, false)
     const headerEnd = 4 + headerLength
-    if (headerEnd > clear.byteLength) throw new Error('Corrupt image header.')
+    if (headerEnd > clear.byteLength) throw new Error('error.corruptImage')
     const header = JSON.parse(new TextDecoder().decode(clear.slice(4, headerEnd))) as { mimeType: string; originalName: string; originalSize: number }
     const blob = new Blob([clear.slice(headerEnd) as BlobPart], { type: header.mimeType })
     return { blob, ...header }

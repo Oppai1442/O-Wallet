@@ -1,20 +1,20 @@
-export function formatMoney(value: number, currency = 'VND') {
-  return new Intl.NumberFormat('vi-VN', {
+export function formatMoney(value: number, currency = 'VND', locale = 'vi-VN') {
+  return new Intl.NumberFormat(locale, {
     style: 'currency',
     currency,
     maximumFractionDigits: currency === 'VND' ? 0 : 2,
   }).format(value)
 }
 
-export function formatCompactMoney(value: number) {
-  return new Intl.NumberFormat('vi-VN', {
+export function formatCompactMoney(value: number, locale = 'vi-VN') {
+  return new Intl.NumberFormat(locale, {
     notation: 'compact',
     maximumFractionDigits: 1,
   }).format(value)
 }
 
-export function formatDateTime(iso: string) {
-  return new Intl.DateTimeFormat('vi-VN', {
+export function formatDateTime(iso: string, locale = 'vi-VN') {
+  return new Intl.DateTimeFormat(locale, {
     dateStyle: 'short',
     timeStyle: 'short',
   }).format(new Date(iso))

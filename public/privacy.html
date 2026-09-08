@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <title>O-Wallet Privacy Policy</title>
+  <style>
+    :root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f5f7fb}*{box-sizing:border-box}body{margin:0;padding:32px 16px;line-height:1.65}.wrap{max-width:860px;margin:auto;background:#fff;border:1px solid #e2e8f0;border-radius:20px;padding:28px;box-shadow:0 12px 40px #0f172a0d}h1{margin:0 0 6px;font-size:2rem}h2{margin-top:28px;font-size:1.15rem}p,li{color:#475569}code{background:#f1f5f9;padding:.1rem .35rem;border-radius:.35rem}a{color:#4f46e5}.muted{font-size:.9rem;color:#64748b}.lang{margin:30px 0;border-top:1px solid #e2e8f0;padding-top:30px}@media(prefers-color-scheme:dark){:root{color:#e2e8f0;background:#0b0d12}.wrap{background:#111827;border-color:#334155}p,li,.muted{color:#94a3b8}code{background:#1e293b}a{color:#818cf8}.lang{border-color:#334155}}
+  </style>
+</head>
+<body>
+<main class="wrap">
+  <h1>O-Wallet Privacy Policy</h1>
+  <div class="muted">Last updated: September 8, 2026</div>
+
+  <h2>1. Architecture and data controller</h2>
+  <p>O-Wallet is a static, local-first web application. The reference deployment does not operate a central O-Wallet database or application backend for user financial data. Application code is served as static files, while the user's browser performs encryption, decryption, OCR, analytics and sync operations.</p>
+
+  <h2>2. Data processed on the device</h2>
+  <p>Transactions, account names, categories, notes, imported screenshots and receipts are processed in the browser. Transaction and image payloads are encrypted on the device before being uploaded to Google Drive. The local IndexedDB cache stores encrypted payloads.</p>
+
+  <h2>3. Google account and Google Drive</h2>
+  <p>When the user connects Google, O-Wallet requests Google identity information such as name, email address and profile picture for account display, and the <code>drive.file</code> permission to manage O-Wallet files created or selected for the application. The OAuth access token is held in page memory by the reference implementation and is not sent to an O-Wallet backend.</p>
+  <p>Encrypted data is stored in a visible <code>O-Wallet/</code> folder in the user's own Google Drive and consumes that user's Google Drive storage quota. Google may process account, authentication and storage data under Google's own terms and privacy policies.</p>
+
+  <h2>4. Cryptographic and sync metadata</h2>
+  <p>Google Drive can still see file-level and sync metadata required for storage and synchronization, such as opaque UUIDs, record kind, version counters, timestamps, device identifiers, deletion flags, file sizes and modification times. The vault configuration also contains cryptographic parameters such as salts, wrapped keys and salted security-answer hashes. Financial record contents and image contents are stored as ciphertext.</p>
+
+  <h2>5. OCR</h2>
+  <p>OCR runs in the browser with Tesseract.js. OCR runtime and language assets may be downloaded from third-party content delivery infrastructure used by Tesseract.js. The imported screenshot itself is not intentionally uploaded by O-Wallet's OCR flow; it is passed to the local browser worker.</p>
+
+  <h2>6. Local preferences and analytics</h2>
+  <p>O-Wallet may store non-sensitive local preferences such as the selected interface language in browser storage. The reference application does not intentionally include advertising trackers or a central analytics service. The static hosting provider may still receive normal HTTP request metadata such as IP address, user agent and request time under its own policies.</p>
+
+  <h2>7. Data sharing and sale</h2>
+  <p>The reference O-Wallet application does not sell user financial data. Because it has no central financial-data backend, it does not centrally receive transaction or screenshot plaintext for resale or profiling.</p>
+
+  <h2>8. Data deletion</h2>
+  <p>Users can delete cloud data by deleting the visible <code>O-Wallet/</code> folder from their own Google Drive. Local encrypted data can be removed by clearing site data for the O-Wallet origin in the browser. Google authorization can be revoked from the user's Google account security settings.</p>
+
+  <h2>9. Security limitations</h2>
+  <p>Client-side encryption does not protect plaintext while the vault is actively unlocked in a browser. A compromised device, browser extension, modified deployment, malicious script, weak password or exposed recovery key can compromise data. If both the password and recovery key are lost, encrypted data may be unrecoverable.</p>
+
+  <h2>10. Contact and self-hosted deployments</h2>
+  <p>For the reference project, contact the repository owner through the project's GitHub page. Forks and self-hosted deployments are operated by their respective deployers; those deployers should replace this policy and contact information as appropriate for their deployment.</p>
+
+  <section class="lang" lang="vi">
+    <h1>Chính sách quyền riêng tư O-Wallet</h1>
+    <div class="muted">Cập nhật lần cuối: 08/09/2026</div>
+
+    <h2>1. Kiến trúc và nơi xử lý dữ liệu</h2>
+    <p>O-Wallet là ứng dụng web tĩnh theo hướng local-first. Bản triển khai tham chiếu không vận hành cơ sở dữ liệu trung tâm hoặc backend riêng để lưu dữ liệu tài chính của người dùng. Trình duyệt thực hiện mã hóa, giải mã, OCR, thống kê và đồng bộ.</p>
+
+    <h2>2. Dữ liệu được xử lý trên thiết bị</h2>
+    <p>Giao dịch, tên tài khoản, danh mục, ghi chú, ảnh chụp màn hình và hóa đơn được xử lý trong trình duyệt. Nội dung giao dịch và ảnh được mã hóa trên thiết bị trước khi tải lên Google Drive. IndexedDB cục bộ lưu payload đã mã hóa.</p>
+
+    <h2>3. Tài khoản Google và Google Drive</h2>
+    <p>Khi kết nối Google, O-Wallet yêu cầu thông tin nhận dạng Google như tên, địa chỉ email và ảnh đại diện để hiển thị tài khoản, đồng thời xin quyền <code>drive.file</code> để quản lý các tệp O-Wallet do ứng dụng tạo hoặc được người dùng chọn cho ứng dụng. Access token OAuth chỉ được giữ trong bộ nhớ của trang ở bản triển khai tham chiếu và không được gửi tới backend O-Wallet.</p>
+    <p>Dữ liệu mã hóa được lưu trong thư mục <code>O-Wallet/</code> nhìn thấy được trên Google Drive của chính người dùng và sử dụng dung lượng Drive của tài khoản đó. Google có thể xử lý dữ liệu tài khoản, xác thực và lưu trữ theo điều khoản và chính sách riêng của Google.</p>
+
+    <h2>4. Metadata mật mã và đồng bộ</h2>
+    <p>Google Drive vẫn có thể nhìn thấy metadata cần thiết cho lưu trữ và đồng bộ, ví dụ UUID dạng opaque, loại bản ghi, version, thời gian, định danh thiết bị, cờ xóa, kích thước tệp và thời điểm sửa đổi. Cấu hình vault cũng chứa các tham số mật mã như salt, key đã wrap và hash có salt của câu trả lời bảo mật. Nội dung tài chính và nội dung ảnh được lưu dưới dạng ciphertext.</p>
+
+    <h2>5. OCR</h2>
+    <p>OCR chạy trong trình duyệt bằng Tesseract.js. Runtime và dữ liệu ngôn ngữ OCR có thể được tải từ hạ tầng phân phối nội dung bên thứ ba mà Tesseract.js sử dụng. Ảnh được nhập không được luồng OCR của O-Wallet chủ động tải lên máy chủ; ảnh được chuyển trực tiếp vào browser worker trên thiết bị.</p>
+
+    <h2>6. Tùy chọn cục bộ và analytics</h2>
+    <p>O-Wallet có thể lưu các tùy chọn cục bộ không nhạy cảm, ví dụ ngôn ngữ giao diện, trong browser storage. Bản ứng dụng tham chiếu không chủ động tích hợp tracker quảng cáo hoặc dịch vụ analytics trung tâm. Nhà cung cấp static hosting vẫn có thể nhận metadata HTTP thông thường như địa chỉ IP, user agent và thời gian request theo chính sách riêng của họ.</p>
+
+    <h2>7. Chia sẻ và bán dữ liệu</h2>
+    <p>Bản O-Wallet tham chiếu không bán dữ liệu tài chính của người dùng. Do không có backend trung tâm cho dữ liệu tài chính, ứng dụng không nhận plaintext của giao dịch hoặc ảnh về một máy chủ O-Wallet để bán lại hoặc lập hồ sơ người dùng.</p>
+
+    <h2>8. Xóa dữ liệu</h2>
+    <p>Có thể xóa dữ liệu cloud bằng cách xóa thư mục <code>O-Wallet/</code> trong Google Drive. Dữ liệu mã hóa cục bộ có thể được xóa bằng cách xóa site data của origin O-Wallet trong trình duyệt. Quyền Google có thể được thu hồi trong phần bảo mật của tài khoản Google.</p>
+
+    <h2>9. Giới hạn bảo mật</h2>
+    <p>Mã hóa phía client không bảo vệ plaintext khi vault đang được mở khóa trong trình duyệt. Thiết bị bị xâm nhập, extension độc hại, deployment bị sửa, script độc hại, mật khẩu yếu hoặc recovery key bị lộ đều có thể làm lộ dữ liệu. Nếu mất cả mật khẩu và recovery key, dữ liệu mã hóa có thể không thể khôi phục.</p>
+
+    <h2>10. Liên hệ và bản tự host</h2>
+    <p>Với project tham chiếu, có thể liên hệ chủ repository thông qua trang GitHub của project. Các bản fork hoặc tự host do người triển khai tương ứng vận hành; người triển khai nên thay chính sách và thông tin liên hệ cho phù hợp với bản của mình.</p>
+  </section>
+</main>
+</body>
+</html>

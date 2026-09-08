@@ -32,23 +32,28 @@ export function summarize(transactions: Transaction[]) {
   return { income, expense, net: income - expense }
 }
 
-export function categoryBreakdown(transactions: Transaction[], categories: Category[]) {
-  const names = new Map(categories.map((category) => [category.id, category.name]))
+export function categoryBreakdown(
+  transactions: Transaction[],
+  categories: Category[],
+  displayName: (category: Category) => string = (category) => category.name,
+  fallbackName = 'Other',
+) {
+  const names = new Map(categories.map((category) => [category.id, displayName(category)]))
   const sums = new Map<string, number>()
   transactions.filter((item) => item.type === 'expense').forEach((item) => {
     sums.set(item.categoryId, (sums.get(item.categoryId) ?? 0) + item.amount)
   })
   return [...sums.entries()]
-    .map(([id, value]) => ({ id, name: names.get(id) ?? 'Khác', value }))
+    .map(([id, value]) => ({ id, name: names.get(id) ?? fallbackName, value }))
     .sort((a, b) => b.value - a.value)
 }
 
-export function trendData(transactions: Transaction[], range: RangeKey) {
+export function trendData(transactions: Transaction[], range: RangeKey, locale = 'vi-VN') {
   const map = new Map<string, { label: string; income: number; expense: number }>()
   const monthly = ['3m', '6m', '1y', 'all'].includes(range)
   const fmt = monthly
-    ? new Intl.DateTimeFormat('vi-VN', { month: '2-digit', year: '2-digit' })
-    : new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit' })
+    ? new Intl.DateTimeFormat(locale, { month: '2-digit', year: '2-digit' })
+    : new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit' })
 
   transactions.forEach((item) => {
     const date = new Date(item.occurredAt)

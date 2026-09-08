@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { BarChart3, Home, LockKeyhole, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon, Wallet } from 'lucide-react'
 import { useWallet } from '../WalletContext'
+import { useI18n } from '../i18n'
 import { Analytics } from './Analytics'
 import { Dashboard } from './Dashboard'
 import { Settings } from './Settings'
@@ -9,13 +10,6 @@ import { TransactionModal } from './TransactionModal'
 import { Button } from './ui'
 
 type Page = 'home' | 'transactions' | 'analytics' | 'settings'
-
-const nav: Array<{ id: Page; label: string; icon: typeof Home }> = [
-  { id: 'home', label: 'Home', icon: Home },
-  { id: 'transactions', label: 'Transactions', icon: ReceiptText },
-  { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-  { id: 'settings', label: 'Settings', icon: SettingsIcon },
-]
 
 function Main({ page }: { page: Page }) {
   if (page === 'transactions') return <Transactions />
@@ -26,8 +20,16 @@ function Main({ page }: { page: Page }) {
 
 export function Shell() {
   const { googleSession, syncBusy, syncMessage, syncNow, lock } = useWallet()
+  const { t } = useI18n()
   const [page, setPage] = useState<Page>('home')
   const [showAdd, setShowAdd] = useState(false)
+
+  const nav: Array<{ id: Page; label: string; icon: typeof Home }> = [
+    { id: 'home', label: t('nav.home'), icon: Home },
+    { id: 'transactions', label: t('nav.transactions'), icon: ReceiptText },
+    { id: 'analytics', label: t('nav.analytics'), icon: BarChart3 },
+    { id: 'settings', label: t('nav.settings'), icon: SettingsIcon },
+  ]
 
   return (
     <div className="min-h-screen bg-transparent text-slate-900 dark:text-slate-100">
@@ -44,8 +46,8 @@ export function Shell() {
           ))}
         </nav>
         <div className="mt-auto space-y-2">
-          <Button className="w-full" onClick={() => setShowAdd(true)}><Plus size={17} /> Add transaction</Button>
-          <Button variant="ghost" className="w-full justify-start" onClick={lock}><LockKeyhole size={17} /> Lock</Button>
+          <Button className="w-full" onClick={() => setShowAdd(true)}><Plus size={17} /> {t('nav.addTransaction')}</Button>
+          <Button variant="ghost" className="w-full justify-start" onClick={lock}><LockKeyhole size={17} /> {t('nav.lock')}</Button>
         </div>
       </aside>
 
@@ -53,10 +55,10 @@ export function Shell() {
         <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-[#f5f7fb]/85 px-4 py-3 backdrop-blur-xl dark:border-slate-800 dark:bg-[#0b0d12]/85 sm:px-6">
           <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
             <div className="flex items-center gap-2 md:hidden"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white"><Wallet size={19} /></div><span className="font-black">O-Wallet</span></div>
-            <div className="hidden text-xs text-slate-500 md:block">{googleSession ? `Drive: ${googleSession.user.email}` : 'Drive chưa kết nối'}</div>
+            <div className="hidden text-xs text-slate-500 md:block">{googleSession ? t('nav.driveConnected', { email: googleSession.user.email }) : t('nav.driveDisconnected')}</div>
             <div className="ml-auto flex items-center gap-2">
-              {googleSession && <Button variant="secondary" className="px-3" onClick={() => void syncNow()} disabled={syncBusy}><RefreshCw size={16} className={syncBusy ? 'animate-spin' : ''} /><span className="hidden sm:inline">{syncBusy ? syncMessage || 'Sync…' : 'Sync'}</span></Button>}
-              <Button className="hidden sm:inline-flex md:hidden" onClick={() => setShowAdd(true)}><Plus size={16} /> Add</Button>
+              {googleSession && <Button variant="secondary" className="px-3" onClick={() => void syncNow()} disabled={syncBusy}><RefreshCw size={16} className={syncBusy ? 'animate-spin' : ''} /><span className="hidden sm:inline">{syncBusy ? syncMessage || 'Sync…' : t('nav.sync')}</span></Button>}
+              <Button className="hidden sm:inline-flex md:hidden" onClick={() => setShowAdd(true)}><Plus size={16} /> {t('common.add')}</Button>
             </div>
           </div>
         </header>
@@ -67,7 +69,7 @@ export function Shell() {
       <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-2 pt-2 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/95 md:hidden">
         <div className="mx-auto grid max-w-lg grid-cols-5 gap-1">
           {nav.slice(0, 2).map((item) => <MobileNav key={item.id} active={page === item.id} icon={<item.icon size={19} />} label={item.label} onClick={() => setPage(item.id)} />)}
-          <button aria-label="Add transaction" onClick={() => setShowAdd(true)} className="mx-auto -mt-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"><Plus size={25} /></button>
+          <button aria-label={t('nav.addTransaction')} onClick={() => setShowAdd(true)} className="mx-auto -mt-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"><Plus size={25} /></button>
           {nav.slice(2).map((item) => <MobileNav key={item.id} active={page === item.id} icon={<item.icon size={19} />} label={item.label} onClick={() => setPage(item.id)} />)}
         </div>
       </nav>

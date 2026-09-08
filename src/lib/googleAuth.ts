@@ -48,7 +48,7 @@ function loadGoogleIdentityScript() {
     const existing = document.querySelector<HTMLScriptElement>(`script[src="${GOOGLE_SCRIPT}"]`)
     if (existing) {
       existing.addEventListener('load', () => resolve(), { once: true })
-      existing.addEventListener('error', () => reject(new Error('Không load được Google Identity Services.')), { once: true })
+      existing.addEventListener('error', () => reject(new Error('error.googleScriptLoad')), { once: true })
       return
     }
 
@@ -57,7 +57,7 @@ function loadGoogleIdentityScript() {
     script.async = true
     script.defer = true
     script.onload = () => resolve()
-    script.onerror = () => reject(new Error('Không load được Google Identity Services.'))
+    script.onerror = () => reject(new Error('error.googleScriptLoad'))
     document.head.appendChild(script)
   })
 
@@ -68,18 +68,18 @@ async function fetchGoogleUser(accessToken: string): Promise<GoogleUser> {
   const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
-  if (!response.ok) throw new Error(`Không đọc được Google profile (${response.status}).`)
+  if (!response.ok) throw new Error('error.googleProfile')
   return response.json() as Promise<GoogleUser>
 }
 
 export async function connectGoogle(prompt = 'consent'): Promise<GoogleSession> {
   const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
   if (!clientId || clientId.startsWith('your-client-id')) {
-    throw new Error('Chưa cấu hình VITE_GOOGLE_CLIENT_ID trong .env.')
+    throw new Error('error.googleClientMissing')
   }
 
   await loadGoogleIdentityScript()
-  if (!window.google?.accounts?.oauth2) throw new Error('Google Identity Services chưa sẵn sàng.')
+  if (!window.google?.accounts?.oauth2) throw new Error('error.googleNotReady')
 
   const token = await new Promise<{ accessToken: string; expiresIn: number }>((resolve, reject) => {
     const client = window.google!.accounts.oauth2.initTokenClient({
@@ -87,12 +87,12 @@ export async function connectGoogle(prompt = 'consent'): Promise<GoogleSession> 
       scope: SCOPES,
       callback: (response) => {
         if (response.error || !response.access_token) {
-          reject(new Error(response.error_description || response.error || 'Google authorization thất bại.'))
+          reject(new Error(response.error_description || response.error || 'error.googleAuthorization'))
           return
         }
         resolve({ accessToken: response.access_token, expiresIn: response.expires_in ?? 3600 })
       },
-      error_callback: () => reject(new Error('Google authorization bị đóng hoặc thất bại.')),
+      error_callback: () => reject(new Error('error.googleAuthorization')),
     })
     client.requestAccessToken({ prompt })
   })

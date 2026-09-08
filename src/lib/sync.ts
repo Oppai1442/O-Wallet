@@ -33,7 +33,7 @@ function fileMap(files: DriveFileMeta[]) {
 
 async function pullRecord(token: string, file: DriveFileMeta): Promise<EncryptedRecordRow> {
   const props = file.appProperties ?? {}
-  if (!props.entityId || !props.kind) throw new Error(`Drive record ${file.id} thiếu O-Wallet metadata.`)
+  if (!props.entityId || !props.kind) throw new Error('error.invalidDriveRecord')
   return {
     id: props.entityId,
     kind: props.kind as EncryptedRecordRow['kind'],
@@ -47,7 +47,7 @@ async function pullRecord(token: string, file: DriveFileMeta): Promise<Encrypted
 
 async function pullImage(token: string, file: DriveFileMeta): Promise<EncryptedImageRow> {
   const props = file.appProperties ?? {}
-  if (!props.entityId) throw new Error(`Drive image ${file.id} thiếu O-Wallet metadata.`)
+  if (!props.entityId) throw new Error('error.invalidDriveRecord')
   return {
     id: props.entityId,
     version: Number(props.version ?? 1),
@@ -74,11 +74,11 @@ export async function syncWalletToDrive(
     finishedAt: startedAt,
   }
 
-  onProgress?.('Chuẩn bị O-Wallet folder…')
+  onProgress?.('prepare')
   let layout = await ensureDriveLayout(token)
   layout = await uploadVaultConfig(token, vaultConfig)
 
-  onProgress?.('Đọc index trên Drive…')
+  onProgress?.('index')
   const [remoteRecords, remoteImages, localRecords, localImages] = await Promise.all([
     listAllDriveFiles(token, `'${layout.recordsId}' in parents and trashed = false and appProperties has { key='owalletType' and value='record' }`),
     listAllDriveFiles(token, `'${layout.imagesId}' in parents and trashed = false and appProperties has { key='owalletType' and value='image' }`),
@@ -89,7 +89,7 @@ export async function syncWalletToDrive(
   const remoteRecordMap = fileMap(remoteRecords)
   const remoteImageMap = fileMap(remoteImages)
 
-  onProgress?.('Merge transaction records…')
+  onProgress?.('records')
   for (const local of localRecords) {
     const remote = remoteRecordMap.get(local.id)
     if (!remote) {
@@ -142,7 +142,7 @@ export async function syncWalletToDrive(
     stats.pulledRecords += 1
   }
 
-  onProgress?.('Merge encrypted images…')
+  onProgress?.('images')
   for (const local of localImages) {
     const remote = remoteImageMap.get(local.id)
     if (!remote) {
@@ -194,6 +194,6 @@ export async function syncWalletToDrive(
   }
 
   stats.finishedAt = new Date().toISOString()
-  onProgress?.('Sync hoàn tất.')
+  onProgress?.('done')
   return stats
 }

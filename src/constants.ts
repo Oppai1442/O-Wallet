@@ -7,12 +7,12 @@ export const RECORDS_FOLDER_NAME = 'records'
 export const IMAGES_FOLDER_NAME = 'images'
 
 export const SECURITY_QUESTIONS = [
-  { id: 'first-game', label: 'Tên game đầu tiên cậu nhớ mình từng chơi?' },
-  { id: 'childhood-nickname', label: 'Biệt danh thời nhỏ mà cậu nhớ rõ nhất?' },
-  { id: 'first-pet', label: 'Tên thú cưng đầu tiên?' },
-  { id: 'favorite-teacher', label: 'Tên giáo viên cậu nhớ nhất thời đi học?' },
-  { id: 'first-trip', label: 'Nơi đầu tiên cậu nhớ mình từng đi du lịch?' },
-  { id: 'custom-object', label: 'Tên một món đồ cũ chỉ cậu dễ nhớ?' },
+  { id: 'first-game' },
+  { id: 'childhood-nickname' },
+  { id: 'first-pet' },
+  { id: 'favorite-teacher' },
+  { id: 'first-trip' },
+  { id: 'custom-object' },
 ] as const
 
 const now = () => new Date().toISOString()
