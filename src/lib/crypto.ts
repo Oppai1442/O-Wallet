@@ -1,4 +1,4 @@
-import type { EncryptedPayload, VaultConfig } from '../types'
+import type { EncryptedPayload, SecurityQuestionConfig, VaultConfig } from '../types'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -125,7 +125,7 @@ export async function createVault(
   const recoveryAes = await recoveryKeyToAesKey(recoveryKey)
   const recoveryWrapped = await encryptRaw(recoveryAes, dekRaw)
 
-  const questionConfigs = []
+  const questionConfigs: SecurityQuestionConfig[] = []
   for (const question of questions) {
     const answerSalt = randomBytes(16)
     questionConfigs.push({

@@ -6,7 +6,7 @@
 2. Each user owns the Google Drive files created by O-Wallet.
 3. Transaction content and image content are encrypted before Drive upload.
 4. The encryption password and unwrapped DEK are never intentionally uploaded.
-5. Google OAuth access tokens are not persisted to localStorage/IndexedDB by this implementation.
+5. Google OAuth access tokens are never sent to an O-Wallet backend. By default they are persisted only in `sessionStorage` to survive reloads in the current tab; longer local reconnect windows are optional.
 
 ## Key hierarchy
 
@@ -43,7 +43,7 @@ IndexedDB contains:
 - non-secret sync metadata (UUID, version, updated time, device ID, tombstone flag, record kind);
 - vault key-wrapping metadata (salt, KDF parameters, wrapped DEK, recovery answer hashes).
 
-The local database does not intentionally store plaintext transaction JSON or plaintext image bytes after a save completes.
+The local database does not intentionally store plaintext transaction JSON or plaintext image bytes after a save completes. If the user explicitly enables remembered vault unlock, IndexedDB also stores a non-extractable DEK `CryptoKey` and an expiry timestamp on that device. The default is disabled.
 
 ## Cloud storage
 
@@ -67,7 +67,7 @@ Drive still sees unavoidable synchronization metadata such as file sizes, modifi
 - accidental public exposure of Drive files;
 - compromise of an O-Wallet static hosting origin **after** previously uploaded ciphertext has already been stored (historical Drive blobs remain encrypted);
 - developer database breach, because there is no central O-Wallet database in this architecture;
-- casual inspection/copying of IndexedDB while the vault is locked.
+- casual inspection/copying of IndexedDB while the vault is locked **and remembered unlock is disabled**.
 
 ## Threats this design does not solve
 
@@ -83,3 +83,14 @@ For a public release, protect the GitHub account/repository with strong MFA, bra
 ## Password guidance
 
 The UI only enforces 8 characters for V1 usability. A public release should add a strength estimator and encourage long passphrases. Because `vault.json` contains a password-wrapped DEK, an attacker who steals that file can attempt password guesses offline.
+
+## Session persistence trade-offs
+
+Google authorization and vault unlocking are separate:
+
+- Google connection defaults to the current tab session. The access token is copied to `sessionStorage`, so F5/reload does not immediately disconnect the app. Google access tokens are short-lived. Longer reconnect windows keep local account/reconnect metadata and attempt silent renewal when possible, but a pure static frontend cannot guarantee long-lived refresh without user interaction.
+- Vault remembered unlock is disabled by default. If the user enables it, O-Wallet stores the non-extractable DEK `CryptoKey` in IndexedDB until the selected expiry. This improves convenience but reduces protection against someone who can use the same browser profile.
+- Explicit **Lock vault** clears the remembered DEK immediately.
+- **Switch Google account on this device** clears local ciphertext, vault config, account binding and remembered DEK, but does not delete Drive data.
+
+Do not enable remembered unlock on shared/untrusted devices.

@@ -5,7 +5,14 @@ import { accountDisplayName, categoryDisplayName, useI18n, type Language } from 
 import { bytesToHuman, formatMoney } from '../lib/format'
 import { accountBalance } from '../lib/finance'
 import { findExistingDriveLayout, openDriveFolderUrl } from '../lib/drive'
-import type { Account, AppSettings, Category, ThemeMode } from '../types'
+import type {
+  Account,
+  AppSettings,
+  Category,
+  RememberDuration,
+  ThemeMode,
+  VaultRememberDuration,
+} from '../types'
 import { Badge, Button, Card, Input, Label, Select } from './ui'
 
 export function Settings() {
@@ -17,9 +24,13 @@ export function Settings() {
     repository,
     saveEntity,
     googleSession,
+    googleBinding,
     googleConfigured,
+    devicePreferences,
+    updateDevicePreferences,
     connectGoogle,
     disconnectGoogle,
+    switchLocalAccount,
     syncNow,
     syncBusy,
     syncMessage,
@@ -38,10 +49,15 @@ export function Settings() {
   useEffect(() => { void repository?.storageStats().then(setStorage) }, [repository, transactions])
   useEffect(() => {
     if (!googleSession) { setDriveFolder(undefined); return }
-    void findExistingDriveLayout(googleSession.accessToken).then((layout) => setDriveFolder(layout?.rootId)).catch(() => setDriveFolder(undefined))
+    void findExistingDriveLayout(googleSession.accessToken)
+      .then((layout) => setDriveFolder(layout?.rootId))
+      .catch(() => setDriveFolder(undefined))
   }, [googleSession, lastSync])
 
-  const accountBalances = useMemo(() => accounts.map((account) => ({ account, balance: accountBalance(account, transactions) })), [accounts, transactions])
+  const accountBalances = useMemo(
+    () => accounts.map((account) => ({ account, balance: accountBalance(account, transactions) })),
+    [accounts, transactions],
+  )
 
   async function updateSettings(patch: Partial<AppSettings>) {
     if (!settings) return
@@ -83,28 +99,110 @@ export function Settings() {
     setCategoryName('')
   }
 
+  async function confirmSwitchAccount() {
+    if (!window.confirm(t('settings.switchAccountConfirm'))) return
+    await switchLocalAccount()
+  }
+
   return (
     <div className="space-y-5">
-      <div><h1 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">{t('settings.title')}</h1><p className="mt-1 text-sm text-slate-500">{t('settings.subtitle')}</p></div>
+      <div>
+        <h1 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white">{t('settings.title')}</h1>
+        <p className="mt-1 text-sm text-slate-500">{t('settings.subtitle')}</p>
+      </div>
 
       <Card className="p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><h2 className="font-bold text-slate-900 dark:text-white">{t('settings.driveSync')}</h2><p className="mt-1 max-w-2xl text-sm text-slate-500">{t('settings.driveHint')}</p></div>
+          <div>
+            <h2 className="font-bold text-slate-900 dark:text-white">{t('settings.driveSync')}</h2>
+            <p className="mt-1 max-w-2xl text-sm text-slate-500">{t('settings.driveHint')}</p>
+          </div>
           {googleSession ? <Badge tone="green">{t('common.connected')}</Badge> : <Badge>{t('common.disconnected')}</Badge>}
         </div>
-        {!googleConfigured && <div className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">{t('settings.clientMissing')}</div>}
+
+        {!googleConfigured && (
+          <div className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+            {t('settings.clientMissing')}
+          </div>
+        )}
+
         {googleSession ? (
           <div className="mt-4 flex flex-wrap items-center gap-3">
             {googleSession.user.picture && <img src={googleSession.user.picture} className="h-10 w-10 rounded-full" alt="Google profile" />}
-            <div className="mr-auto"><div className="text-sm font-bold text-slate-800 dark:text-slate-100">{googleSession.user.name}</div><div className="text-xs text-slate-500">{googleSession.user.email}</div></div>
-            <Button variant="secondary" onClick={() => void syncNow()} disabled={syncBusy}><RefreshCw className={syncBusy ? 'animate-spin' : ''} size={17} /> {syncBusy ? syncMessage || 'Sync…' : t('settings.syncNow')}</Button>
-            {driveFolder && <Button variant="secondary" onClick={() => window.open(openDriveFolderUrl(driveFolder), '_blank', 'noopener,noreferrer')}><FolderOpen size={17} /> {t('settings.openDrive')}</Button>}
+            <div className="mr-auto">
+              <div className="text-sm font-bold text-slate-800 dark:text-slate-100">{googleSession.user.name}</div>
+              <div className="text-xs text-slate-500">{googleSession.user.email}</div>
+            </div>
+            <Button variant="secondary" onClick={() => void syncNow()} disabled={syncBusy}>
+              <RefreshCw className={syncBusy ? 'animate-spin' : ''} size={17} />
+              {syncBusy ? syncMessage || 'Sync…' : t('settings.syncNow')}
+            </Button>
+            {driveFolder && (
+              <Button variant="secondary" onClick={() => window.open(openDriveFolderUrl(driveFolder), '_blank', 'noopener,noreferrer')}>
+                <FolderOpen size={17} /> {t('settings.openDrive')}
+              </Button>
+            )}
             <Button variant="ghost" onClick={disconnectGoogle}><Unplug size={17} /> {t('settings.disconnect')}</Button>
           </div>
         ) : (
-          <Button className="mt-4" onClick={() => void connectGoogle()} disabled={!googleConfigured}><Cloud size={17} /> {t('settings.connectGoogle')}</Button>
+          <div className="mt-4">
+            {googleBinding && (
+              <p className="mb-3 text-xs text-slate-500">
+                {t('settings.boundAccount', { email: googleBinding.email })}
+              </p>
+            )}
+            <Button onClick={() => void connectGoogle()} disabled={!googleConfigured}>
+              <Cloud size={17} /> {t('settings.connectGoogle')}
+            </Button>
+          </div>
         )}
-        {lastSync && <div className="mt-3 text-xs text-slate-500">{t('settings.lastSync', { pulledRecords: lastSync.pulledRecords, pulledImages: lastSync.pulledImages, pushedRecords: lastSync.pushedRecords, pushedImages: lastSync.pushedImages, conflicts: lastSync.conflictsResolved })}</div>}
+
+        <div className="mt-4 grid gap-4 border-t border-slate-200 pt-4 dark:border-slate-800 md:grid-cols-2">
+          <div>
+            <Label>{t('settings.googleRemember')}</Label>
+            <Select
+              value={devicePreferences.googleRemember}
+              onChange={(e) => void updateDevicePreferences({ googleRemember: e.target.value as RememberDuration })}
+            >
+              <option value="off">{t('settings.googleRememberOff')}</option>
+              <option value="tab">{t('settings.googleRememberTab')}</option>
+              <option value="1h">{t('settings.duration1h')}</option>
+              <option value="8h">{t('settings.duration8h')}</option>
+              <option value="1d">{t('settings.duration1d')}</option>
+              <option value="7d">{t('settings.duration7d')}</option>
+              <option value="30d">{t('settings.duration30d')}</option>
+            </Select>
+            <p className="mt-1.5 text-xs leading-5 text-slate-500">{t('settings.googleRememberHint')}</p>
+          </div>
+          <div>
+            <Label>{t('settings.vaultRemember')}</Label>
+            <Select
+              value={devicePreferences.vaultRemember}
+              onChange={(e) => void updateDevicePreferences({ vaultRemember: e.target.value as VaultRememberDuration })}
+            >
+              <option value="off">{t('settings.vaultRememberOff')}</option>
+              <option value="15m">{t('settings.duration15m')}</option>
+              <option value="1h">{t('settings.duration1h')}</option>
+              <option value="8h">{t('settings.duration8h')}</option>
+              <option value="1d">{t('settings.duration1d')}</option>
+              <option value="7d">{t('settings.duration7d')}</option>
+              <option value="30d">{t('settings.duration30d')}</option>
+            </Select>
+            <p className="mt-1.5 text-xs leading-5 text-slate-500">{t('settings.vaultRememberHint')}</p>
+          </div>
+        </div>
+
+        {lastSync && (
+          <div className="mt-3 text-xs text-slate-500">
+            {t('settings.lastSync', {
+              pulledRecords: lastSync.pulledRecords,
+              pulledImages: lastSync.pulledImages,
+              pushedRecords: lastSync.pushedRecords,
+              pushedImages: lastSync.pushedImages,
+              conflicts: lastSync.conflictsResolved,
+            })}
+          </div>
+        )}
         {error && <div className="mt-3 text-sm text-rose-600">{error}</div>}
       </Card>
 
@@ -128,8 +226,12 @@ export function Settings() {
         <Card className="p-4 sm:p-5">
           <h2 className="font-bold text-slate-900 dark:text-white">{t('settings.security')}</h2>
           <p className="mt-1 text-sm text-slate-500">{t('settings.securityHint')}</p>
-          <Button variant="secondary" className="mt-4" onClick={lock}><LockKeyhole size={17} /> {t('settings.lockVault')}</Button>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={lock}><LockKeyhole size={17} /> {t('settings.lockVault')}</Button>
+            <Button variant="danger" onClick={() => void confirmSwitchAccount()}>{t('settings.switchAccount')}</Button>
+          </div>
           <div className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500 dark:bg-slate-950">{t('settings.securityQuestionsHint')}</div>
+          <div className="mt-3 rounded-xl bg-rose-50 p-3 text-xs leading-5 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{t('settings.switchAccountHint')}</div>
         </Card>
       </div>
 

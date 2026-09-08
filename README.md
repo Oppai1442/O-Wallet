@@ -4,7 +4,7 @@ O-Wallet is a private, local-first expense tracker built as a static PWA.
 
 **No O-Wallet runtime backend is required.** The production deployment is static HTML/CSS/JS. The browser performs OCR, encryption, analytics and sync; encrypted cloud data is stored in the user's own Google Drive.
 
-Current release: **v0.2.1**
+Current release: **v0.3.0**
 
 ## Highlights
 
@@ -15,6 +15,9 @@ Current release: **v0.2.1**
 - Google Identity Services + Google Drive API with `drive.file`.
 - Visible `O-Wallet/` folder in each user's own Google Drive.
 - Cross-device sync with UUID + version + timestamp + device ID + tombstones.
+- Google session survives reload by default within the current tab; longer per-device reconnect windows are configurable.
+- Optional per-device remembered vault unlock (15 minutes to 30 days); default remains password-on-reload.
+- Local account switching clears only browser-side O-Wallet data and never deletes the Drive folder.
 - Tesseract.js OCR runs in the browser with Vietnamese + English recognition assets.
 - Screenshot bytes are encrypted directly; images are **not** converted to base64 before encryption.
 - Dashboard and analytics with range filters, cash-flow charts and category pie charts.
@@ -66,7 +69,9 @@ Implemented:
 - configurable image retention;
 - PWA manifest/service worker;
 - GitHub Actions Pages deployment workflow;
-- public `privacy.html` and `terms.html`.
+- public `privacy.html` and `terms.html`;
+- automatic Drive pull immediately after restoring/unlocking on a new device;
+- protection against accidentally overwriting a different O-Wallet vault already present in the selected Drive.
 
 Still intentionally early-stage / needs hardening before serious public use:
 
@@ -377,11 +382,30 @@ No pre-encryption base64 expansion is required.
 
 ---
 
+# Session and device convenience settings
+
+O-Wallet separates Google authorization from vault unlocking. Both are per-device convenience settings:
+
+```text
+Google connection
+  off | current tab | 1h | 8h | 1d | 7d | 30d
+
+Vault unlock
+  password after reload (default) | 15m | 1h | 8h | 1d | 7d | 30d
+```
+
+The Google access token itself is short-lived. `current tab` stores the active token in `sessionStorage`, which fixes ordinary F5/reload logout. Longer windows keep the last account/reconnect window locally and O-Wallet attempts a silent token renewal when Google/browser state allows it; the user may still be asked to reconnect.
+
+Remembered vault unlock is intentionally **off by default**. When enabled, the browser persists the non-extractable DEK `CryptoKey` in IndexedDB on that device. This is a convenience/security trade-off and should not be enabled on shared devices.
+
+The **Switch Google account on this device** action removes the local vault config, encrypted local cache, account binding and remembered unlock state. It does **not** delete the user's `O-Wallet/` folder on Drive.
+
 # Privacy summary
 
 - The reference architecture has no central O-Wallet financial-data backend.
 - Financial data and image payloads are encrypted client-side before Drive upload.
-- Google OAuth access tokens are held in tab memory by the reference implementation.
+- By default, the Google OAuth access token is kept in `sessionStorage` so a page reload in the same tab stays connected until the token expires. Users may opt into a longer local reconnect window; long windows are best-effort because a static frontend has no refresh-token backend.
+- Vault auto-unlock is disabled by default. If explicitly enabled, the non-extractable DEK `CryptoKey` is stored in IndexedDB on that device until the selected expiry.
 - Google Drive still sees storage/sync metadata such as file sizes, modification times and application metadata needed for merging.
 - The static host and Google remain third-party infrastructure providers and may process normal network/account metadata under their own policies.
 - The selected UI language is stored locally in browser storage and is not treated as sensitive data.

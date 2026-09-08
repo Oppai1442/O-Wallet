@@ -89,3 +89,18 @@ OCR blocks
 ```
 
 The generic parser in V1 is intentionally not presented as a replacement for bank-specific pattern work.
+
+## Reload/session lifecycle
+
+```text
+F5 / reload
+  -> restore Google token from sessionStorage if still valid
+  -> load local vault config
+  -> if remembered unlock is enabled and unexpired, restore the IndexedDB CryptoKey
+  -> otherwise show password unlock
+  -> once unlocked + Google-connected, sync Drive before creating local defaults
+```
+
+That last ordering is important on a new device: remote records are pulled before local defaults are created, preventing duplicate seed accounts/categories and ensuring desktop-created transactions appear on mobile immediately after unlock.
+
+O-Wallet also binds a local vault to the Google account used for sync. A mismatched account is blocked, and a different remote vault is never overwritten automatically.

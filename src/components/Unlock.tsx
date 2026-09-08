@@ -6,7 +6,14 @@ import { Button, Card, Input, Label } from './ui'
 import { LanguageSwitcher } from './LanguageSwitcher'
 
 export function Unlock() {
-  const { vaultConfig, unlockWithPassword, unlockWithRecovery, error } = useWallet()
+  const {
+    vaultConfig,
+    googleBinding,
+    unlockWithPassword,
+    unlockWithRecovery,
+    switchLocalAccount,
+    error,
+  } = useWallet()
   const { t } = useI18n()
   const [mode, setMode] = useState<'password' | 'recovery'>('password')
   const [password, setPassword] = useState('')
@@ -24,6 +31,12 @@ export function Unlock() {
     try { await unlockWithRecovery(recoveryKey, answers) } finally { setBusy(false) }
   }
 
+  async function changeAccount() {
+    if (!window.confirm(t('unlock.switchAccountConfirm'))) return
+    setBusy(true)
+    try { await switchLocalAccount() } finally { setBusy(false) }
+  }
+
   return (
     <main className="relative flex min-h-screen items-center justify-center px-4 py-10">
       <div className="absolute right-4 top-4 sm:right-6 sm:top-6"><LanguageSwitcher compact /></div>
@@ -31,6 +44,7 @@ export function Unlock() {
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-950 text-white dark:bg-white dark:text-slate-950"><Wallet size={28} /></div>
         <h1 className="mt-5 text-center text-2xl font-black text-slate-950 dark:text-white">{t('unlock.title')}</h1>
         <p className="mt-1 text-center text-sm text-slate-500 dark:text-slate-400">{t('unlock.memoryHint')}</p>
+        {googleBinding && <p className="mt-2 text-center text-xs text-slate-400">{t('unlock.boundAccount', { email: googleBinding.email })}</p>}
 
         {mode === 'password' ? (
           <div className="mt-6">
@@ -52,6 +66,12 @@ export function Unlock() {
             <button className="w-full text-sm font-semibold text-indigo-600 hover:underline dark:text-indigo-400" onClick={() => setMode('password')}>{t('unlock.back')}</button>
           </div>
         )}
+
+        <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-800">
+          <Button variant="ghost" className="w-full" onClick={() => void changeAccount()} disabled={busy}>{t('unlock.switchAccount')}</Button>
+          <p className="mt-2 text-center text-xs leading-5 text-slate-500">{t('unlock.switchAccountHint')}</p>
+        </div>
+
         {error && <p className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</p>}
       </Card>
     </main>

@@ -7,14 +7,16 @@ import { useWallet } from '../WalletContext'
 import { Button, Card, Input, Label, Select } from './ui'
 import { LanguageSwitcher } from './LanguageSwitcher'
 
+type SecurityQuestionId = (typeof SECURITY_QUESTIONS)[number]['id']
+
 export function Onboarding() {
   const { createNewVault, restoreVaultConfigFromDrive, googleConfigured, error } = useWallet()
   const { t } = useI18n()
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [recoveryKey] = useState(() => generateRecoveryKey())
-  const [q1, setQ1] = useState<string>(SECURITY_QUESTIONS[0].id)
-  const [q2, setQ2] = useState<string>(SECURITY_QUESTIONS[1].id)
+  const [q1, setQ1] = useState<SecurityQuestionId>(SECURITY_QUESTIONS[0].id)
+  const [q2, setQ2] = useState<SecurityQuestionId>(SECURITY_QUESTIONS[1].id)
   const [a1, setA1] = useState('')
   const [a2, setA2] = useState('')
   const [busy, setBusy] = useState(false)
@@ -103,12 +105,12 @@ export function Onboarding() {
           <div className="mt-5 grid gap-4">
             <div>
               <Label>{t('onboarding.securityQuestion1')}</Label>
-              <Select value={q1} onChange={(e) => setQ1(e.target.value)}>{SECURITY_QUESTIONS.map((q) => <option value={q.id} key={q.id}>{questionLabel(q.id, t)}</option>)}</Select>
+              <Select value={q1} onChange={(e) => setQ1(e.target.value as SecurityQuestionId)}>{SECURITY_QUESTIONS.map((q) => <option value={q.id} key={q.id}>{questionLabel(q.id, t)}</option>)}</Select>
               <Input className="mt-2" value={a1} onChange={(e) => setA1(e.target.value)} placeholder={t('onboarding.answer')} />
             </div>
             <div>
               <Label>{t('onboarding.securityQuestion2')}</Label>
-              <Select value={q2} onChange={(e) => setQ2(e.target.value)}>{SECURITY_QUESTIONS.map((q) => <option value={q.id} key={q.id}>{questionLabel(q.id, t)}</option>)}</Select>
+              <Select value={q2} onChange={(e) => setQ2(e.target.value as SecurityQuestionId)}>{SECURITY_QUESTIONS.map((q) => <option value={q.id} key={q.id}>{questionLabel(q.id, t)}</option>)}</Select>
               <Input className="mt-2" value={a2} onChange={(e) => setA2(e.target.value)} placeholder={t('onboarding.answer')} />
             </div>
           </div>

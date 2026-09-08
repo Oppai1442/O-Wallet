@@ -1,6 +1,8 @@
 export type TransactionType = 'expense' | 'income' | 'transfer'
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type ImageRetentionMode = 'forever' | 'days'
+export type RememberDuration = 'off' | 'tab' | '1h' | '8h' | '1d' | '7d' | '30d'
+export type VaultRememberDuration = 'off' | '15m' | '1h' | '8h' | '1d' | '7d' | '30d'
 
 export interface Transaction {
   id: string
@@ -124,6 +126,20 @@ export interface GoogleSession {
   expiresAt: number
   user: GoogleUser
 }
+
+
+export interface DeviceSessionPreferences {
+  googleRemember: RememberDuration
+  vaultRemember: VaultRememberDuration
+}
+
+export interface RememberedVaultUnlock {
+  vaultCreatedAt: string
+  expiresAt: number
+  dek: CryptoKey
+}
+
+export interface GoogleAccountBinding extends GoogleUser {}
 
 export interface DriveLayout {
   rootId: string
