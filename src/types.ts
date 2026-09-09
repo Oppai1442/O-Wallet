@@ -39,7 +39,6 @@ export interface OcrTemplate {
   updatedAt: string
 }
 
-
 export interface AiVisionSettings {
   provider: AiProvider
   /** User-configured OpenRouter Chat Completions endpoint. Blank means AI is not configured. */
@@ -47,7 +46,6 @@ export interface AiVisionSettings {
   /** Vision-capable OpenRouter model slug. Blank means AI is not configured. */
   model?: string
 }
-
 
 export type VoiceInputLanguage = 'vi-VN' | 'en-US'
 export type VoiceInputField = 'type' | 'amount' | 'date' | 'time' | 'account' | 'destinationAccount' | 'category' | 'merchant' | 'description'
@@ -92,9 +90,15 @@ export interface TransactionRule {
   updatedAt: string
 }
 
-
-
 export type SharedWalletRole = 'owner' | 'member' | 'viewer'
+export type SharedWalletLifecycleState = 'active' | 'closing' | 'deleted'
+
+export interface SharedWalletLifecycle {
+  state: SharedWalletLifecycleState
+  requestedAt?: string
+  purgeAfter?: string
+  deletedAt?: string
+}
 
 export interface SharedWalletMember {
   id: string
@@ -111,6 +115,17 @@ export interface SharedWalletMember {
   registrationFileId?: string
 }
 
+export interface SharedWalletLedger {
+  defaultCurrency: string
+  accounts: Account[]
+  categories: Category[]
+  budgets: BudgetConfig[]
+  accountCatalogues: AccountCatalogue[]
+  transactionRules: TransactionRule[]
+  /** Shared voice preferences. If omitted, the device's personal voice profile is used. */
+  voiceInput?: VoiceInputSettings
+}
+
 export interface SharedWalletControl {
   schemaVersion: 1
   groupId: string
@@ -120,6 +135,10 @@ export interface SharedWalletControl {
   createdAt: string
   updatedAt: string
   members: SharedWalletMember[]
+  /** Existing v0.12/v0.13 controls omit this and are treated as active. */
+  lifecycle?: SharedWalletLifecycle
+  /** Existing shared wallets omit this and are upgraded lazily to an empty isolated ledger. */
+  ledger?: SharedWalletLedger
 }
 
 export interface SharedWalletMembership {
@@ -145,16 +164,23 @@ export interface SharedWalletMembership {
 export interface SharedTransaction {
   id: string
   groupId: string
-  type: 'expense' | 'income'
+  type: TransactionType
   amount: number
   currency: string
   occurredAt: string
+  accountId?: string
+  destinationAccountId?: string
+  categoryId?: string
+  /** Legacy free-text category from pre-v0.14 shared wallets. */
   category?: string
   merchant?: string
   description?: string
   note?: string
   tags?: string[]
   createdByMemberId: string
+  /** Provenance retained when an archived wallet is reopened as a new wallet. */
+  sourceCreatedByMemberId?: string
+  sourceCreatedByName?: string
   createdAt: string
   updatedAt: string
   deleted: boolean
@@ -178,6 +204,25 @@ export interface SharedMemberFeed {
   profile: SharedMemberProfile
   transactions: SharedTransaction[]
   updatedAt: string
+}
+
+export interface SharedWalletArchive {
+  id: string
+  originalGroupId: string
+  name: string
+  createdAt: string
+  closedAt: string
+  archivedAt: string
+  ledger: SharedWalletLedger
+  transactions: SharedTransaction[]
+  members: SharedWalletMember[]
+  memberNames: Record<string, string>
+  finalBalances: Record<string, number>
+  totals: {
+    income: number
+    expense: number
+    net: number
+  }
 }
 
 export interface EncryptedSharedRecordRow {
@@ -274,6 +319,8 @@ export interface AppSettings {
   /** Guided speech-entry preferences and accent corrections. Audio is never stored. */
   voiceInput?: VoiceInputSettings
   sharedWallets?: SharedWalletMembership[]
+  /** Finalized shared wallets are re-encrypted inside the user's personal vault and remain isolated from personal balances. */
+  sharedWalletArchives?: SharedWalletArchive[]
   /** Per-user aliases. They are encrypted in the personal vault and never written to the shared wallet. */
   sharedWalletAliases?: Record<string, Record<string, string>>
   /** Owner-only invitation transport secrets. Stored inside the owner's encrypted personal vault. */
@@ -314,7 +361,6 @@ export interface EncryptedImageRow {
   deleted: boolean
   payload: EncryptedPayload
 }
-
 
 export type SyncEntityType = 'record' | 'image'
 
