@@ -16,6 +16,8 @@ export function defaultSharedLedger(currency = 'VND'): SharedWalletLedger {
     budgets: [],
     accountCatalogues: [],
     transactionRules: [],
+    ocrTemplates: [],
+    transactionDefaults: {},
   }
 }
 
@@ -26,11 +28,16 @@ export function sharedLedgerOf(control: SharedWalletControl, fallbackCurrency = 
   return {
     ...fallback,
     ...ledger,
+    defaultCurrency: typeof ledger.defaultCurrency === 'string' && ledger.defaultCurrency.trim()
+      ? ledger.defaultCurrency.trim().toUpperCase().slice(0, 12)
+      : fallback.defaultCurrency,
     accounts: Array.isArray(ledger.accounts) ? ledger.accounts : [],
     categories: Array.isArray(ledger.categories) ? ledger.categories : [],
     budgets: Array.isArray(ledger.budgets) ? ledger.budgets : [],
     accountCatalogues: Array.isArray(ledger.accountCatalogues) ? ledger.accountCatalogues : [],
     transactionRules: Array.isArray(ledger.transactionRules) ? ledger.transactionRules : [],
+    ocrTemplates: Array.isArray(ledger.ocrTemplates) ? ledger.ocrTemplates : [],
+    transactionDefaults: ledger.transactionDefaults && typeof ledger.transactionDefaults === 'object' ? ledger.transactionDefaults : {},
   }
 }
 
@@ -75,9 +82,11 @@ export function sharedTransactionAsPersonalShape(tx: SharedTransaction): Transac
     accountId: tx.accountId ?? '',
     destinationAccountId: tx.destinationAccountId,
     merchant: tx.merchant,
+    balanceAfter: tx.balanceAfter,
     description: tx.description,
     note: tx.note,
     tags: tx.tags,
+    batch: tx.batch,
     imageIds: [],
     createdAt: tx.createdAt,
     updatedAt: tx.updatedAt,
