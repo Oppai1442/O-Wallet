@@ -7,6 +7,7 @@ import type {
   SharedWalletMember,
   SharedWalletMembership,
   SharedWalletRole,
+  SharedWalletArchive,
 } from '../types'
 import {
   base64UrlToBytes,
@@ -29,6 +30,7 @@ import {
   trashDriveFile,
 } from './drive'
 import { authorizeSpecificDriveFile } from './googlePicker'
+import { defaultSharedLedger } from './sharedLedger'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -37,6 +39,7 @@ const MAX_FEED_BYTES = 16 * 1024 * 1024
 const MAX_REGISTRATION_BYTES = 64 * 1024
 const MAX_SNAPSHOT_BYTES = 24 * 1024 * 1024
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000
+const SHARED_DELETE_GRACE_MS = 90 * 24 * 60 * 60 * 1000
 const MAX_SHARED_MEMBERS = 500
 const MAX_SHARED_TRANSACTIONS_PER_FEED = 50_000
 const MAX_SHARED_TEXT = 4_096
@@ -143,7 +146,7 @@ function sanitizeSharedTransaction(value: unknown, groupId: string, memberId: st
   const tx = value as Partial<SharedTransaction>
   if (typeof tx.id !== 'string' || !tx.id || tx.id.length > 160) return undefined
   if (tx.groupId !== groupId || tx.createdByMemberId !== memberId) return undefined
-  if (tx.type !== 'expense' && tx.type !== 'income') return undefined
+  if (tx.type !== 'expense' && tx.type !== 'income' && tx.type !== 'transfer') return undefined
   if (typeof tx.amount !== 'number' || !Number.isFinite(tx.amount) || tx.amount <= 0 || tx.amount > 1e18) return undefined
   if (!validIso(tx.occurredAt) || !validIso(tx.createdAt) || !validIso(tx.updatedAt) || typeof tx.deleted !== 'boolean') return undefined
   const currency = cleanSharedText(tx.currency, 12)
@@ -158,12 +161,17 @@ function sanitizeSharedTransaction(value: unknown, groupId: string, memberId: st
     amount: tx.amount,
     currency,
     occurredAt: tx.occurredAt as string,
+    accountId: cleanSharedText(tx.accountId, 160),
+    destinationAccountId: cleanSharedText(tx.destinationAccountId, 160),
+    categoryId: cleanSharedText(tx.categoryId, 160),
     category: cleanSharedText(tx.category, 512),
     merchant: cleanSharedText(tx.merchant),
     description: cleanSharedText(tx.description),
     note: cleanSharedText(tx.note, 16_384),
     tags,
     createdByMemberId: memberId,
+    sourceCreatedByMemberId: cleanSharedText(tx.sourceCreatedByMemberId, 160),
+    sourceCreatedByName: cleanSharedText(tx.sourceCreatedByName, 320),
     createdAt: tx.createdAt as string,
     updatedAt: tx.updatedAt as string,
     deleted: tx.deleted,
@@ -175,6 +183,17 @@ function validSharedControl(control: SharedWalletControl, groupId: string) {
   if (!validIso(control.createdAt) || !validIso(control.updatedAt) || !Number.isInteger(control.keyVersion) || control.keyVersion < 1) return false
   if (!Array.isArray(control.members) || control.members.length < 1 || control.members.length > MAX_SHARED_MEMBERS) return false
   if (typeof control.ownerMemberId !== 'string' || !control.ownerMemberId) return false
+  if (control.lifecycle) {
+    if (!['active', 'closing', 'deleted'].includes(control.lifecycle.state)) return false
+    if (control.lifecycle.requestedAt !== undefined && !validIso(control.lifecycle.requestedAt)) return false
+    if (control.lifecycle.purgeAfter !== undefined && !validIso(control.lifecycle.purgeAfter)) return false
+    if (control.lifecycle.deletedAt !== undefined && !validIso(control.lifecycle.deletedAt)) return false
+    if (control.lifecycle.finalSnapshotFileId !== undefined && (typeof control.lifecycle.finalSnapshotFileId !== 'string' || control.lifecycle.finalSnapshotFileId.length > 512)) return false
+  }
+  if (control.ledger) {
+    if (typeof control.ledger.defaultCurrency !== 'string' || !control.ledger.defaultCurrency || control.ledger.defaultCurrency.length > 12) return false
+    if (!Array.isArray(control.ledger.accounts) || !Array.isArray(control.ledger.categories) || !Array.isArray(control.ledger.budgets) || !Array.isArray(control.ledger.accountCatalogues) || !Array.isArray(control.ledger.transactionRules)) return false
+  }
   const ids = new Set<string>()
   let ownerCount = 0
   for (const member of control.members) {
@@ -332,10 +351,6 @@ async function buildControlWrapper(
   const ring: KeyRingEnvelope = { currentVersion: membership.keyVersion, keys: keyRingOf(membership) }
   const envelopes: Record<string, string> = {}
   for (const member of control.members) {
-    // Pending invitees receive their initial key ring only through the invitee-only
-    // registration file. Do not publish a key-ring envelope for an invited member in
-    // the public-by-link control file, otherwise a forwarded invite link plus control
-    // file ID would be enough to recover the group key before Google-account checks.
     if (member.status !== 'active') continue
     const secret = member.id === membership.memberId ? membership.transportKey : ownerSecrets[member.id]
     if (!secret) continue
@@ -495,6 +510,8 @@ export async function createSharedWallet(token: string, user: GoogleUser, name: 
     createdAt: now,
     updatedAt: now,
     members: [owner],
+    lifecycle: { state: 'active' },
+    ledger: defaultSharedLedger('VND'),
   }
   const provisional: SharedWalletMembership = { ...base, controlFileId: '', feedFileId: feed.fileId }
   const ownerSecrets = { [memberId]: transportKey }
@@ -505,6 +522,183 @@ export async function createSharedWallet(token: string, user: GoogleUser, name: 
     control,
     ownerSecrets,
   }
+}
+
+export async function reopenSharedWalletFromArchive(
+  token: string,
+  user: GoogleUser,
+  archive: SharedWalletArchive,
+) {
+  const created = await createSharedWallet(token, user, archive.name)
+  created.control.ledger = archive.ledger
+  created.control.updatedAt = new Date().toISOString()
+  await writeControl(token, created.membership, created.control, created.ownerSecrets)
+
+  const feed = await loadOwnFeed(token, created.membership)
+  const now = new Date().toISOString()
+  const restored = archive.transactions
+    .filter((tx) => !tx.deleted)
+    .slice(0, MAX_SHARED_TRANSACTIONS_PER_FEED)
+    .map((tx) => ({
+      ...tx,
+      id: crypto.randomUUID(),
+      groupId: created.membership.groupId,
+      createdByMemberId: created.membership.memberId,
+      sourceCreatedByMemberId: tx.sourceCreatedByMemberId ?? tx.createdByMemberId,
+      sourceCreatedByName: tx.sourceCreatedByName ?? archive.memberNames[tx.createdByMemberId],
+      createdAt: tx.createdAt,
+      updatedAt: now,
+      deleted: false,
+    }))
+  feed.transactions = restored
+  feed.revision += 1
+  feed.updatedAt = now
+  await writeOwnFeed(token, created.membership, feed)
+  return { ...created, transactions: restored }
+}
+
+async function writeFinalSnapshot(
+  token: string,
+  membership: SharedWalletMembership,
+  control: SharedWalletControl,
+  transactions: SharedTransaction[],
+) {
+  const payload = await encryptJson(await importAes(membership.groupKey), {
+    schemaVersion: 1,
+    groupId: membership.groupId,
+    keyVersion: membership.keyVersion,
+    control,
+    transactions,
+    createdAt: new Date().toISOString(),
+  }, `shared-final:${membership.groupId}:v${membership.keyVersion}`)
+  const existingId = control.lifecycle?.finalSnapshotFileId
+  const file = await uploadDriveFile(token, {
+    id: existingId,
+    name: 'final.ows',
+    parentId: membership.localRootId,
+    content: new Blob([packEncryptedPayload(payload) as BlobPart], { type: 'application/octet-stream' }),
+    appProperties: {
+      owalletSharedType: 'final-snapshot',
+      groupId: membership.groupId,
+      keyVersion: String(membership.keyVersion),
+      updatedAt: new Date().toISOString(),
+    },
+  })
+  if (!existingId) await createAnyoneReaderPermission(token, file.id)
+  return file.id
+}
+
+async function loadFinalSnapshotPublic(membership: SharedWalletMembership, control: SharedWalletControl) {
+  const fileId = control.lifecycle?.finalSnapshotFileId
+  if (!fileId) return undefined
+  const bytes = await downloadPublicDriveFile(fileId, MAX_SNAPSHOT_BYTES)
+  const value = await decryptJson<{ schemaVersion: number; groupId: string; control: SharedWalletControl; transactions: SharedTransaction[] }>(
+    await importAes(membership.groupKey),
+    unpackEncryptedPayload(bytes),
+    `shared-final:${membership.groupId}:v${membership.keyVersion}`,
+  )
+  if (value.schemaVersion !== 1 || value.groupId !== membership.groupId || !validSharedControl(value.control, membership.groupId) || !Array.isArray(value.transactions)) return undefined
+  const memberIds = new Set(value.control.members.map((member) => member.id))
+  const transactions = value.transactions
+    .map((tx) => memberIds.has(tx.createdByMemberId) ? sanitizeSharedTransaction(tx, membership.groupId, tx.createdByMemberId) : undefined)
+    .filter((tx): tx is SharedTransaction => Boolean(tx) && !tx.deleted)
+  return { control: value.control, transactions }
+}
+
+export async function renameSharedWallet(
+  token: string,
+  membership: SharedWalletMembership,
+  ownerSecrets: Record<string, string>,
+  name: string,
+) {
+  if (membership.role !== 'owner') throw new Error('error.sharedOwnerOnly')
+  const cleanName = name.trim().slice(0, 120)
+  if (!cleanName) throw new Error('error.sharedNameRequired')
+  const loaded = await readControlPublic(membership)
+  if ((loaded.control.lifecycle?.state ?? 'active') !== 'active') throw new Error('error.sharedReadOnly')
+  loaded.control.name = cleanName
+  loaded.control.updatedAt = new Date().toISOString()
+  await writeControl(token, loaded.membership, loaded.control, ownerSecrets)
+  return { membership: { ...loaded.membership, name: cleanName }, control: loaded.control }
+}
+
+export async function updateSharedWalletLedger(
+  token: string,
+  membership: SharedWalletMembership,
+  ownerSecrets: Record<string, string>,
+  ledger: SharedWalletControl['ledger'],
+) {
+  if (membership.role !== 'owner') throw new Error('error.sharedOwnerOnly')
+  const loaded = await readControlPublic(membership)
+  if ((loaded.control.lifecycle?.state ?? 'active') !== 'active') throw new Error('error.sharedReadOnly')
+  loaded.control.ledger = ledger ?? defaultSharedLedger('VND')
+  loaded.control.updatedAt = new Date().toISOString()
+  await writeControl(token, loaded.membership, loaded.control, ownerSecrets)
+  return { membership: loaded.membership, control: loaded.control }
+}
+
+export async function scheduleSharedWalletDeletion(
+  token: string,
+  membership: SharedWalletMembership,
+  ownerSecrets: Record<string, string>,
+  transactions: SharedTransaction[],
+) {
+  if (membership.role !== 'owner') throw new Error('error.sharedOwnerOnly')
+  const loaded = await readControlPublic(membership)
+  const state = loaded.control.lifecycle?.state ?? 'active'
+  if (state === 'deleted') throw new Error('error.sharedDeleted')
+  if (state === 'closing') return { membership: loaded.membership, control: loaded.control }
+  const now = new Date()
+  loaded.control.lifecycle = {
+    state: 'closing',
+    requestedAt: now.toISOString(),
+    purgeAfter: new Date(now.getTime() + SHARED_DELETE_GRACE_MS).toISOString(),
+  }
+  loaded.control.updatedAt = now.toISOString()
+  const finalSnapshotFileId = await writeFinalSnapshot(token, loaded.membership, loaded.control, transactions)
+  loaded.control.lifecycle.finalSnapshotFileId = finalSnapshotFileId
+  await writeControl(token, loaded.membership, loaded.control, ownerSecrets)
+  return { membership: loaded.membership, control: loaded.control }
+}
+
+export async function cancelSharedWalletDeletion(
+  token: string,
+  membership: SharedWalletMembership,
+  ownerSecrets: Record<string, string>,
+) {
+  if (membership.role !== 'owner') throw new Error('error.sharedOwnerOnly')
+  const loaded = await readControlPublic(membership)
+  if ((loaded.control.lifecycle?.state ?? 'active') !== 'closing') return { membership: loaded.membership, control: loaded.control }
+  const finalSnapshotFileId = loaded.control.lifecycle?.finalSnapshotFileId
+  loaded.control.lifecycle = { state: 'active' }
+  loaded.control.updatedAt = new Date().toISOString()
+  await writeControl(token, loaded.membership, loaded.control, ownerSecrets)
+  if (finalSnapshotFileId) await trashDriveFile(token, finalSnapshotFileId).catch(() => undefined)
+  return { membership: loaded.membership, control: loaded.control }
+}
+
+export async function finalizeSharedWalletDeletion(
+  token: string,
+  membership: SharedWalletMembership,
+  ownerSecrets: Record<string, string> = {},
+) {
+  const loaded = await readControlPublic(membership)
+  const lifecycle = loaded.control.lifecycle
+  if (!lifecycle || lifecycle.state === 'active') throw new Error('error.sharedNotClosing')
+  if (lifecycle.state === 'closing') {
+    if (!lifecycle.purgeAfter || Date.parse(lifecycle.purgeAfter) > Date.now()) throw new Error('error.sharedDeleteNotDue')
+    if (membership.role === 'owner') {
+      loaded.control.lifecycle = { ...lifecycle, state: 'deleted', deletedAt: new Date().toISOString() }
+      loaded.control.updatedAt = new Date().toISOString()
+      await writeControl(token, loaded.membership, loaded.control, ownerSecrets)
+    }
+  }
+  if (membership.role === 'owner') {
+    await trashDriveFile(token, membership.feedFileId).catch(() => undefined)
+  } else {
+    await trashDriveFile(token, membership.localRootId).catch(() => undefined)
+  }
+  return { membership: loaded.membership, control: loaded.control }
 }
 
 export async function inviteSharedWalletMember(
@@ -578,14 +772,7 @@ export async function inviteSharedWalletMember(
 export async function joinSharedWalletInvite(token: string, user: GoogleUser, invite: InvitePayload) {
   if (Date.parse(invite.expiresAt) < Date.now()) throw new Error('error.sharedInviteExpired')
   if (invite.invitedEmail.toLocaleLowerCase('en-US') !== user.email.toLocaleLowerCase('en-US')) throw new Error('error.sharedInviteAccountMismatch')
-
-  // drive.file authorization is per-user/per-file. The Picker explicitly grants this
-  // app access to the tiny owner-created registration file and avoids requesting broad Drive scope.
   await authorizeSpecificDriveFile(token, invite.registrationFileId)
-
-  // The invite URL intentionally does NOT contain the group key ring. It only carries a
-  // high-entropy transport secret. The actual key ring lives encrypted in this Drive file,
-  // which Google shares only with the invited account.
   const registrationBytes = await downloadDriveFile(token, invite.registrationFileId, MAX_REGISTRATION_BYTES)
   const registration = await decodeRegistration(invite.transportKey, registrationBytes, invite.groupId, invite.memberId)
   if (registration.invitedEmail.toLocaleLowerCase('en-US') !== user.email.toLocaleLowerCase('en-US')) throw new Error('error.sharedInviteAccountMismatch')
@@ -738,9 +925,16 @@ export async function loadSharedWallet(
     throw error
   }
 
-  if (membership.role === 'owner') {
+  if (membership.role === 'owner' && (control.lifecycle?.state ?? 'active') === 'active') {
     const processed = await processPendingRegistrations(token, membership, control, ownerSecrets)
     control = processed.control
+  }
+
+  if ((control.lifecycle?.state === 'closing' || control.lifecycle?.state === 'deleted') && control.lifecycle.finalSnapshotFileId) {
+    const finalSnapshot = await loadFinalSnapshotPublic(membership, control).catch(() => undefined)
+    if (finalSnapshot) {
+      return { control, transactions: finalSnapshot.transactions, profiles: {}, snapshotCount: finalSnapshot.transactions.length, membership }
+    }
   }
 
   const profiles: Record<string, SharedMemberProfile> = {}
@@ -757,9 +951,6 @@ export async function loadSharedWallet(
     } catch { /* one broken member feed must not block the whole wallet */ }
   }
 
-  // A newly invited member owns their feed immediately, while the owner may not have
-  // processed the tiny registration file yet. Keep their own transactions visible
-  // locally during that short pending window without making another member writable.
   if (!profiles[membership.memberId]) {
     try {
       const ownFeed = await loadOwnFeed(token, membership)
@@ -782,6 +973,7 @@ async function loadOwnFeed(token: string, membership: SharedWalletMembership) {
 
 async function currentWritableMembership(membership: SharedWalletMembership) {
   const loaded = await readControlPublic(membership)
+  if ((loaded.control.lifecycle?.state ?? 'active') !== 'active') throw new Error('error.sharedReadOnly')
   const member = loaded.control.members.find((item) => item.id === membership.memberId)
   if (!member || member.status === 'removed') throw new Error('error.sharedAccessRemoved')
   if (member.status !== 'active' && member.id !== membership.memberId) throw new Error('error.sharedReadOnly')
@@ -798,7 +990,8 @@ export async function saveSharedTransaction(
   const effectiveMembership = await currentWritableMembership(membership)
   const feed = await loadOwnFeed(token, effectiveMembership)
   const id = typeof input.id === 'string' ? input.id.slice(0, 160) : ''
-  if (!id || (input.type !== 'expense' && input.type !== 'income')) throw new Error('error.sharedSaveFailed')
+  if (!id || (input.type !== 'expense' && input.type !== 'income' && input.type !== 'transfer')) throw new Error('error.sharedSaveFailed')
+  if (input.type === 'transfer' && (!input.accountId || !input.destinationAccountId || input.accountId === input.destinationAccountId)) throw new Error('error.sharedSaveFailed')
   if (typeof input.amount !== 'number' || !Number.isFinite(input.amount) || input.amount <= 0 || input.amount > 1e18) throw new Error('error.sharedSaveFailed')
   if (!validIso(input.occurredAt)) throw new Error('error.sharedSaveFailed')
   const currency = cleanSharedText(input.currency, 12)
@@ -816,6 +1009,9 @@ export async function saveSharedTransaction(
     amount: input.amount,
     currency,
     occurredAt: input.occurredAt,
+    accountId: cleanSharedText(input.accountId, 160),
+    destinationAccountId: cleanSharedText(input.destinationAccountId, 160),
+    categoryId: cleanSharedText(input.categoryId, 160),
     category: cleanSharedText(input.category, 512),
     merchant: cleanSharedText(input.merchant),
     description: cleanSharedText(input.description),
@@ -824,6 +1020,8 @@ export async function saveSharedTransaction(
       ? input.tags.slice(0, MAX_SHARED_TAGS).map((tag) => cleanSharedText(tag, MAX_SHARED_TAG_LENGTH)).filter((tag): tag is string => Boolean(tag))
       : undefined,
     createdByMemberId: effectiveMembership.memberId,
+    sourceCreatedByMemberId: cleanSharedText(input.sourceCreatedByMemberId, 160),
+    sourceCreatedByName: cleanSharedText(input.sourceCreatedByName, 320),
     createdAt: input.createdAt && validIso(input.createdAt) ? input.createdAt : existing?.createdAt ?? now,
     updatedAt: now,
     deleted: false,
@@ -904,7 +1102,6 @@ async function refreshPendingRegistrationKeyRings(
       })
     } catch {
       // A broken/expired pending invitation should not prevent removing another member.
-      // The owner can resend that invitation if needed.
     }
   }
 }
@@ -922,9 +1119,6 @@ export async function removeSharedWalletMember(
   const member = control.members.find((item) => item.id === memberId)
   if (!member || member.id === control.ownerMemberId) throw new Error('error.sharedCannotRemoveOwner')
 
-  // Freeze the departing member's current feed into an owner-owned encrypted archive
-  // before rotating keys. Their historical transactions remain in the ledger, while the
-  // former member can no longer rewrite that history by changing their own Drive file.
   if (member.status === 'active' && member.feedFileId) {
     const archiveFileId = await archiveMemberFeedBeforeRemoval(token, ownerMembership, member)
     if (archiveFileId) member.feedFileId = archiveFileId
