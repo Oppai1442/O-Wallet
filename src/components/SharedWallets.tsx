@@ -1,522 +1,95 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Copy, FolderOpen, Mail, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, UserPlus, Users, WalletCards, X } from 'lucide-react'
+import { Archive, Copy, FolderOpen, Mic, Pencil, Plus, RefreshCw, RotateCcw, Trash2, UserPlus, Users, WalletCards, X } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { useI18n } from '../i18n'
 import { formatDateTime, formatMoney } from '../lib/format'
 import { googleApiKeyConfigured, openDriveFolderUrl } from '../lib/drive'
 import { openTrustedExternalUrl } from '../lib/security'
 import {
-  createSharedWallet,
-  deleteSharedTransaction,
-  inviteSharedWalletMember,
-  joinSharedWalletInvite,
-  loadSharedWallet,
-  readSharedInviteFromUrl,
-  removeSharedWalletMember,
-  saveSharedTransaction,
-  type SharedWalletLoaded,
+  cancelSharedWalletDeletion, createSharedWallet, deleteSharedTransaction, finalizeSharedWalletDeletion,
+  inviteSharedWalletMember, joinSharedWalletInvite, loadSharedWallet, readSharedInviteFromUrl,
+  removeSharedWalletMember, renameSharedWallet, reopenSharedWalletFromArchive, saveSharedTransaction,
+  scheduleSharedWalletDeletion, updateSharedWalletLedger, type SharedWalletLoaded,
 } from '../lib/sharedWallet'
-import type { AppSettings, SharedTransaction, SharedWalletMembership, SharedWalletRole } from '../types'
+import {
+  accountLabel, buildSharedArchive, categoryLabel, sharedAccountBalances, sharedLedgerOf,
+  sharedTotals, sharedTransactionsAsPersonalShape,
+} from '../lib/sharedLedger'
+import type { Account, AppSettings, Category, SharedTransaction, SharedWalletArchive, SharedWalletLedger, SharedWalletMembership, SharedWalletRole, TransactionType } from '../types'
 import { Badge, Button, Card, EmptyState, Input, Label, Select, Textarea } from './ui'
+import { LedgerAnalytics } from './LedgerAnalytics'
+import { VoiceEntry, type VoiceEntryDraft } from './VoiceEntry'
 
-function localDateTimeValue(iso?: string) {
-  const date = iso ? new Date(iso) : new Date()
-  const offset = date.getTimezoneOffset() * 60_000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+type Tab = 'overview' | 'transactions' | 'analytics' | 'members' | 'settings'
+const TEXT = {
+  vi: { overview:'Tổng quan',transactions:'Giao dịch',analytics:'Phân tích',members:'Thành viên',settings:'Cài đặt',balance:'Số dư',history:'Lịch sử ví dùng chung',archived:'Đã lưu trữ',archiveReadOnly:'Bản lưu chỉ đọc và hoàn toàn tách khỏi ví cá nhân.',reopen:'Mở lại thành ví mới',archiveDelete:'Xóa vĩnh viễn bản lưu này?',closing:'Ví đang chờ xóa · chỉ đọc',cancelDelete:'Hủy xóa',sharedAccounts:'Tài khoản chung',sharedCategories:'Danh mục chung',noAccounts:'Chưa có tài khoản chung.',recent:'Giao dịch gần đây',walletSettings:'Cài đặt ví dùng chung',danger:'Vùng nguy hiểm',deleteHint:'Ví sẽ chuyển sang chỉ đọc trong 90 ngày. Sau đó mỗi thành viên nhận một bản lịch sử cá nhân mã hóa riêng khi họ mở O-Wallet.',scheduleDelete:'Lên lịch xóa sau 90 ngày',scheduleConfirm:'Chuyển ví sang chỉ đọc ngay và lên lịch xóa sau 90 ngày?',account:'Tài khoản',destination:'Tài khoản nhận',both:'Cả thu và chi',analyticsTitle:'Phân tích ví dùng chung',analyticsSubtitle:'Chỉ dùng dữ liệu của ví dùng chung này; không cộng vào ví cá nhân.' },
+  en: { overview:'Overview',transactions:'Transactions',analytics:'Analytics',members:'Members',settings:'Settings',balance:'Balance',history:'Shared wallet history',archived:'Archived',archiveReadOnly:'This read-only archive remains completely isolated from your personal wallet.',reopen:'Reopen as new wallet',archiveDelete:'Permanently delete this archive?',closing:'Wallet scheduled for deletion · read-only',cancelDelete:'Cancel deletion',sharedAccounts:'Shared accounts',sharedCategories:'Shared categories',noAccounts:'No shared accounts yet.',recent:'Recent transactions',walletSettings:'Shared wallet settings',danger:'Danger zone',deleteHint:'The wallet becomes read-only for 90 days. Afterwards each member receives a separately encrypted personal history archive the next time they open O-Wallet.',scheduleDelete:'Schedule deletion in 90 days',scheduleConfirm:'Make this wallet read-only now and schedule deletion in 90 days?',account:'Account',destination:'Destination account',both:'Income & expense',analyticsTitle:'Shared wallet analytics',analyticsSubtitle:'Uses only this shared wallet; nothing is added to your personal wallet.' },
+} as const
+
+function dt(iso?: string){const d=iso?new Date(iso):new Date();return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16)}
+function groupFromUrl(){return new URL(location.href).searchParams.get('group')??''}
+function setGroupUrl(id:string){const u=new URL(location.href);u.searchParams.set('page','shared');id?u.searchParams.set('group',id):u.searchParams.delete('group');u.searchParams.delete('action');u.hash='';history.replaceState({},'',`${u.pathname}${u.search}`)}
+function sameMembership(a:SharedWalletMembership,b:SharedWalletMembership){return JSON.stringify(a)===JSON.stringify(b)}
+function err(e:unknown,fallback:string){return e instanceof Error&&e.message.startsWith('error.')?e.message:fallback}
+
+export function SharedWallets(){
+  const {settings,saveEntity,googleSession}=useWallet();const {t,locale}=useI18n();const L=TEXT[locale as 'vi'|'en']
+  const memberships=settings?.sharedWallets??[];const archives=settings?.sharedWalletArchives??[]
+  const [selectedId,setSelectedId]=useState(()=>groupFromUrl()||memberships[0]?.groupId||'');const membership=memberships.find(x=>x.groupId===selectedId)
+  const [loaded,setLoaded]=useState<SharedWalletLoaded>();const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [tab,setTab]=useState<Tab>('overview')
+  const [createName,setCreateName]=useState('');const [inviteEmail,setInviteEmail]=useState('');const [inviteRole,setInviteRole]=useState<Exclude<SharedWalletRole,'owner'>>('member');const [lastInvite,setLastInvite]=useState('')
+  const [showAdd,setShowAdd]=useState(false);const [voiceOnOpen,setVoiceOnOpen]=useState(false);const [editTx,setEditTx]=useState<SharedTransaction>();const [editName,setEditName]=useState('')
+  const [pendingInvite,setPendingInvite]=useState(()=>readSharedInviteFromUrl());const [archiveView,setArchiveView]=useState<SharedWalletArchive>()
+
+  useEffect(()=>{if(!selectedId&&memberships[0]){setSelectedId(memberships[0].groupId);setGroupUrl(memberships[0].groupId)}},[memberships,selectedId])
+  useEffect(()=>{if(!pendingInvite)return;const found=memberships.find(x=>x.groupId===pendingInvite.groupId);if(found){setPendingInvite(undefined);setSelectedId(found.groupId);setGroupUrl(found.groupId)}},[memberships,pendingInvite])
+
+  async function saveMembership(next:SharedWalletMembership,secrets?:Record<string,string>){if(!settings)return;const all={...(settings.sharedWalletOwnerSecrets??{})};if(secrets)all[next.groupId]=secrets;await saveEntity({...settings,sharedWallets:[...(settings.sharedWallets??[]).filter(x=>x.groupId!==next.groupId),next],sharedWalletOwnerSecrets:all,updatedAt:new Date().toISOString()})}
+  async function refresh(target=membership,secrets?:Record<string,string>){if(!target||!googleSession)return;setBusy(true);setError('');try{const r=await loadSharedWallet(googleSession.accessToken,target,secrets??settings?.sharedWalletOwnerSecrets?.[target.groupId]??{});setLoaded(r);setEditName(r.control.name);if(!r.fromSnapshot&&!sameMembership(r.membership,target))await saveMembership({...r.membership,name:r.control.name})}catch(e){setError(err(e,'error.sharedLoadFailed'))}finally{setBusy(false)}}
+  useEffect(()=>{setLoaded(undefined);setTab('overview');if(membership&&googleSession&&googleApiKeyConfigured())void refresh(membership)},[membership?.groupId,googleSession?.accessToken])
+
+  const aliases=membership?settings?.sharedWalletAliases?.[membership.groupId]??{}:{}
+  const memberMap=useMemo(()=>new Map((loaded?.control.members??[]).map(x=>[x.id,x])),[loaded])
+  const memberName=(id:string)=>aliases[id]||loaded?.profiles[id]?.name||memberMap.get(id)?.canonicalName||memberMap.get(id)?.email||t('shared.unknownMember')
+  const ledger=loaded?sharedLedgerOf(loaded.control,settings?.defaultCurrency??'VND'):undefined;const currency=ledger?.defaultCurrency??settings?.defaultCurrency??'VND';const totals=sharedTotals(loaded?.transactions??[]);const balances=ledger?sharedAccountBalances(ledger,loaded?.transactions??[]):new Map<string,number>()
+  const lifecycle=loaded?.control.lifecycle??{state:'active' as const};const readOnly=membership?.role==='viewer'||Boolean(loaded?.fromSnapshot)||lifecycle.state!=='active';const due=lifecycle.state==='closing'&&!!lifecycle.purgeAfter&&Date.parse(lifecycle.purgeAfter)<=Date.now()
+
+  async function createGroup(){if(!googleSession||!settings||!createName.trim())return;setBusy(true);try{const c=await createSharedWallet(googleSession.accessToken,googleSession.user,createName);await saveEntity({...settings,sharedWallets:[...(settings.sharedWallets??[]),c.membership],sharedWalletOwnerSecrets:{...(settings.sharedWalletOwnerSecrets??{}),[c.membership.groupId]:c.ownerSecrets},updatedAt:new Date().toISOString()});setCreateName('');setSelectedId(c.membership.groupId);setGroupUrl(c.membership.groupId);setLoaded({control:c.control,transactions:[],profiles:{},snapshotCount:0,membership:c.membership})}catch(e){setError(err(e,'error.sharedCreateFailed'))}finally{setBusy(false)}}
+  async function join(){if(!pendingInvite||!googleSession)return;setBusy(true);try{const m=await joinSharedWalletInvite(googleSession.accessToken,googleSession.user,pendingInvite);await saveMembership(m);setPendingInvite(undefined);setSelectedId(m.groupId);setGroupUrl(m.groupId);await refresh(m)}catch(e){setError(err(e,'error.sharedJoinFailed'))}finally{setBusy(false)}}
+  async function invite(){if(!membership||!googleSession||!settings||!inviteEmail.trim()||readOnly)return;setBusy(true);try{const r=await inviteSharedWalletMember(googleSession.accessToken,membership,settings.sharedWalletOwnerSecrets?.[membership.groupId]??{},inviteEmail,inviteRole);await saveMembership(membership,r.ownerSecrets);setLastInvite(r.inviteUrl);setInviteEmail('');await refresh(membership,r.ownerSecrets)}catch(e){setError(err(e,'error.sharedInviteFailed'))}finally{setBusy(false)}}
+  async function removeMember(id:string){if(!membership||!googleSession||!settings||readOnly||!confirm(t('shared.removeConfirm')))return;setBusy(true);try{const r=await removeSharedWalletMember(googleSession.accessToken,membership,settings.sharedWalletOwnerSecrets?.[membership.groupId]??{},id);await saveMembership(r.membership,r.ownerSecrets);await refresh(r.membership,r.ownerSecrets)}catch(e){setError(err(e,'error.sharedRemoveFailed'))}finally{setBusy(false)}}
+  async function saveAlias(id:string,value:string){if(!settings||!membership)return;const all={...(settings.sharedWalletAliases??{})};const g={...(all[membership.groupId]??{})};value.trim()?g[id]=value.trim().slice(0,80):delete g[id];all[membership.groupId]=g;await saveEntity({...settings,sharedWalletAliases:all,updatedAt:new Date().toISOString()})}
+  async function removeTx(id:string){if(!membership||!googleSession||readOnly||!confirm(t('shared.deleteTransactionConfirm')))return;await deleteSharedTransaction(googleSession.accessToken,membership,id);await refresh(membership)}
+  async function rename(){if(!membership||!googleSession||!settings||membership.role!=='owner')return;const r=await renameSharedWallet(googleSession.accessToken,membership,settings.sharedWalletOwnerSecrets?.[membership.groupId]??{},editName);await saveMembership(r.membership);setLoaded(x=>x?{...x,control:r.control,membership:r.membership}:x)}
+  async function saveLedger(next:SharedWalletLedger){if(!membership||!googleSession||!settings||membership.role!=='owner'||readOnly)return;const r=await updateSharedWalletLedger(googleSession.accessToken,membership,settings.sharedWalletOwnerSecrets?.[membership.groupId]??{},next);setLoaded(x=>x?{...x,control:r.control,membership:r.membership}:x)}
+  async function scheduleDelete(){if(!membership||!loaded||!googleSession||!settings||membership.role!=='owner'||!confirm(L.scheduleConfirm))return;const r=await scheduleSharedWalletDeletion(googleSession.accessToken,membership,settings.sharedWalletOwnerSecrets?.[membership.groupId]??{},loaded.transactions);setLoaded({...loaded,control:r.control,membership:r.membership})}
+  async function cancelDelete(){if(!membership||!loaded||!googleSession||!settings)return;const r=await cancelSharedWalletDeletion(googleSession.accessToken,membership,settings.sharedWalletOwnerSecrets?.[membership.groupId]??{});setLoaded({...loaded,control:r.control,membership:r.membership})}
+  async function archiveAndFinalize(){if(!membership||!loaded||!googleSession||!settings||!due)return;const names=Object.fromEntries(loaded.control.members.map(m=>[m.id,memberName(m.id)]));const a=buildSharedArchive(loaded.control,loaded.transactions,names);const ars=[...(settings.sharedWalletArchives??[]).filter(x=>x.originalGroupId!==membership.groupId),a];await saveEntity({...settings,sharedWalletArchives:ars,updatedAt:new Date().toISOString()});await finalizeSharedWalletDeletion(googleSession.accessToken,membership,settings.sharedWalletOwnerSecrets?.[membership.groupId]??{});const sec={...(settings.sharedWalletOwnerSecrets??{})};delete sec[membership.groupId];const als={...(settings.sharedWalletAliases??{})};delete als[membership.groupId];await saveEntity({...settings,sharedWalletArchives:ars,sharedWallets:(settings.sharedWallets??[]).filter(x=>x.groupId!==membership.groupId),sharedWalletOwnerSecrets:sec,sharedWalletAliases:als,updatedAt:new Date().toISOString()});setLoaded(undefined);setSelectedId('');setGroupUrl('');setArchiveView(a)}
+  useEffect(()=>{if(due&&!busy)void archiveAndFinalize()},[due,membership?.groupId])
+  async function deleteArchive(a:SharedWalletArchive){if(!settings||!confirm(L.archiveDelete))return;await saveEntity({...settings,sharedWalletArchives:(settings.sharedWalletArchives??[]).filter(x=>x.id!==a.id),updatedAt:new Date().toISOString()});setArchiveView(undefined)}
+  async function reopenArchive(a:SharedWalletArchive){if(!settings||!googleSession)return;const c=await reopenSharedWalletFromArchive(googleSession.accessToken,googleSession.user,a);await saveEntity({...settings,sharedWallets:[...(settings.sharedWallets??[]),c.membership],sharedWalletOwnerSecrets:{...(settings.sharedWalletOwnerSecrets??{}),[c.membership.groupId]:c.ownerSecrets},updatedAt:new Date().toISOString()});setArchiveView(undefined);setSelectedId(c.membership.groupId);setGroupUrl(c.membership.groupId);setLoaded({control:c.control,transactions:c.transactions,profiles:{},snapshotCount:c.transactions.length,membership:c.membership})}
+
+  if(archiveView)return <ArchivePage archive={archiveView} onBack={()=>setArchiveView(undefined)} onDelete={()=>void deleteArchive(archiveView)} onReopen={()=>void reopenArchive(archiveView)}/>
+  return <div className="space-y-5">
+    <div className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="text-2xl font-semibold">{t('shared.title')}</h1><p className="mt-1 text-sm text-stone-500">{t('shared.subtitle')}</p></div>{membership&&googleSession&&<div className="flex gap-2"><Button variant="secondary" onClick={()=>void refresh()} disabled={busy}><RefreshCw size={16} className={busy?'animate-spin':''}/>{t('shared.refresh')}</Button><Button variant="secondary" onClick={()=>{setVoiceOnOpen(true);setShowAdd(true)}} disabled={readOnly}><Mic size={16}/>{t('voice.entryButton')}</Button><Button onClick={()=>{setVoiceOnOpen(false);setShowAdd(true)}} disabled={readOnly}><Plus size={16}/>{t('shared.addTransaction')}</Button></div>}</div>
+    {pendingInvite&&<Card className="p-4 flex items-center justify-between"><div><b>{pendingInvite.groupName}</b><div className="text-xs text-stone-500">{t('shared.inviteFor',{email:pendingInvite.invitedEmail})}</div></div><Button onClick={()=>void join()}><Users size={16}/>{t('shared.join')}</Button></Card>}
+    {!googleApiKeyConfigured()&&<div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{t('shared.apiKeyMissingText')}</div>}{error&&<div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{t(error)}</div>}
+    {!googleSession?<EmptyState title={t('shared.googleRequiredTitle')} text={t('shared.googleRequiredText')}/>:<div className="grid gap-5 xl:grid-cols-[280px_minmax(0,1fr)]">
+      <aside className="space-y-4"><Card className="p-3"><div className="mb-2 flex gap-2"><WalletCards size={16}/><b className="text-sm">{t('shared.wallets')}</b></div>{memberships.map(m=><button key={m.groupId} className={`w-full rounded-xl px-3 py-2 text-left text-sm ${m.groupId===selectedId?'bg-stone-100 font-semibold dark:bg-stone-900':''}`} onClick={()=>{setSelectedId(m.groupId);setGroupUrl(m.groupId)}}><div className="truncate">{m.name}</div><div className="text-[11px] text-stone-400">{t(`shared.role.${m.role}`)}</div></button>)}</Card><Card className="p-4"><Label>{t('shared.createName')}</Label><Input value={createName} onChange={e=>setCreateName(e.target.value)}/><Button className="mt-3 w-full" onClick={()=>void createGroup()} disabled={!createName.trim()}><Plus size={15}/>{t('shared.create')}</Button></Card>{archives.length>0&&<Card className="p-3"><div className="mb-2 flex gap-2"><Archive size={16}/><b className="text-sm">{L.history}</b></div>{archives.map(a=><button key={a.id} className="w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-stone-50 dark:hover:bg-stone-900" onClick={()=>setArchiveView(a)}><div className="truncate">{a.name}</div><div className="text-[11px] text-stone-400">{new Date(a.closedAt).toLocaleDateString(locale)}</div></button>)}</Card>}</aside>
+      {!membership?<EmptyState title={t('shared.emptyTitle')} text={t('shared.emptyText')}/>:<main className="min-w-0 space-y-5">{lifecycle.state==='closing'&&<div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"><b>{L.closing}</b><div className="mt-1">{locale==='vi'?'Đủ điều kiện xóa sau':'Eligible for deletion after'} {new Date(lifecycle.purgeAfter!).toLocaleString(locale)}</div>{membership.role==='owner'&&<Button variant="ghost" className="mt-2" onClick={()=>void cancelDelete()}><RotateCcw size={14}/>{L.cancelDelete}</Button>}</div>}
+        <Card className="p-5"><div className="flex justify-between gap-3"><div><div className="flex gap-2"><h2 className="text-xl font-semibold">{loaded?.control.name??membership.name}</h2><Badge>{t(`shared.role.${membership.role}`)}</Badge>{readOnly&&<Badge tone="amber">Read-only</Badge>}</div><p className="mt-1 text-xs text-stone-500">{t('shared.distributedStorage')}</p></div><Button variant="ghost" onClick={()=>openTrustedExternalUrl(openDriveFolderUrl(membership.localRootId))}><FolderOpen size={15}/>{t('shared.openMyFolder')}</Button></div><div className="mt-4 grid gap-3 sm:grid-cols-4"><Stat label={t('shared.income')} value={formatMoney(totals.income,currency,locale)} tone="green"/><Stat label={t('shared.expense')} value={formatMoney(totals.expense,currency,locale)} tone="red"/><Stat label={t('shared.net')} value={formatMoney(totals.net,currency,locale)}/><Stat label={L.balance} value={formatMoney([...balances.values()].reduce((a,b)=>a+b,0),currency,locale)}/></div></Card>
+        <div className="flex gap-1 overflow-x-auto rounded-xl border p-1">{(['overview','transactions','analytics','members','settings'] as Tab[]).map(id=><button key={id} className={`rounded-lg px-3 py-2 text-sm ${tab===id?'bg-stone-950 text-white dark:bg-white dark:text-stone-950':''}`} onClick={()=>setTab(id)}>{L[id]}</button>)}</div>
+        {tab==='overview'&&<Overview ledger={ledger} balances={balances} transactions={loaded?.transactions??[]} currency={currency}/>} {tab==='transactions'&&<TxList loaded={loaded} membership={membership} ledger={ledger} readOnly={readOnly} memberName={memberName} onEdit={setEditTx} onDelete={id=>void removeTx(id)}/>} {tab==='analytics'&&ledger&&<LedgerAnalytics transactions={sharedTransactionsAsPersonalShape(loaded?.transactions??[])} categories={ledger.categories} currency={currency} title={L.analyticsTitle} subtitle={L.analyticsSubtitle}/>} {tab==='members'&&<Members loaded={loaded} membership={membership} aliases={aliases} readOnly={readOnly} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviteRole={inviteRole} setInviteRole={setInviteRole} lastInvite={lastInvite} onInvite={()=>void invite()} onAlias={(id,v)=>void saveAlias(id,v)} onRemove={id=>void removeMember(id)}/>} {tab==='settings'&&ledger&&<SettingsPanel ledger={ledger} membership={membership} readOnly={readOnly} name={editName} setName={setEditName} onRename={()=>void rename()} onSaveLedger={x=>void saveLedger(x)} onDelete={()=>void scheduleDelete()}/>} 
+      </main>}
+    </div>}
+    {(showAdd||editTx)&&membership&&googleSession&&ledger&&!readOnly&&<TxModal membership={membership} ledger={ledger} transaction={editTx} initialVoice={voiceOnOpen} onClose={()=>{setShowAdd(false);setVoiceOnOpen(false);setEditTx(undefined)}} onSaved={()=>void refresh(membership)}/>} 
+  </div>
 }
 
-function groupFromUrl() {
-  return new URL(window.location.href).searchParams.get('group') ?? ''
-}
-
-function setGroupUrl(groupId: string) {
-  const url = new URL(window.location.href)
-  url.searchParams.set('page', 'shared')
-  if (groupId) url.searchParams.set('group', groupId)
-  else url.searchParams.delete('group')
-  url.searchParams.delete('action')
-  url.hash = ''
-  window.history.replaceState({}, '', `${url.pathname}${url.search}`)
-}
-
-function membershipsEqual(a: SharedWalletMembership, b: SharedWalletMembership) {
-  return JSON.stringify(a) === JSON.stringify(b)
-}
-
-function sharedUiError(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message.startsWith('error.')) return error.message
-  return fallback
-}
-
-export function SharedWallets() {
-  const { settings, saveEntity, googleSession } = useWallet()
-  const { t, locale } = useI18n()
-  const memberships = settings?.sharedWallets ?? []
-  const [selectedId, setSelectedId] = useState(() => groupFromUrl() || memberships[0]?.groupId || '')
-  const membership = memberships.find((item) => item.groupId === selectedId)
-  const [loaded, setLoaded] = useState<SharedWalletLoaded>()
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [createName, setCreateName] = useState('')
-  const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState<Exclude<SharedWalletRole, 'owner'>>('member')
-  const [lastInvite, setLastInvite] = useState('')
-  const [showAdd, setShowAdd] = useState(false)
-  const [editTx, setEditTx] = useState<SharedTransaction>()
-  const [pendingInvite, setPendingInvite] = useState(() => readSharedInviteFromUrl())
-
-  useEffect(() => {
-    if (!selectedId && memberships[0]) {
-      setSelectedId(memberships[0].groupId)
-      setGroupUrl(memberships[0].groupId)
-    }
-  }, [memberships, selectedId])
-
-  useEffect(() => {
-    if (!pendingInvite) return
-    const existing = memberships.find((item) => item.groupId === pendingInvite.groupId)
-    if (!existing) return
-    setPendingInvite(undefined)
-    setSelectedId(existing.groupId)
-    setGroupUrl(existing.groupId)
-  }, [memberships, pendingInvite])
-
-  async function saveMembership(
-    nextMembership: SharedWalletMembership,
-    ownerSecrets?: Record<string, string>,
-  ) {
-    if (!settings) return
-    const nextSecrets = { ...(settings.sharedWalletOwnerSecrets ?? {}) }
-    if (ownerSecrets) nextSecrets[nextMembership.groupId] = ownerSecrets
-    const next: AppSettings = {
-      ...settings,
-      sharedWallets: [
-        ...(settings.sharedWallets ?? []).filter((item) => item.groupId !== nextMembership.groupId),
-        nextMembership,
-      ],
-      sharedWalletOwnerSecrets: nextSecrets,
-      updatedAt: new Date().toISOString(),
-    }
-    await saveEntity(next)
-  }
-
-  async function refreshGroup(target = membership, ownerSecretsOverride?: Record<string, string>) {
-    if (!target || !googleSession) return
-    setBusy(true)
-    setError('')
-    try {
-      const ownerSecrets = ownerSecretsOverride ?? settings?.sharedWalletOwnerSecrets?.[target.groupId] ?? {}
-      const result = await loadSharedWallet(googleSession.accessToken, target, ownerSecrets)
-      setLoaded(result)
-      if (!result.fromSnapshot && !membershipsEqual(result.membership, target)) {
-        await saveMembership(result.membership)
-      }
-    } catch (loadError) {
-      setError(sharedUiError(loadError, 'error.sharedLoadFailed'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  useEffect(() => {
-    setLoaded(undefined)
-    if (membership && googleSession && googleApiKeyConfigured()) void refreshGroup(membership)
-    // groupId is intentional: aliases and ordinary settings changes must not refetch the group.
-  }, [membership?.groupId, googleSession?.accessToken])
-
-  async function joinInvite() {
-    if (!pendingInvite || !googleSession || !settings) return
-    setBusy(true)
-    setError('')
-    try {
-      const joined = await joinSharedWalletInvite(googleSession.accessToken, googleSession.user, pendingInvite)
-      await saveMembership(joined)
-      setPendingInvite(undefined)
-      setSelectedId(joined.groupId)
-      setGroupUrl(joined.groupId)
-      await refreshGroup(joined)
-    } catch (joinError) {
-      setError(sharedUiError(joinError, 'error.sharedJoinFailed'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function createGroup() {
-    if (!googleSession || !settings || !createName.trim()) return
-    if (!googleApiKeyConfigured()) { setError('error.sharedApiKeyMissing'); return }
-    setBusy(true)
-    setError('')
-    try {
-      const created = await createSharedWallet(googleSession.accessToken, googleSession.user, createName)
-      const nextSettings: AppSettings = {
-        ...settings,
-        sharedWallets: [...(settings.sharedWallets ?? []), created.membership],
-        sharedWalletOwnerSecrets: {
-          ...(settings.sharedWalletOwnerSecrets ?? {}),
-          [created.membership.groupId]: created.ownerSecrets,
-        },
-        updatedAt: new Date().toISOString(),
-      }
-      await saveEntity(nextSettings)
-      setCreateName('')
-      setSelectedId(created.membership.groupId)
-      setGroupUrl(created.membership.groupId)
-      setLoaded({ control: created.control, transactions: [], profiles: {}, snapshotCount: 0, membership: created.membership })
-    } catch (createError) {
-      setError(sharedUiError(createError, 'error.sharedCreateFailed'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function invite() {
-    if (!membership || !googleSession || !settings || !inviteEmail.trim()) return
-    const ownerSecrets = settings.sharedWalletOwnerSecrets?.[membership.groupId] ?? {}
-    setBusy(true)
-    setError('')
-    setLastInvite('')
-    try {
-      const result = await inviteSharedWalletMember(
-        googleSession.accessToken,
-        membership,
-        ownerSecrets,
-        inviteEmail,
-        inviteRole,
-      )
-      await saveMembership(membership, result.ownerSecrets)
-      setLastInvite(result.inviteUrl)
-      setInviteEmail('')
-      await refreshGroup(membership, result.ownerSecrets)
-    } catch (inviteError) {
-      setError(sharedUiError(inviteError, 'error.sharedInviteFailed'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function removeMember(memberId: string) {
-    if (!membership || !googleSession || !settings) return
-    if (!confirm(t('shared.removeConfirm'))) return
-    setBusy(true)
-    setError('')
-    try {
-      const result = await removeSharedWalletMember(
-        googleSession.accessToken,
-        membership,
-        settings.sharedWalletOwnerSecrets?.[membership.groupId] ?? {},
-        memberId,
-      )
-      await saveMembership(result.membership, result.ownerSecrets)
-      await refreshGroup(result.membership, result.ownerSecrets)
-    } catch (removeError) {
-      setError(sharedUiError(removeError, 'error.sharedRemoveFailed'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function saveAlias(memberId: string, value: string) {
-    if (!settings || !membership) return
-    const all = { ...(settings.sharedWalletAliases ?? {}) }
-    const group = { ...(all[membership.groupId] ?? {}) }
-    if (value.trim()) group[memberId] = value.trim().slice(0, 80)
-    else delete group[memberId]
-    all[membership.groupId] = group
-    await saveEntity({ ...settings, sharedWalletAliases: all, updatedAt: new Date().toISOString() })
-  }
-
-  async function removeTransaction(id: string) {
-    if (!membership || !googleSession || loaded?.fromSnapshot) return
-    if (!confirm(t('shared.deleteTransactionConfirm'))) return
-    setBusy(true)
-    setError('')
-    try {
-      await deleteSharedTransaction(googleSession.accessToken, membership, id)
-      await refreshGroup(membership)
-    } catch (deleteError) {
-      setError(sharedUiError(deleteError, 'error.sharedSaveFailed'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const aliases = membership ? settings?.sharedWalletAliases?.[membership.groupId] ?? {} : {}
-  const memberMap = useMemo(
-    () => new Map((loaded?.control.members ?? []).map((member) => [member.id, member])),
-    [loaded],
-  )
-  const memberLabel = (memberId: string) => {
-    const member = memberMap.get(memberId)
-    const profile = loaded?.profiles[memberId]
-    return aliases[memberId] || profile?.name || member?.canonicalName || member?.email || t('shared.unknownMember')
-  }
-  const now = Date.now()
-  const activeTransactions = loaded?.transactions.filter((tx) => Date.parse(tx.occurredAt) <= now) ?? []
-  const totals = activeTransactions.reduce((acc, tx) => {
-    if (tx.type === 'income') acc.income += tx.amount
-    else acc.expense += tx.amount
-    return acc
-  }, { income: 0, expense: 0 })
-  const currency = loaded?.transactions[0]?.currency ?? settings?.defaultCurrency ?? 'VND'
-  const readOnly = membership?.role === 'viewer' || Boolean(loaded?.fromSnapshot)
-
-  return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-stone-950 dark:text-white">{t('shared.title')}</h1>
-          <p className="mt-1 text-sm text-stone-500">{t('shared.subtitle')}</p>
-        </div>
-        {membership && googleSession && (
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => void refreshGroup()} disabled={busy}>
-              <RefreshCw size={16} className={busy ? 'animate-spin' : ''} /> {t('shared.refresh')}
-            </Button>
-            <Button onClick={() => setShowAdd(true)} disabled={readOnly}>
-              <Plus size={17} /> {t('shared.addTransaction')}
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {pendingInvite && (
-        <Card className="border-stone-300 p-4 dark:border-stone-700 sm:p-5">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-sm font-semibold"><Mail size={17} /> {t('shared.inviteDetected')}</div>
-              <div className="mt-2 truncate text-lg font-semibold">{pendingInvite.groupName}</div>
-              <p className="mt-1 text-sm text-stone-500">{t('shared.inviteFor', { email: pendingInvite.invitedEmail })}</p>
-              <p className="mt-2 max-w-2xl text-xs leading-5 text-stone-500">{t('shared.joinPickerHint')}</p>
-            </div>
-            <Button onClick={() => void joinInvite()} disabled={busy || !googleSession || !googleApiKeyConfigured()}>
-              <Users size={17} /> {t('shared.join')}
-            </Button>
-          </div>
-        </Card>
-      )}
-
-      {!googleApiKeyConfigured() && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-300">
-          {t('shared.apiKeyMissingText')}
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-500/10 dark:text-rose-300">
-          {t(error)}
-        </div>
-      )}
-
-      {!googleSession ? (
-        <EmptyState title={t('shared.googleRequiredTitle')} text={t('shared.googleRequiredText')} />
-      ) : (
-        <div className="grid gap-5 xl:grid-cols-[280px_minmax(0,1fr)]">
-          <div className="space-y-4">
-            <Card className="p-3">
-              <div className="mb-3 flex items-center gap-2 px-1"><WalletCards size={17} /><span className="text-sm font-semibold">{t('shared.wallets')}</span></div>
-              <div className="space-y-1">
-                {memberships.map((item) => (
-                  <button
-                    key={item.groupId}
-                    onClick={() => { setSelectedId(item.groupId); setGroupUrl(item.groupId) }}
-                    className={`w-full rounded-xl px-3 py-2.5 text-left text-sm ${selectedId === item.groupId ? 'bg-stone-100 font-semibold text-stone-950 dark:bg-stone-900 dark:text-white' : 'text-stone-600 hover:bg-stone-50 dark:text-stone-300 dark:hover:bg-stone-900/60'}`}
-                  >
-                    <div className="truncate">{item.name}</div>
-                    <div className="mt-0.5 text-[11px] text-stone-400">{t(`shared.role.${item.role}`)}</div>
-                  </button>
-                ))}
-                {memberships.length === 0 && <div className="px-2 py-3 text-xs text-stone-500">{t('shared.noWallets')}</div>}
-              </div>
-            </Card>
-            <Card className="p-4">
-              <Label>{t('shared.createName')}</Label>
-              <Input value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder={t('shared.createPlaceholder')} maxLength={120} />
-              <Button className="mt-3 w-full" onClick={() => void createGroup()} disabled={busy || !createName.trim() || !googleApiKeyConfigured()}>
-                <Plus size={16} /> {t('shared.create')}
-              </Button>
-            </Card>
-          </div>
-
-          {!membership ? (
-            <EmptyState title={t('shared.emptyTitle')} text={t('shared.emptyText')} />
-          ) : (
-            <div className="min-w-0 space-y-5">
-              {loaded?.fromSnapshot && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-300">
-                  {t('shared.snapshotFallback')}
-                </div>
-              )}
-
-              <Card className="p-4 sm:p-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2"><h2 className="text-xl font-semibold">{loaded?.control.name ?? membership.name}</h2><Badge>{t(`shared.role.${membership.role}`)}</Badge></div>
-                    <p className="mt-1 max-w-2xl text-xs leading-5 text-stone-500">{t('shared.distributedStorage')}</p>
-                  </div>
-                  <Button variant="ghost" onClick={() => openTrustedExternalUrl(openDriveFolderUrl(membership.localRootId))}>
-                    <FolderOpen size={16} /> {t('shared.openMyFolder')}
-                  </Button>
-                </div>
-                <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-900"><div className="text-xs text-stone-500">{t('shared.income')}</div><div className="mt-1 text-lg font-semibold text-emerald-600">{formatMoney(totals.income, currency, locale)}</div></div>
-                  <div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-900"><div className="text-xs text-stone-500">{t('shared.expense')}</div><div className="mt-1 text-lg font-semibold text-rose-600">{formatMoney(totals.expense, currency, locale)}</div></div>
-                  <div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-900"><div className="text-xs text-stone-500">{t('shared.net')}</div><div className="mt-1 text-lg font-semibold">{formatMoney(totals.income - totals.expense, currency, locale)}</div></div>
-                </div>
-                {loaded && <div className="mt-3 text-xs text-stone-400">{t('shared.snapshotHint', { count: loaded.snapshotCount })}</div>}
-              </Card>
-
-              <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_360px]">
-                <Card className="overflow-hidden">
-                  <div className="border-b border-stone-200 px-4 py-3 text-sm font-semibold dark:border-stone-800">{t('shared.transactions')} · {loaded?.transactions.length ?? 0}</div>
-                  {!loaded || loaded.transactions.length === 0 ? (
-                    <div className="p-4"><EmptyState title={t('shared.noTransactions')} text={t('shared.noTransactionsText')} /></div>
-                  ) : (
-                    <div className="divide-y divide-stone-100 dark:divide-stone-800">
-                      {loaded.transactions.map((tx) => {
-                        const own = tx.createdByMemberId === membership.memberId
-                        return (
-                          <div key={`${tx.createdByMemberId}:${tx.id}`} className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_150px_auto] sm:items-center">
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2"><span className="truncate font-medium">{tx.merchant || tx.description || t('transaction.noDescription')}</span><Badge tone={tx.type === 'income' ? 'green' : 'red'}>{t(`transaction.${tx.type}`)}</Badge></div>
-                              <div className="mt-1 flex flex-wrap gap-x-2 text-xs text-stone-500"><span>{formatDateTime(tx.occurredAt, locale)}</span>{tx.category && <span>{tx.category}</span>}<span>{t('shared.createdBy', { name: memberLabel(tx.createdByMemberId) })}</span></div>
-                            </div>
-                            <div className={`font-semibold ${tx.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>{tx.type === 'income' ? '+' : '-'}{formatMoney(tx.amount, tx.currency, locale)}</div>
-                            <div className="flex justify-end gap-1">
-                              {own && !loaded.fromSnapshot && membership.role !== 'viewer' && <>
-                                <Button variant="ghost" className="px-2" onClick={() => setEditTx(tx)}><Pencil size={16} /></Button>
-                                <Button variant="ghost" className="px-2 text-rose-500" onClick={() => void removeTransaction(tx.id)}><Trash2 size={16} /></Button>
-                              </>}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </Card>
-
-                <Card className="p-4">
-                  <div className="flex items-center gap-2"><Users size={17} /><h3 className="font-semibold">{t('shared.members')}</h3></div>
-                  <p className="mt-1 text-xs leading-5 text-stone-500">{t('shared.nicknameHint')}</p>
-                  <div className="mt-4 space-y-3">
-                    {loaded?.control.members.map((member) => {
-                      const profile = loaded.profiles[member.id]
-                      const canonical = profile?.name || member.canonicalName || member.email
-                      return (
-                        <div key={member.id} className="rounded-xl border border-stone-200 p-3 dark:border-stone-800">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-medium">{aliases[member.id] || canonical}</div>
-                              <div className="truncate text-[11px] text-stone-400">{member.email}</div>
-                            </div>
-                            <div className="flex flex-wrap justify-end gap-1"><Badge>{t(`shared.role.${member.role}`)}</Badge>{member.status === 'invited' && <Badge tone="amber">{t('shared.pending')}</Badge>}{member.status === 'removed' && <Badge tone="red">{t('shared.removed')}</Badge>}</div>
-                          </div>
-                          <Input className="mt-2" defaultValue={aliases[member.id] ?? ''} placeholder={t('shared.nicknamePlaceholder')} onBlur={(e) => void saveAlias(member.id, e.target.value)} />
-                          {membership.role === 'owner' && member.id !== loaded.control.ownerMemberId && !loaded.fromSnapshot && (
-                            <Button variant="ghost" className="mt-2 px-2 text-rose-500" onClick={() => void removeMember(member.id)}><Trash2 size={14} /> {t('shared.removeMember')}</Button>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-
-                  {membership.role === 'owner' && !loaded?.fromSnapshot && (
-                    <div className="mt-5 border-t border-stone-200 pt-4 dark:border-stone-800">
-                      <div className="flex items-center gap-2 text-sm font-semibold"><UserPlus size={16} /> {t('shared.invite')}</div>
-                      <p className="mt-1 text-xs leading-5 text-stone-500">{t('shared.inviteEmailHint')}</p>
-                      <div className="mt-3 space-y-2">
-                        <Input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="name@gmail.com" />
-                        <Select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as Exclude<SharedWalletRole, 'owner'>)}>
-                          <option value="member">{t('shared.role.member')}</option>
-                          <option value="viewer">{t('shared.role.viewer')}</option>
-                        </Select>
-                        <Button className="w-full" onClick={() => void invite()} disabled={busy || !inviteEmail.trim()}><UserPlus size={16} /> {t('shared.sendInvite')}</Button>
-                      </div>
-                      {lastInvite && (
-                        <div className="mt-3 rounded-xl bg-stone-50 p-3 dark:bg-stone-900">
-                          <div className="flex items-center gap-2 text-xs text-stone-500"><ShieldCheck size={14} /> {t('shared.inviteSent')}</div>
-                          <Button variant="ghost" className="mt-1 px-2" onClick={() => void navigator.clipboard.writeText(lastInvite)}><Copy size={14} /> {t('common.copy')}</Button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </Card>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {(showAdd || editTx) && membership && googleSession && !loaded?.fromSnapshot && (
-        <SharedTransactionModal
-          membership={membership}
-          transaction={editTx}
-          onClose={() => { setShowAdd(false); setEditTx(undefined) }}
-          onSaved={() => void refreshGroup(membership)}
-        />
-      )}
-    </div>
-  )
-}
-
-function SharedTransactionModal({ membership, transaction, onClose, onSaved }: { membership: SharedWalletMembership; transaction?: SharedTransaction; onClose: () => void; onSaved: () => void }) {
-  const { googleSession, settings } = useWallet()
-  const { t } = useI18n()
-  const [type, setType] = useState<'expense' | 'income'>(transaction?.type ?? 'expense')
-  const [amount, setAmount] = useState(transaction ? String(transaction.amount) : '')
-  const [currency, setCurrency] = useState(transaction?.currency ?? settings?.defaultCurrency ?? 'VND')
-  const [occurredAt, setOccurredAt] = useState(localDateTimeValue(transaction?.occurredAt))
-  const [category, setCategory] = useState(transaction?.category ?? '')
-  const [merchant, setMerchant] = useState(transaction?.merchant ?? '')
-  const [description, setDescription] = useState(transaction?.description ?? '')
-  const [note, setNote] = useState(transaction?.note ?? '')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  async function save() {
-    if (!googleSession || !amount || Number(amount) <= 0) return
-    setSaving(true)
-    setError('')
-    try {
-      await saveSharedTransaction(googleSession.accessToken, membership, {
-        id: transaction?.id ?? crypto.randomUUID(),
-        type,
-        amount: Number(amount),
-        currency: currency.trim().toUpperCase() || 'VND',
-        occurredAt: new Date(occurredAt).toISOString(),
-        category: category.trim() || undefined,
-        merchant: merchant.trim() || undefined,
-        description: description.trim() || undefined,
-        note: note.trim() || undefined,
-        tags: transaction?.tags ?? [],
-        createdAt: transaction?.createdAt,
-      })
-      onSaved()
-      onClose()
-    } catch (saveError) {
-      setError(sharedUiError(saveError, 'error.sharedSaveFailed'))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="w-full max-w-xl rounded-t-3xl bg-white p-4 shadow-2xl dark:bg-stone-950 sm:rounded-2xl sm:p-5">
-        <div className="flex items-center justify-between"><h2 className="text-lg font-semibold">{transaction ? t('shared.editTransaction') : t('shared.addTransaction')}</h2><Button variant="ghost" className="px-2" onClick={onClose}><X size={18} /></Button></div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div><Label>{t('shared.type')}</Label><Select value={type} onChange={(e) => setType(e.target.value as 'expense' | 'income')}><option value="expense">{t('transaction.expense')}</option><option value="income">{t('transaction.income')}</option></Select></div>
-          <div><Label>{t('modal.amount')}</Label><Input type="number" min="0" step="any" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
-          <div><Label>{t('modal.currency')}</Label><Input value={currency} onChange={(e) => setCurrency(e.target.value)} maxLength={8} /></div>
-          <div><Label>{t('modal.time')}</Label><Input type="datetime-local" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} /></div>
-          <div><Label>{t('modal.category')}</Label><Input value={category} onChange={(e) => setCategory(e.target.value)} placeholder={t('shared.categoryPlaceholder')} /></div>
-          <div><Label>{t('modal.merchant')}</Label><Input value={merchant} onChange={(e) => setMerchant(e.target.value)} /></div>
-          <div className="sm:col-span-2"><Label>{t('modal.description')}</Label><Input value={description} onChange={(e) => setDescription(e.target.value)} /></div>
-          <div className="sm:col-span-2"><Label>{t('modal.note')}</Label><Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} /></div>
-        </div>
-        {error && <div className="mt-3 text-sm text-rose-600">{t(error)}</div>}
-        <div className="mt-5 flex justify-end gap-2"><Button variant="ghost" onClick={onClose}>{t('common.cancel')}</Button><Button onClick={() => void save()} disabled={saving || !amount || Number(amount) <= 0}>{saving ? t('modal.saving') : t('common.save')}</Button></div>
-      </div>
-    </div>
-  )
-}
+function Stat({label,value,tone}:{label:string;value:string;tone?:'green'|'red'}){return <div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-900"><div className="text-xs text-stone-500">{label}</div><div className={`mt-1 font-semibold ${tone==='green'?'text-emerald-600':tone==='red'?'text-rose-600':''}`}>{value}</div></div>}
+function Overview({ledger,balances,transactions,currency}:{ledger?:SharedWalletLedger;balances:Map<string,number>;transactions:SharedTransaction[];currency:string}){const{t,locale}=useI18n();const L=TEXT[locale as 'vi'|'en'];return <div className="grid gap-5 lg:grid-cols-2"><Card className="p-4"><b>{L.sharedAccounts}</b><div className="mt-3 space-y-2">{ledger?.accounts.filter(a=>!a.deleted&&!a.archived).map(a=><div key={a.id} className="flex justify-between text-sm"><span>{a.name}</span><span>{formatMoney(balances.get(a.id)??a.openingBalance,a.currency||currency,locale)}</span></div>)}{!ledger?.accounts.length&&<div className="text-sm text-stone-500">{L.noAccounts}</div>}</div></Card><Card className="p-4"><b>{L.recent}</b><div className="mt-3 space-y-2">{transactions.slice(0,8).map(tx=><div key={`${tx.createdByMemberId}:${tx.id}`} className="flex justify-between gap-3 text-sm"><span className="truncate">{tx.merchant||tx.description||t('transaction.noDescription')}</span><span>{formatMoney(tx.amount,tx.currency,locale)}</span></div>)}</div></Card></div>}
+function TxList({loaded,membership,ledger,readOnly,memberName,onEdit,onDelete}:{loaded?:SharedWalletLoaded;membership:SharedWalletMembership;ledger?:SharedWalletLedger;readOnly:boolean;memberName:(id:string)=>string;onEdit:(tx:SharedTransaction)=>void;onDelete:(id:string)=>void}){const{t,locale}=useI18n();return <Card className="overflow-hidden">{!loaded?.transactions.length?<div className="p-4"><EmptyState title={t('shared.noTransactions')} text={t('shared.noTransactionsText')}/></div>:loaded.transactions.map(tx=>{const own=tx.createdByMemberId===membership.memberId;return <div key={`${tx.createdByMemberId}:${tx.id}`} className="grid gap-2 border-b px-4 py-3 sm:grid-cols-[1fr_160px_auto]"><div><div className="flex gap-2"><b>{tx.merchant||tx.description||t('transaction.noDescription')}</b><Badge tone={tx.type==='income'?'green':tx.type==='expense'?'red':undefined}>{t(`transaction.${tx.type}`)}</Badge></div><div className="text-xs text-stone-500">{formatDateTime(tx.occurredAt,locale)} · {categoryLabel(tx.categoryId,ledger?.categories??[])||tx.category||''} · {accountLabel(tx.accountId,ledger?.accounts??[])} · {tx.sourceCreatedByName||memberName(tx.createdByMemberId)}</div></div><div className="font-semibold">{formatMoney(tx.amount,tx.currency,locale)}</div><div>{own&&!readOnly&&<><Button variant="ghost" className="px-2" onClick={()=>onEdit(tx)}><Pencil size={15}/></Button><Button variant="ghost" className="px-2 text-rose-500" onClick={()=>onDelete(tx.id)}><Trash2 size={15}/></Button></>}</div></div>})}</Card>}
+function Members({loaded,membership,aliases,readOnly,inviteEmail,setInviteEmail,inviteRole,setInviteRole,lastInvite,onInvite,onAlias,onRemove}:{loaded?:SharedWalletLoaded;membership:SharedWalletMembership;aliases:Record<string,string>;readOnly:boolean;inviteEmail:string;setInviteEmail:(v:string)=>void;inviteRole:Exclude<SharedWalletRole,'owner'>;setInviteRole:(v:Exclude<SharedWalletRole,'owner'>)=>void;lastInvite:string;onInvite:()=>void;onAlias:(id:string,v:string)=>void;onRemove:(id:string)=>void}){const{t}=useI18n();return <Card className="p-4"><div className="grid gap-3 lg:grid-cols-2">{loaded?.control.members.map(m=><div key={m.id} className="rounded-xl border p-3"><div className="flex justify-between"><div><b className="text-sm">{aliases[m.id]||m.canonicalName||m.email}</b><div className="text-[11px] text-stone-400">{m.email}</div></div><Badge>{t(`shared.role.${m.role}`)}</Badge></div><Input className="mt-2" defaultValue={aliases[m.id]??''} onBlur={e=>onAlias(m.id,e.target.value)}/>{membership.role==='owner'&&m.id!==loaded.control.ownerMemberId&&!readOnly&&<Button variant="ghost" className="mt-2 text-rose-500" onClick={()=>onRemove(m.id)}><Trash2 size={14}/>{t('shared.removeMember')}</Button>}</div>)}</div>{membership.role==='owner'&&!readOnly&&<div className="mt-5 border-t pt-4"><div className="grid gap-2 sm:grid-cols-[1fr_140px_auto]"><Input type="email" value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} placeholder="name@gmail.com"/><Select value={inviteRole} onChange={e=>setInviteRole(e.target.value as Exclude<SharedWalletRole,'owner'>)}><option value="member">{t('shared.role.member')}</option><option value="viewer">{t('shared.role.viewer')}</option></Select><Button onClick={onInvite}><UserPlus size={15}/>{t('shared.sendInvite')}</Button></div>{lastInvite&&<Button variant="ghost" className="mt-2" onClick={()=>void navigator.clipboard.writeText(lastInvite)}><Copy size={14}/>{t('common.copy')}</Button>}</div>}</Card>}
+function SettingsPanel({ledger,membership,readOnly,name,setName,onRename,onSaveLedger,onDelete}:{ledger:SharedWalletLedger;membership:SharedWalletMembership;readOnly:boolean;name:string;setName:(v:string)=>void;onRename:()=>void;onSaveLedger:(x:SharedWalletLedger)=>void;onDelete:()=>void}){const{t,locale}=useI18n();const L=TEXT[locale as 'vi'|'en'];const owner=membership.role==='owner';const[a,setA]=useState('');const[o,setO]=useState('0');const[c,setC]=useState('');const[k,setK]=useState<Category['kind']>('expense');function addA(){if(!a.trim())return;const now=new Date().toISOString();const x:Account={id:crypto.randomUUID(),name:a.trim(),currency:ledger.defaultCurrency,openingBalance:Number(o)||0,archived:false,createdAt:now,updatedAt:now,deleted:false};onSaveLedger({...ledger,accounts:[...ledger.accounts,x]});setA('');setO('0')}function addC(){if(!c.trim())return;const now=new Date().toISOString();const x:Category={id:crypto.randomUUID(),name:c.trim(),nodeType:'item',icon:'tag',kind:k,archived:false,createdAt:now,updatedAt:now,deleted:false};onSaveLedger({...ledger,categories:[...ledger.categories,x]});setC('')}return <div className="space-y-5"><Card className="p-4"><b>{L.settings}</b><div className="mt-3 flex gap-2"><Input value={name} onChange={e=>setName(e.target.value)} disabled={!owner||readOnly}/><Button onClick={onRename} disabled={!owner||readOnly}>{t('common.save')}</Button></div></Card><div className="grid gap-5 lg:grid-cols-2"><Card className="p-4"><b>{L.sharedAccounts}</b>{ledger.accounts.filter(x=>!x.deleted).map(x=><div key={x.id} className="mt-2 flex justify-between rounded-xl border p-2"><span>{x.name}</span>{owner&&!readOnly&&<Button variant="ghost" className="px-2 text-rose-500" onClick={()=>onSaveLedger({...ledger,accounts:ledger.accounts.map(y=>y.id===x.id?{...y,deleted:true,updatedAt:new Date().toISOString()}:y)})}><Trash2 size={14}/></Button>}</div>)}{owner&&!readOnly&&<div className="mt-3 grid gap-2 sm:grid-cols-[1fr_120px_auto]"><Input value={a} onChange={e=>setA(e.target.value)}/><Input type="number" value={o} onChange={e=>setO(e.target.value)}/><Button onClick={addA}><Plus size={14}/></Button></div>}</Card><Card className="p-4"><b>{L.sharedCategories}</b>{ledger.categories.filter(x=>!x.deleted).map(x=><div key={x.id} className="mt-2 flex justify-between rounded-xl border p-2"><span>{x.name}</span>{owner&&!readOnly&&<Button variant="ghost" className="px-2 text-rose-500" onClick={()=>onSaveLedger({...ledger,categories:ledger.categories.map(y=>y.id===x.id?{...y,deleted:true,updatedAt:new Date().toISOString()}:y)})}><Trash2 size={14}/></Button>}</div>)}{owner&&!readOnly&&<div className="mt-3 grid gap-2 sm:grid-cols-[1fr_130px_auto]"><Input value={c} onChange={e=>setC(e.target.value)}/><Select value={k} onChange={e=>setK(e.target.value as Category['kind'])}><option value="expense">{t('transaction.expense')}</option><option value="income">{t('transaction.income')}</option><option value="both">{L.both}</option></Select><Button onClick={addC}><Plus size={14}/></Button></div>}</Card></div>{owner&&!readOnly&&<Card className="border-rose-200 p-4"><b className="text-rose-600">{L.danger}</b><p className="mt-1 text-sm text-stone-500">{L.deleteHint}</p><Button variant="secondary" className="mt-3 text-rose-600" onClick={onDelete}><Trash2 size={15}/>{L.scheduleDelete}</Button></Card>}</div>}
+function TxModal({membership,ledger,transaction,initialVoice,onClose,onSaved}:{membership:SharedWalletMembership;ledger:SharedWalletLedger;transaction?:SharedTransaction;initialVoice:boolean;onClose:()=>void;onSaved:()=>void}){const{googleSession,settings}=useWallet();const{t,locale}=useI18n();const L=TEXT[locale as 'vi'|'en'];const[type,setType]=useState<TransactionType>(transaction?.type??'expense');const[amount,setAmount]=useState(transaction?String(transaction.amount):'');const[when,setWhen]=useState(dt(transaction?.occurredAt));const[account,setAccount]=useState(transaction?.accountId??ledger.accounts.find(x=>!x.deleted&&!x.archived)?.id??'');const[dest,setDest]=useState(transaction?.destinationAccountId??'');const[cat,setCat]=useState(transaction?.categoryId??'');const[merchant,setMerchant]=useState(transaction?.merchant??'');const[description,setDescription]=useState(transaction?.description??'');const[note,setNote]=useState(transaction?.note??'');const[voice,setVoice]=useState(initialVoice);const draft:VoiceEntryDraft={type,amount,date:when.slice(0,10),time:when.slice(11,16),accountId:account,destinationAccountId:dest,categoryId:cat,merchant,description};const voiceSettings=settings?{...settings,voiceInput:ledger.voiceInput??settings.voiceInput,accountCatalogues:ledger.accountCatalogues}:undefined;async function save(){if(!googleSession||Number(amount)<=0||!account)return;await saveSharedTransaction(googleSession.accessToken,membership,{id:transaction?.id??crypto.randomUUID(),type,amount:Number(amount),currency:ledger.defaultCurrency,occurredAt:new Date(when).toISOString(),accountId:account,destinationAccountId:type==='transfer'?dest:undefined,categoryId:cat||undefined,merchant:merchant||undefined,description:description||undefined,note:note||undefined,tags:transaction?.tags??[],createdAt:transaction?.createdAt});onSaved();onClose()}return <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/40 sm:items-center sm:p-4"><div className="w-full max-w-xl rounded-t-3xl bg-white p-4 dark:bg-stone-950 sm:rounded-2xl"><div className="flex justify-between"><b>{transaction?t('shared.editTransaction'):t('shared.addTransaction')}</b><div><Button variant="ghost" onClick={()=>setVoice(true)}><Mic size={15}/></Button><Button variant="ghost" onClick={onClose}><X size={17}/></Button></div></div><div className="mt-4 grid gap-3 sm:grid-cols-2"><Select value={type} onChange={e=>setType(e.target.value as TransactionType)}><option value="expense">{t('transaction.expense')}</option><option value="income">{t('transaction.income')}</option><option value="transfer">{t('transaction.transfer')}</option></Select><Input type="number" value={amount} onChange={e=>setAmount(e.target.value)}/><Input type="datetime-local" value={when} onChange={e=>setWhen(e.target.value)}/><div><Label>{L.account}</Label><Select value={account} onChange={e=>setAccount(e.target.value)}><option value="">—</option>{ledger.accounts.filter(x=>!x.deleted&&!x.archived).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</Select></div>{type==='transfer'&&<div><Label>{L.destination}</Label><Select value={dest} onChange={e=>setDest(e.target.value)}><option value="">—</option>{ledger.accounts.filter(x=>!x.deleted&&!x.archived&&x.id!==account).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</Select></div>}<Select value={cat} onChange={e=>setCat(e.target.value)}><option value="">—</option>{ledger.categories.filter(x=>!x.deleted&&!x.archived&&(x.kind==='both'||x.kind===type)).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</Select><Input value={merchant} onChange={e=>setMerchant(e.target.value)} placeholder={t('modal.merchant')}/><Input value={description} onChange={e=>setDescription(e.target.value)} placeholder={t('modal.description')}/><Textarea rows={3} value={note} onChange={e=>setNote(e.target.value)}/></div><div className="mt-4 flex justify-end gap-2"><Button variant="ghost" onClick={onClose}>{t('common.cancel')}</Button><Button onClick={()=>void save()} disabled={Number(amount)<=0||!account||(type==='transfer'&&!dest)}>{t('common.save')}</Button></div></div>{voice&&<VoiceEntry initial={draft} settings={voiceSettings as AppSettings|undefined} accounts={ledger.accounts.filter(x=>!x.deleted&&!x.archived)} categories={ledger.categories.filter(x=>!x.deleted&&!x.archived)} onClose={()=>setVoice(false)} onApply={d=>{setType(d.type);setAmount(d.amount);setWhen(`${d.date}T${d.time}`);setAccount(d.accountId);setDest(d.destinationAccountId);setCat(d.categoryId);setMerchant(d.merchant);setDescription(d.description);setVoice(false)}}/>}</div>}
+function ArchivePage({archive,onBack,onDelete,onReopen}:{archive:SharedWalletArchive;onBack:()=>void;onDelete:()=>void;onReopen:()=>void}){const{t,locale}=useI18n();const L=TEXT[locale as 'vi'|'en'];const[tab,setTab]=useState<'overview'|'transactions'|'analytics'>('overview');return <div className="space-y-5"><div className="flex flex-wrap justify-between gap-3"><div><div className="flex gap-2"><Archive size={20}/><h1 className="text-2xl font-semibold">{archive.name}</h1><Badge>{L.archived}</Badge></div><p className="text-sm text-stone-500">{L.archiveReadOnly}</p></div><div className="flex gap-2"><Button variant="secondary" onClick={onBack}>{t('common.back')}</Button><Button variant="secondary" onClick={onReopen}><RotateCcw size={15}/>{L.reopen}</Button><Button variant="ghost" className="text-rose-600" onClick={onDelete}><Trash2 size={15}/>{t('common.delete')}</Button></div></div><div className="flex gap-1 rounded-xl border p-1">{(['overview','transactions','analytics'] as const).map(x=><button key={x} className={`rounded-lg px-3 py-2 text-sm ${tab===x?'bg-stone-950 text-white dark:bg-white dark:text-stone-950':''}`} onClick={()=>setTab(x)}>{L[x]}</button>)}</div>{tab==='overview'&&<Overview ledger={archive.ledger} balances={new Map(Object.entries(archive.finalBalances))} transactions={archive.transactions} currency={archive.ledger.defaultCurrency}/>} {tab==='transactions'&&<Card>{archive.transactions.map(x=><div key={`${x.createdByMemberId}:${x.id}`} className="flex justify-between border-b p-3 text-sm"><span>{x.merchant||x.description||t('transaction.noDescription')} · {archive.memberNames[x.createdByMemberId]}</span><span>{formatMoney(x.amount,x.currency,locale)}</span></div>)}</Card>} {tab==='analytics'&&<LedgerAnalytics transactions={sharedTransactionsAsPersonalShape(archive.transactions)} categories={archive.ledger.categories} currency={archive.ledger.defaultCurrency} title={L.analyticsTitle} subtitle={L.archiveReadOnly}/>}</div>}
