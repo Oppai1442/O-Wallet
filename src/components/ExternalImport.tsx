@@ -124,14 +124,13 @@ export function ExternalImport() {
   }
 
   async function runImport() {
-    const currentBundle = bundle
-    if (!currentBundle || importing) return
+    if (!bundle || importing) return
     setImporting(true)
     setError(undefined)
     setResult(undefined)
     try {
       const now = new Date().toISOString()
-      const adapterId = currentBundle.adapterId
+      const adapterId = bundle.adapterId
       const syntheticUnknown = [
         ...unknown7.map((row) => unsupportedToTransaction(row, type7Mapping)).filter(Boolean),
         ...unknown8.map((row) => unsupportedToTransaction(row, type8Mapping)).filter(Boolean),

@@ -194,3 +194,18 @@ Account catalogues and OCR automation rules are stored inside the encrypted `set
 Categories remain individual encrypted `category` records and now support `parentId` plus `nodeType: group | item`. Missing `nodeType` from older data is treated as `item` for backward compatibility. Only item nodes are selectable for transactions. Category paths are reconstructed client-side by walking parent IDs, with cycle protection.
 
 OCR rules are evaluated only after local OCR parsing. The first enabled matching rule may assign a leaf category and/or active account. Matching is currently deterministic: normalized substring matching for recipient/description, exact numeric amount, and optional transaction type.
+
+
+## Viewport shell and URL state (v0.8.1)
+
+The application shell uses a viewport-height layout (`100dvh`). The sidebar and mobile navigation are outside the main scroll container; only the content column scrolls. This keeps navigation and sidebar actions available regardless of page length. The content column is a flex column with `main` set to grow, which pins the footer to the bottom on short pages while allowing it to follow long content naturally.
+
+Top-level UI state is encoded in query parameters instead of being kept only in React state:
+
+- `?page=home`
+- `?page=transactions`
+- `?page=analytics`
+- `?page=settings`
+- `&action=add` for the add-transaction dialog
+
+The shell listens to `popstate`, so browser Back/Forward navigation restores the corresponding section without a full page reload.

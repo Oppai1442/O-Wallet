@@ -4,7 +4,7 @@ O-Wallet is a private, local-first expense tracker built as a static PWA.
 
 **No O-Wallet runtime backend is required.** The production deployment is static HTML/CSS/JS. The browser performs OCR, encryption, analytics and sync; encrypted cloud data is stored in the user's own Google Drive.
 
-Current release: **v0.8.0**
+Current release: **v0.8.1**
 
 ## Highlights
 
@@ -39,6 +39,16 @@ Current release: **v0.8.0**
 - Privacy Policy and Terms of Service pages included for public OAuth deployments.
 - Footer links to **O-Lab**, the project hub at `https://oppai1442.github.io/all/`.
 
+
+
+## v0.8.1 shell layout and URL state
+
+- Desktop/tablet navigation is pinned to the viewport and no longer scrolls away with long Settings or other pages.
+- The main content area owns its own vertical scroll; sidebar actions stay reachable.
+- The footer is bottom-aligned on short pages and follows content normally on long pages instead of floating upward.
+- Top-level destinations are reflected in the URL with `?page=home`, `?page=transactions`, `?page=analytics`, and `?page=settings`.
+- The add-transaction dialog uses `&action=add`, so refresh/back-forward state is deterministic.
+- Browser Back/Forward updates the active O-Wallet section without a full reload.
 
 ## v0.8.0 account, category and rule model
 
