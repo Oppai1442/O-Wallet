@@ -49,17 +49,17 @@ export function Unlock() {
         {mode === 'password' ? (
           <div className="mt-6">
             <Label>{t('onboarding.password')}</Label>
-            <Input autoFocus type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void submitPassword() }} />
+            <Input autoFocus type="password" maxLength={256} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void submitPassword() }} />
             <Button className="mt-4 w-full" onClick={submitPassword} disabled={!password || busy}><LockKeyhole size={17} /> {busy ? t('unlock.unlocking') : t('unlock.button')}</Button>
             <button className="mt-4 w-full text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400" onClick={() => setMode('recovery')}>{t('unlock.forgot')}</button>
           </div>
         ) : (
           <div className="mt-6 space-y-4">
-            <div><Label>{t('onboarding.recoveryKey')}</Label><Input value={recoveryKey} onChange={(e) => setRecoveryKey(e.target.value)} placeholder="XXXXXX-XXXXXX-…" /></div>
+            <div><Label>{t('onboarding.recoveryKey')}</Label><Input maxLength={96} value={recoveryKey} onChange={(e) => setRecoveryKey(e.target.value)} placeholder="XXXXXX-XXXXXX-…" /></div>
             {vaultConfig?.recovery.questions.map((question, index) => (
               <div key={question.questionId}>
                 <Label>{questionLabel(question.questionId, t)}</Label>
-                <Input value={answers[index] ?? ''} onChange={(e) => setAnswers((current) => current.map((value, i) => i === index ? e.target.value : value))} />
+                <Input maxLength={256} value={answers[index] ?? ''} onChange={(e) => setAnswers((current) => current.map((value, i) => i === index ? e.target.value : value))} />
               </div>
             ))}
             <Button className="w-full" onClick={submitRecovery} disabled={!recoveryKey || answers.some((answer) => !answer.trim()) || busy}><KeyRound size={17} /> {t('unlock.recovery')}</Button>

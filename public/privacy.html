@@ -12,7 +12,7 @@
 <body>
 <main class="wrap">
   <h1>O-Wallet Privacy Policy</h1>
-  <div class="muted">Last updated: September 8, 2026</div>
+  <div class="muted">Last updated: September 9, 2026</div>
 
   <h2>1. Where your data is stored</h2>
   <p>O-Wallet does not use a central O-Wallet database for your financial records. When Google Drive sync is enabled, your O-Wallet data is stored in an <code>O-Wallet/</code> folder in your own Google Drive and uses your own Drive storage.</p>
@@ -27,30 +27,40 @@
   <h2>4. Image reading</h2>
   <p>When O-Wallet reads a screenshot or receipt, the recognition work happens in the browser on the device. The image does not need to be uploaded to an O-Wallet server for recognition. The recognition library may download language files or other resources needed to run.</p>
 
-  <h2>5. Importing backup files</h2>
+  <h2>5. Optional AI image reading</h2>
+  <p>AI image reading is optional and disabled until you configure it. If you choose <strong>Read with AI</strong>, the selected image is sent directly from your browser to OpenRouter and the selected model provider for processing. It does not pass through an O-Wallet server. Your AI API key is encrypted and stored only on the current device; it is not synced to Google Drive. Normal OCR continues to run on your device without sending the image to an AI provider.</p>
+
+  <h2>6. Voice entry</h2>
+  <p>Voice entry is optional. O-Wallet asks the browser to recognize short field-by-field speech and stores only the resulting text, voice-entry preferences and any correction pairs learned during calibration. O-Wallet does not store microphone recordings. Depending on the browser and device, speech recognition may be processed locally or by the browser vendor's speech service under that provider's own policies.</p>
+
+  <h2>7. Importing backup files</h2>
   <p>If you choose a supported backup from another app, O-Wallet reads and converts that file on your device. The original backup file is not uploaded to an O-Wallet server. Only data you confirm for import becomes normal O-Wallet data and may then be encrypted and synced to your Google Drive.</p>
 
-  <h2>6. Data kept on the device</h2>
+  <h2>8. Data kept on the device</h2>
   <p>O-Wallet keeps local app data so it can open quickly and continue working between sessions. Some preferences can also be remembered on the device. If you choose to stay unlocked for a period of time, that choice applies only to that device.</p>
 
-  <h2>7. Analytics and advertising</h2>
+  <h2>9. Shared wallets</h2>
+  <p>If you use Shared Wallets, O-Wallet may create encrypted shared-wallet files in participating members’ own Google Drives. Shared transactions record which member created them. Member nicknames are private aliases stored only in the current user’s personal encrypted O-Wallet settings.</p>
+  <p>Shared control, feed and archived-history files can be readable by link as encrypted ciphertext so participants can read them without granting O-Wallet broad Drive access. The contents remain protected by shared-wallet encryption keys. Invitations are sent to the Google email address entered by the wallet owner. The invitation link contains a random transport secret, while the initial shared-wallet key material remains encrypted inside a Drive file shared only with the invited Google account.</p>
+
+  <h2>10. Analytics and advertising</h2>
   <p>The reference O-Wallet app does not include a central analytics service or advertising tracker. The website host may still receive normal web request information such as IP address, browser information and request time under its own policies.</p>
 
-  <h2>8. Selling or sharing financial data</h2>
+  <h2>11. Selling or sharing financial data</h2>
   <p>The reference O-Wallet app does not sell your financial data. It does not operate a central store of readable transaction or screenshot data for advertising or profiling.</p>
 
-  <h2>9. Deleting your data</h2>
+  <h2>12. Deleting your data</h2>
   <p>You can delete cloud data by deleting the <code>O-Wallet/</code> folder from your Google Drive. You can remove data stored on a device by clearing site data for O-Wallet in the browser. You can also revoke O-Wallet's Google access from your Google account settings.</p>
 
-  <h2>10. Security limits</h2>
+  <h2>13. Security limits</h2>
   <p>No browser app can protect data from every possible risk. A compromised device, malicious browser extension, weak password or exposed recovery code may put data at risk. If both the password and recovery code are lost, the data may not be recoverable.</p>
 
-  <h2>11. Self-hosted versions</h2>
+  <h2>14. Self-hosted versions</h2>
   <p>Forks and self-hosted versions may behave differently from the reference O-Wallet deployment. Their operators are responsible for their own configuration and privacy information.</p>
 
   <section class="lang" lang="vi">
     <h1>Chính sách quyền riêng tư O-Wallet</h1>
-    <div class="muted">Cập nhật lần cuối: 08/09/2026</div>
+    <div class="muted">Cập nhật lần cuối: 09/09/2026</div>
 
     <h2>1. Dữ liệu được lưu ở đâu</h2>
     <p>O-Wallet không dùng cơ sở dữ liệu trung tâm riêng để lưu thông tin thu chi. Khi bật đồng bộ Google Drive, dữ liệu O-Wallet được lưu trong thư mục <code>O-Wallet/</code> trên Google Drive của chính tài khoản và sử dụng dung lượng Drive của tài khoản đó.</p>
@@ -65,25 +75,35 @@
     <h2>4. Đọc nội dung ảnh</h2>
     <p>Khi O-Wallet đọc ảnh chụp màn hình hoặc hóa đơn, quá trình nhận dạng diễn ra trong trình duyệt trên thiết bị. Ảnh không cần được tải lên máy chủ O-Wallet để nhận dạng. Thư viện nhận dạng có thể tải thêm dữ liệu ngôn ngữ hoặc tài nguyên cần thiết để hoạt động.</p>
 
-    <h2>5. Nhập tệp sao lưu từ ứng dụng khác</h2>
+    <h2>5. Đọc ảnh bằng AI (tùy chọn)</h2>
+    <p>Tính năng đọc ảnh bằng AI là tùy chọn và chỉ hoạt động sau khi được cấu hình. Khi chọn <strong>Đọc bằng AI</strong>, ảnh được gửi trực tiếp từ trình duyệt đến OpenRouter và nhà cung cấp model đã chọn để xử lý; ảnh không đi qua máy chủ O-Wallet. API key của AI được mã hóa và chỉ lưu trên thiết bị hiện tại, không đồng bộ lên Google Drive. OCR thông thường vẫn chạy trên thiết bị và không gửi ảnh đến dịch vụ AI.</p>
+
+    <h2>6. Nhập bằng giọng nói</h2>
+    <p>Nhập bằng giọng nói là tính năng tùy chọn. O-Wallet yêu cầu trình duyệt nhận dạng từng đoạn nói ngắn theo từng trường và chỉ lưu văn bản nhận được, cài đặt giọng nói cùng các cách sửa đã học khi hiệu chỉnh. O-Wallet không lưu bản ghi âm từ microphone. Tùy trình duyệt và thiết bị, việc nhận dạng có thể diễn ra trên máy hoặc được xử lý bởi dịch vụ giọng nói của nhà cung cấp trình duyệt theo chính sách riêng của họ.</p>
+
+    <h2>7. Nhập tệp sao lưu từ ứng dụng khác</h2>
     <p>Khi chọn một tệp sao lưu được hỗ trợ từ ứng dụng khác, O-Wallet đọc và chuyển đổi tệp ngay trên thiết bị. Tệp sao lưu gốc không được tải lên máy chủ O-Wallet. Chỉ dữ liệu được xác nhận nhập mới trở thành dữ liệu O-Wallet và sau đó có thể được bảo vệ rồi đồng bộ lên Google Drive.</p>
 
-    <h2>6. Dữ liệu được giữ trên thiết bị</h2>
+    <h2>8. Dữ liệu được giữ trên thiết bị</h2>
     <p>O-Wallet lưu một phần dữ liệu trên thiết bị để mở nhanh và tiếp tục sử dụng giữa các lần truy cập. Một số tùy chọn cũng có thể được ghi nhớ trên thiết bị. Nếu chọn không hỏi lại mật khẩu trong một khoảng thời gian, lựa chọn đó chỉ áp dụng cho thiết bị hiện tại.</p>
 
-    <h2>7. Thống kê sử dụng và quảng cáo</h2>
+    <h2>9. Ví dùng chung</h2>
+    <p>Khi dùng Ví dùng chung, O-Wallet có thể tạo các tệp ví đã mã hóa trong Google Drive của từng thành viên tham gia. Giao dịch dùng chung lưu thông tin thành viên nào đã tạo giao dịch đó. Biệt danh thành viên là tên riêng do mỗi người tự đặt và chỉ được lưu trong phần cài đặt O-Wallet cá nhân đã mã hóa của người đó.</p>
+    <p>Một số tệp điều phối, dữ liệu thành viên và lịch sử đã lưu của ví dùng chung có thể được mở bằng liên kết ở dạng dữ liệu đã mã hóa để các thành viên đọc được mà O-Wallet không cần xin quyền truy cập toàn bộ Drive. Nội dung vẫn được bảo vệ bằng khóa mã hóa của ví dùng chung. Lời mời được gửi tới email Google do chủ ví nhập. Liên kết lời mời chứa một mã ngẫu nhiên dùng cho quá trình tham gia, còn khóa của ví dùng chung vẫn nằm trong một tệp Drive đã mã hóa và chỉ được chia sẻ cho tài khoản Google được mời.</p>
+
+    <h2>10. Thống kê sử dụng và quảng cáo</h2>
     <p>Bản O-Wallet tham chiếu không tích hợp dịch vụ theo dõi sử dụng tập trung hoặc quảng cáo. Nhà cung cấp dịch vụ host trang web vẫn có thể nhận thông tin truy cập web thông thường như địa chỉ IP, trình duyệt và thời gian truy cập theo chính sách riêng của họ.</p>
 
-    <h2>8. Bán hoặc chia sẻ dữ liệu tài chính</h2>
+    <h2>11. Bán hoặc chia sẻ dữ liệu tài chính</h2>
     <p>Bản O-Wallet tham chiếu không bán dữ liệu tài chính của người dùng và không duy trì một kho trung tâm chứa giao dịch hoặc ảnh ở dạng có thể đọc để phục vụ quảng cáo hay lập hồ sơ.</p>
 
-    <h2>9. Xóa dữ liệu</h2>
+    <h2>12. Xóa dữ liệu</h2>
     <p>Có thể xóa dữ liệu trên cloud bằng cách xóa thư mục <code>O-Wallet/</code> trong Google Drive. Dữ liệu trên thiết bị có thể được xóa bằng cách xóa dữ liệu trang web của O-Wallet trong trình duyệt. Quyền truy cập Google của O-Wallet cũng có thể được thu hồi trong phần cài đặt tài khoản Google.</p>
 
-    <h2>10. Giới hạn bảo mật</h2>
+    <h2>13. Giới hạn bảo mật</h2>
     <p>Không ứng dụng web nào có thể bảo vệ dữ liệu trước mọi rủi ro. Thiết bị bị xâm nhập, tiện ích trình duyệt độc hại, mật khẩu yếu hoặc mã khôi phục bị lộ đều có thể làm dữ liệu gặp rủi ro. Nếu mất cả mật khẩu và mã khôi phục, dữ liệu có thể không lấy lại được.</p>
 
-    <h2>11. Các bản tự host</h2>
+    <h2>14. Các bản tự host</h2>
     <p>Các bản fork hoặc tự host có thể hoạt động khác với bản O-Wallet tham chiếu. Người vận hành các bản đó chịu trách nhiệm cho cấu hình và thông tin quyền riêng tư của riêng mình.</p>
   </section>
 </main>

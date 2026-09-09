@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { CalendarDays, CopyPlus, ImagePlus, Images, LoaderCircle, Repeat2, ScanText, Sparkles, X } from 'lucide-react'
+import { Bot, CalendarDays, CopyPlus, ImagePlus, Images, LoaderCircle, Mic, Repeat2, ScanText, Sparkles, X } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { localizeError, useI18n } from '../i18n'
 import { buildDetectedLines, parseTransactionFromOcr, parseTransactionFromRegions, recognizeImage } from '../lib/ocr'
@@ -13,8 +13,11 @@ import { OcrTeachingPanel } from './OcrTeachingPanel'
 import { findDuplicateTransaction } from '../lib/duplicates'
 import { selectableCategories } from '../lib/categories'
 import { findMatchingTransactionRule } from '../lib/rules'
+import { validateImageBatch } from '../lib/security'
+import { AI_OPENROUTER_KEY_SECRET, analyzeTransactionImage } from '../lib/ai'
 import { CategoryPicker } from './CategoryPicker'
 import { AccountSelect } from './AccountSelect'
+import { VoiceEntry, type VoiceEntryDraft } from './VoiceEntry'
 
 const OcrRegionEditor = lazy(() => import('./OcrRegionEditor').then((module) => ({ default: module.OcrRegionEditor })))
 
@@ -63,6 +66,7 @@ export function TransactionModal({
   const [templateId, setTemplateId] = useState('')
   const [templateName, setTemplateName] = useState('')
   const [ocrBusy, setOcrBusy] = useState(false)
+  const [aiBusy, setAiBusy] = useState(false)
   const [ocrProgress, setOcrProgress] = useState(0)
   const [ocrStatus, setOcrStatus] = useState('')
   const [ocrRaw, setOcrRaw] = useState('')
@@ -72,6 +76,7 @@ export function TransactionModal({
   const [batchDrafts, setBatchDrafts] = useState<BatchOcrDraft[]>([])
   const [activeBatchId, setActiveBatchId] = useState<string>()
   const [saving, setSaving] = useState(false)
+  const [showVoiceEntry, setShowVoiceEntry] = useState(false)
   const [error, setError] = useState<string>()
 
   const eligibleCategories = useMemo(
@@ -91,7 +96,7 @@ export function TransactionModal({
   }, [accounts, accountId, destinationAccountId])
 
   useEffect(() => {
-    if (!categoryId || !eligibleCategories.some((category) => category.id === categoryId)) setCategoryId(eligibleCategories[0]?.id ?? '')
+    if (categoryId && !eligibleCategories.some((category) => category.id === categoryId)) setCategoryId('')
   }, [eligibleCategories, categoryId])
 
   useEffect(() => {
@@ -99,6 +104,25 @@ export function TransactionModal({
     setPreviewUrls(urls)
     return () => urls.forEach((url) => URL.revokeObjectURL(url))
   }, [files])
+
+  async function chooseImages(selected: File[]) {
+    setError(undefined)
+    try {
+      await validateImageBatch(selected)
+      setFiles(selected)
+      setRegions([])
+      setImageSize(undefined)
+      setOcrResult(undefined)
+      setDetectedLines([])
+      setLineMappings({})
+      setBatchDrafts([])
+      setActiveBatchId(undefined)
+      setOcrRaw('')
+    } catch (validationError) {
+      setFiles([])
+      setError(localizeError(validationError, t, 'error.imageInvalid'))
+    }
+  }
 
   function applyTemplate(id: string) {
     setTemplateId(id)
@@ -202,6 +226,50 @@ export function TransactionModal({
       setError(localizeError(e, t, 'modal.errorOcr'))
     } finally {
       setOcrBusy(false)
+    }
+  }
+
+  async function runAi() {
+    if (!files[0] || !repository) return
+    setAiBusy(true)
+    setError(undefined)
+    try {
+      const endpoint = settings?.aiVision?.endpoint?.trim()
+      const model = settings?.aiVision?.model?.trim()
+      const apiKey = await repository.getLocalSecret(AI_OPENROUTER_KEY_SECRET)
+      if (!endpoint || !model || !apiKey) throw new Error('error.aiNotConfigured')
+
+      const parsed = await analyzeTransactionImage(files[0], { endpoint, model, apiKey })
+      const nextType = parsed.type ?? type
+      if (parsed.type) setType(parsed.type)
+      if (parsed.amount !== undefined) setAmount(String(parsed.amount))
+      if (parsed.currency) setCurrency(parsed.currency)
+      if (parsed.occurredAt) {
+        const local = toLocalInputDateTime(parsed.occurredAt)
+        const dateKey = localDateKeyFromInputDateTime(local)
+        setOccurredAt(local)
+        setBatchTime(localTimeFromInputDateTime(local))
+        if (creationMode === 'repeat') {
+          setRepeatStartDate(dateKey)
+          setRepeatUntilDate((current) => current < dateKey ? dateKey : current)
+        }
+      }
+      if (parsed.merchant !== undefined) setMerchant(parsed.merchant)
+      if (parsed.balanceAfter !== undefined) setBalanceAfter(String(parsed.balanceAfter))
+      if (parsed.description !== undefined) setDescription(parsed.description)
+
+      const rule = findMatchingTransactionRule({
+        type: nextType,
+        amount: parsed.amount,
+        merchant: parsed.merchant,
+        description: parsed.description,
+      }, settings?.transactionRules ?? [])
+      if (rule?.categoryId && selectableCategories(categories, nextType).some((category) => category.id === rule.categoryId)) setCategoryId(rule.categoryId)
+      if (rule?.accountId && accounts.some((account) => account.id === rule.accountId)) setAccountId(rule.accountId)
+    } catch (aiError) {
+      setError(localizeError(aiError, t, 'error.aiRequestFailed'))
+    } finally {
+      setAiBusy(false)
     }
   }
 
@@ -517,6 +585,25 @@ export function TransactionModal({
     }
   }
 
+  function applyVoiceEntry(draft: VoiceEntryDraft) {
+    setType(draft.type)
+    setAmount(draft.amount)
+    setAccountId(draft.accountId)
+    setDestinationAccountId(draft.destinationAccountId)
+    setCategoryId(draft.categoryId)
+    setMerchant(draft.merchant)
+    setDescription(draft.description)
+    const local = `${draft.date}T${draft.time}`
+    setOccurredAt(local)
+    setBatchTime(draft.time)
+    if (creationMode === 'multiple') setSelectedDates((current) => current.length ? current : [draft.date])
+    if (creationMode === 'repeat') {
+      setRepeatStartDate(draft.date)
+      setRepeatUntilDate((current) => current < draft.date ? draft.date : current)
+    }
+    setShowVoiceEntry(false)
+  }
+
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-stone-950/50 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div
@@ -524,11 +611,14 @@ export function TransactionModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-stone-200 bg-white px-4 py-3 dark:border-stone-800 dark:bg-stone-900 sm:px-5 sm:py-4">
-          <div>
-            <h2 className="text-lg font-semibold text-stone-950 dark:text-white">{editing ? t('modal.editTitle') : duplicateFrom ? t('modal.duplicateTitle') : t('modal.title')}</h2>
-            <p className="text-xs text-stone-500">{t('modal.imageRetentionHint')}</p>
+          <div className="min-w-0">
+            <h2 className="truncate text-lg font-semibold text-stone-950 dark:text-white">{editing ? t('modal.editTitle') : duplicateFrom ? t('modal.duplicateTitle') : t('modal.title')}</h2>
+            <p className="truncate text-xs text-stone-500">{t('modal.imageRetentionHint')}</p>
           </div>
-          <Button variant="ghost" onClick={onClose}><X size={18} /></Button>
+          <div className="flex shrink-0 items-center gap-1">
+            {!editing && <Button variant="secondary" className="px-3" onClick={() => setShowVoiceEntry(true)}><Mic size={17} /><span className="hidden sm:inline">{t('voice.entryButton')}</span></Button>}
+            <Button variant="ghost" className="px-3" onClick={onClose}><X size={18} /></Button>
+          </div>
         </div>
 
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
@@ -625,16 +715,10 @@ export function TransactionModal({
                   <div><div className="font-bold text-stone-800 dark:text-stone-100">{t('modal.screenshot')}</div><div className="text-xs text-stone-500">{t('modal.ocrHint')}</div></div>
                   <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-stone-100 px-3 py-2 text-sm font-semibold text-stone-800 hover:bg-stone-200 dark:bg-stone-800 dark:text-stone-100 dark:hover:bg-stone-700">
                     <ImagePlus size={17} /> {t('modal.chooseImages')}
-                    <input hidden type="file" accept="image/*" multiple onChange={(e) => {
-                      setFiles(Array.from(e.target.files ?? []))
-                      setRegions([])
-                      setImageSize(undefined)
-                      setOcrResult(undefined)
-                      setDetectedLines([])
-                      setLineMappings({})
-                      setBatchDrafts([])
-                      setActiveBatchId(undefined)
-                      setOcrRaw('')
+                    <input hidden type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple onChange={(e) => {
+                      const selected = Array.from(e.target.files ?? [])
+                      e.currentTarget.value = ''
+                      void chooseImages(selected)
                     }} />
                   </label>
                 </div>
@@ -642,12 +726,14 @@ export function TransactionModal({
                   <>
                     <div className="mt-4 flex gap-2 overflow-x-auto pb-2">{previewUrls.map((url, index) => <img key={url} src={url} alt={`preview ${index + 1}`} className="h-28 w-24 shrink-0 rounded-xl border border-stone-200 object-cover dark:border-stone-700" />)}</div>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <Button variant="secondary" onClick={() => setShowRegions((value) => !value)}><Sparkles size={17} /> {showRegions ? t('ocr.hideRegions') : t('ocr.configureRegions')}</Button>
-                      <Button onClick={runOcr} disabled={ocrBusy}><ScanText size={17} /> {ocrBusy ? `OCR ${Math.round(ocrProgress * 100)}%` : regions.length ? t('ocr.runRegions') : t('modal.ocrFirst')}</Button>
-                      {!editing && files.length > 1 && <Button variant="secondary" onClick={runBatchOcr} disabled={ocrBusy}><Images size={17} /> {t('batch.run', { count: files.length })}</Button>}
+                      <Button variant="secondary" onClick={() => setShowRegions((value) => !value)} disabled={aiBusy}><Sparkles size={17} /> {showRegions ? t('ocr.hideRegions') : t('ocr.configureRegions')}</Button>
+                      <Button onClick={runOcr} disabled={ocrBusy || aiBusy}><ScanText size={17} /> {ocrBusy ? `OCR ${Math.round(ocrProgress * 100)}%` : regions.length ? t('ocr.runRegions') : t('modal.ocrFirst')}</Button>
+                      <Button variant="secondary" onClick={() => void runAi()} disabled={ocrBusy || aiBusy}><Bot size={17} /> {aiBusy ? t('ai.reading') : t('ai.readImage')}</Button>
+                      {!editing && files.length > 1 && <Button variant="secondary" onClick={runBatchOcr} disabled={ocrBusy || aiBusy}><Images size={17} /> {t('batch.run', { count: files.length })}</Button>}
                     </div>
                     {ocrBusy && <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800"><div className="h-full bg-blue-500 transition-all" style={{ width: `${ocrProgress * 100}%` }} /></div>}
                     {ocrStatus && ocrBusy && <div className="mt-1 text-xs text-stone-500">{ocrStatus}</div>}
+                    <div className="mt-2 text-xs leading-5 text-stone-500">{t('ai.modalPrivacy')}</div>
                   </>
                 )}
               </div>
@@ -696,9 +782,27 @@ export function TransactionModal({
         <div className="flex shrink-0 justify-end gap-2 border-t border-stone-200 bg-white px-4 py-3 dark:border-stone-800 dark:bg-stone-900 sm:px-5">
           <div className="mr-auto hidden items-center gap-2 text-xs text-stone-500 sm:flex">{duplicateFrom && <><CopyPlus size={14} /> {t('modal.duplicating')}</>}{!editing && plannedDates.length > 1 && <><CalendarDays size={14} /> {t('schedule.willCreate', { count: plannedDates.length })}</>}</div>
           <Button variant="secondary" onClick={onClose}>{t('common.cancel')}</Button>
-          <Button onClick={batchDrafts.length ? saveBatchOcr : save} disabled={saving || ocrBusy}>{saving ? <><LoaderCircle className="animate-spin" size={17} /> {t('modal.saving')}</> : batchDrafts.length ? t('batch.saveSelected', { count: batchDrafts.filter((draft) => draft.selected).length }) : editing ? t('common.save') : plannedDates.length > 1 ? t('schedule.saveMany', { count: plannedDates.length }) : t('modal.save')}</Button>
+          <Button onClick={batchDrafts.length ? saveBatchOcr : save} disabled={saving || ocrBusy || aiBusy}>{saving ? <><LoaderCircle className="animate-spin" size={17} /> {t('modal.saving')}</> : batchDrafts.length ? t('batch.saveSelected', { count: batchDrafts.filter((draft) => draft.selected).length }) : editing ? t('common.save') : plannedDates.length > 1 ? t('schedule.saveMany', { count: plannedDates.length }) : t('modal.save')}</Button>
         </div>
       </div>
+      {showVoiceEntry && <VoiceEntry
+        initial={{
+          type,
+          amount,
+          date: localDateKeyFromInputDateTime(occurredAt),
+          time: localTimeFromInputDateTime(occurredAt),
+          accountId,
+          destinationAccountId,
+          categoryId,
+          merchant,
+          description,
+        }}
+        settings={settings}
+        accounts={accounts}
+        categories={categories}
+        onApply={applyVoiceEntry}
+        onClose={() => setShowVoiceEntry(false)}
+      />}
     </div>
   )
 }

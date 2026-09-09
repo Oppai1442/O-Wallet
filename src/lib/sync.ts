@@ -9,6 +9,7 @@ import type {
   VaultConfig,
 } from '../types'
 import { packEncryptedPayload, unpackEncryptedPayload } from './crypto'
+import { SECURITY_LIMITS } from './security'
 import {
   db,
   dequeueSyncEntity,
@@ -31,6 +32,36 @@ import {
 
 const SYNC_CONCURRENCY = 5
 
+const VALID_RECORD_KINDS = new Set(['transaction', 'account', 'category', 'settings'])
+
+function validRemoteEntityId(value: string | undefined): value is string {
+  return Boolean(value && value.length <= 320 && /^[A-Za-z0-9:_-]+$/.test(value))
+}
+
+function validRemoteStamp(file: DriveFileMeta) {
+  const props = file.appProperties ?? {}
+  const version = Number(props.version ?? 0)
+  const updatedAt = props.updatedAt ?? file.modifiedTime ?? ''
+  return Number.isInteger(version)
+    && version >= 0
+    && version <= 1_000_000_000
+    && typeof updatedAt === 'string'
+    && updatedAt.length <= 64
+    && Number.isFinite(Date.parse(updatedAt))
+    && (props.deviceId?.length ?? 0) <= 128
+}
+
+function assertRemoteFile(file: DriveFileMeta, type: 'record' | 'image') {
+  const props = file.appProperties ?? {}
+  if (props.owalletType !== type || !validRemoteEntityId(props.entityId) || !validRemoteStamp(file)) {
+    throw new Error('error.invalidDriveRecord')
+  }
+  if (type === 'record' && !VALID_RECORD_KINDS.has(props.kind ?? '')) throw new Error('error.invalidDriveRecord')
+  const declared = Number(file.size ?? 0)
+  const max = type === 'record' ? SECURITY_LIMITS.maxEncryptedRecordBytes : SECURITY_LIMITS.maxEncryptedImageBytes
+  if (Number.isFinite(declared) && declared > max) throw new Error('error.driveFileTooLarge')
+}
+
 function compareStamp(
   a: { version: number; updatedAt: string; deviceId: string },
   b: { version: number; updatedAt: string; deviceId: string },
@@ -50,7 +81,7 @@ function remoteStamp(file: DriveFileMeta) {
 
 function remoteRow(file: DriveFileMeta): RemoteEntityRow | undefined {
   const id = file.appProperties?.entityId
-  if (!id) return undefined
+  if (!validRemoteEntityId(id) || !validRemoteStamp(file)) return undefined
   return {
     id,
     fileId: file.id,
@@ -62,8 +93,25 @@ function remoteRow(file: DriveFileMeta): RemoteEntityRow | undefined {
   }
 }
 
-function fileMap(files: DriveFileMeta[]) {
-  return new Map(files.map((file) => [file.appProperties?.entityId ?? file.name, file]))
+function validRemoteFiles(files: DriveFileMeta[], type: 'record' | 'image') {
+  const selected = new Map<string, DriveFileMeta>()
+  for (const file of files) {
+    try {
+      assertRemoteFile(file, type)
+    } catch {
+      // A user can manually place/copy files inside the visible O-Wallet folder.
+      // Invalid application metadata must never participate in conflict resolution.
+      continue
+    }
+    const id = file.appProperties!.entityId
+    const previous = selected.get(id)
+    if (!previous || compareStamp(remoteStamp(previous), remoteStamp(file)) < 0) selected.set(id, file)
+  }
+  return Array.from(selected.values())
+}
+
+function fileMap(files: DriveFileMeta[], type: 'record' | 'image') {
+  return new Map(validRemoteFiles(files, type).map((file) => [file.appProperties!.entityId, file] as const))
 }
 
 async function mapPool<T>(items: T[], limit: number, task: (item: T) => Promise<void>) {
@@ -85,8 +133,8 @@ async function vaultFingerprint(config: VaultConfig) {
 }
 
 async function pullRecord(token: string, file: DriveFileMeta): Promise<EncryptedRecordRow> {
+  assertRemoteFile(file, 'record')
   const props = file.appProperties ?? {}
-  if (!props.entityId || !props.kind) throw new Error('error.invalidDriveRecord')
   return {
     id: props.entityId,
     kind: props.kind as EncryptedRecordRow['kind'],
@@ -94,20 +142,20 @@ async function pullRecord(token: string, file: DriveFileMeta): Promise<Encrypted
     updatedAt: props.updatedAt ?? file.modifiedTime ?? new Date().toISOString(),
     deviceId: props.deviceId ?? 'remote',
     deleted: props.deleted === '1',
-    payload: unpackEncryptedPayload(await downloadDriveFile(token, file.id)),
+    payload: unpackEncryptedPayload(await downloadDriveFile(token, file.id, SECURITY_LIMITS.maxEncryptedRecordBytes)),
   }
 }
 
 async function pullImage(token: string, file: DriveFileMeta): Promise<EncryptedImageRow> {
+  assertRemoteFile(file, 'image')
   const props = file.appProperties ?? {}
-  if (!props.entityId) throw new Error('error.invalidDriveRecord')
   return {
     id: props.entityId,
     version: Number(props.version ?? 1),
     updatedAt: props.updatedAt ?? file.modifiedTime ?? new Date().toISOString(),
     deviceId: props.deviceId ?? 'remote',
     deleted: props.deleted === '1',
-    payload: unpackEncryptedPayload(await downloadDriveFile(token, file.id)),
+    payload: unpackEncryptedPayload(await downloadDriveFile(token, file.id, SECURITY_LIMITS.maxEncryptedImageBytes)),
   }
 }
 
@@ -191,8 +239,9 @@ async function fullRecordReconcile(
   localRows: EncryptedRecordRow[],
   stats: SyncStats,
 ) {
-  const remoteMap = fileMap(remoteFiles)
-  const remoteRows = remoteFiles.map(remoteRow).filter((row): row is RemoteEntityRow => Boolean(row))
+  const safeRemoteFiles = validRemoteFiles(remoteFiles, 'record')
+  const remoteMap = fileMap(safeRemoteFiles, 'record')
+  const remoteRows = safeRemoteFiles.map(remoteRow).filter((row): row is RemoteEntityRow => Boolean(row))
   await db.remoteRecords.clear()
   if (remoteRows.length) await db.remoteRecords.bulkPut(remoteRows)
 
@@ -231,8 +280,9 @@ async function fullImageReconcile(
   localRows: EncryptedImageRow[],
   stats: SyncStats,
 ) {
-  const remoteMap = fileMap(remoteFiles)
-  const remoteRows = remoteFiles.map(remoteRow).filter((row): row is RemoteEntityRow => Boolean(row))
+  const safeRemoteFiles = validRemoteFiles(remoteFiles, 'image')
+  const remoteMap = fileMap(safeRemoteFiles, 'image')
+  const remoteRows = safeRemoteFiles.map(remoteRow).filter((row): row is RemoteEntityRow => Boolean(row))
   await db.remoteImages.clear()
   if (remoteRows.length) await db.remoteImages.bulkPut(remoteRows)
 
@@ -291,6 +341,7 @@ async function applyRemoteChange(token: string, change: DriveChange, stats: Sync
   if (!entityId) return
 
   if (type === 'record') {
+    try { assertRemoteFile(file, 'record') } catch { return }
     await cacheRemoteRecord(file)
     const local = await db.records.get(entityId)
     if (!local) {
@@ -314,6 +365,7 @@ async function applyRemoteChange(token: string, change: DriveChange, stats: Sync
   }
 
   if (type === 'image') {
+    try { assertRemoteFile(file, 'image') } catch { return }
     await cacheRemoteImage(file)
     const local = await db.images.get(entityId)
     if (!local) {

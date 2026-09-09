@@ -4,7 +4,7 @@ O-Wallet is a private, local-first expense tracker built as a static PWA.
 
 **No O-Wallet runtime backend is required.** The production deployment is static HTML/CSS/JS. The browser performs OCR, encryption, analytics and sync; encrypted cloud data is stored in the user's own Google Drive.
 
-Current release: **v0.9.0**
+Current release: **v0.13.0**
 
 ## Highlights
 
@@ -39,6 +39,73 @@ Current release: **v0.9.0**
 - Privacy Policy and Terms of Service pages included for public OAuth deployments.
 - Footer links to **O-Lab**, the project hub at `https://oppai1442.github.io/all/`.
 
+
+
+## v0.13.0 guided voice entry
+
+O-Wallet can now fill a transaction one field at a time with browser speech recognition. The design intentionally avoids whole-sentence commands: each step has a narrow context, shows the current/default value, and lets the user press **Next** without speaking when the default is already correct.
+
+- Vietnamese (`vi-VN`) and English (`en-US`) recognition profiles.
+- Configurable field order in Settings. Type/date/time/account defaults can be accepted immediately; required fields remain explicit.
+- Guided flow with **Back**, **Next**, retry, and direct manual editing for the current field.
+- Fast field-specific parsers for spoken amounts, dates and times, including common Vietnamese number/date/time phrases.
+- Account/category speech matching is biased toward the user's existing data; category matching uses the full hierarchy path.
+- A lightweight accent calibration asks the user to read short finance-oriented samples. O-Wallet stores only transcript correction pairs, not audio, and applies those corrections before parsing later speech.
+- Where the browser supports contextual speech phrases, O-Wallet boosts relevant account/category/calibration vocabulary. The feature gracefully falls back when contextual biasing is unavailable.
+- Speech settings and accent corrections are encrypted inside normal synced O-Wallet settings. Voice audio itself is never stored by O-Wallet.
+- Browser speech recognition availability and processing behavior depend on the browser/device. Some implementations may use the browser vendor's speech service rather than fully local recognition.
+
+## v0.12.0 shared wallets
+
+Shared wallets add multi-user ledgers without introducing an O-Wallet backend or one writable Drive root that every member can destroy.
+
+- Every shared transaction stores a stable `createdByMemberId`. The creator is always visible in the shared transaction list and only that creator can edit/delete their own transaction.
+- Each member owns an encrypted **member feed** in their own Google Drive. Other members receive read-only access to the encrypted bytes, so one member does not get write permission over another member's feed or storage folder.
+- The owner keeps a small encrypted control file containing membership and feed references. When an active member is removed, O-Wallet first freezes that member's current feed into an owner-owned encrypted archive, then rotates the current group key. Remaining members receive the new key through per-member encrypted envelopes, while historical keys remain available only to read older/frozen data.
+- Each member maintains a small encrypted personal safety snapshot of the merged ledger in their own Drive. If the owner's live control data disappears, the latest snapshot can still be shown read-only.
+- Member nicknames are **personal aliases**. They are stored only in the current user's encrypted personal settings, sync only with that user's own O-Wallet data, and are never written to the shared wallet. Different members may therefore give the same person different nicknames.
+- Invitations are sent to a Google email address. The owner creates a tiny encrypted registration file shared only to that Google account, and Google Drive sends the notification email with an O-Wallet join link. The link carries a random transport secret, **not the group key**; the initial group key ring remains inside the account-restricted registration file. The Drive permission is also given the same expiration time as the invitation.
+- O-Wallet continues to request `drive.file`, not unrestricted Drive access. On join, Google Picker is used once to explicitly make the exact invitation/registration file available to O-Wallet for the invited account. A forwarded link by itself is therefore insufficient to recover the group key.
+- Shared control/feed files are link-readable **ciphertext**. Content is encrypted client-side with group keys; the public read permission exists only to make narrow cross-account reads possible without broad Drive scope.
+
+Shared Wallets need a public Google API key in addition to the OAuth client ID. The key is browser configuration, not a secret, and should be restricted by HTTP referrer and API in Google Cloud.
+
+
+
+
+## v0.11.0 optional AI image reading
+
+O-Wallet can optionally send a user-selected screenshot directly from the browser to OpenRouter for multimodal extraction. There is still no O-Wallet application backend in this path.
+
+- AI is **off by default**. Endpoint, model and API key fields start blank; the UI only shows examples/placeholders.
+- The reference build allows the OpenRouter Chat Completions endpoint (`https://openrouter.ai/api/v1/chat/completions`) so the production CSP stays restrictive.
+- The user chooses a vision-capable OpenRouter model.
+- The OpenRouter API key is AES-GCM encrypted with the unlocked vault key and stored only in local IndexedDB on that device. It is never added to Drive sync.
+- Endpoint/model configuration is stored in encrypted O-Wallet settings and may sync to other devices; each device must enter its own API key.
+- Pressing **Read with AI** sends the selected image to OpenRouter/model provider. Normal Tesseract OCR remains local-only.
+- AI results are treated as untrusted suggestions, normalized, and then passed through the same local transaction-rule logic before being shown to the user.
+
+OpenRouter vision requests use the standard Chat Completions API with text + `image_url` content. The implementation also requests `provider.data_collection = "deny"`.
+
+## v0.10.0 security hardening
+
+v0.10.0 hardens the browser/client boundary without adding an O-Wallet backend. The core privacy model remains the same: Google handles identity and per-user Drive storage; O-Wallet handles encryption locally.
+
+- Production Content Security Policy restricts scripts, connections, frames, workers, images and other executable/resource origins to the minimum set currently required by O-Wallet, Google Identity/Drive and OCR runtime assets.
+- O-Wallet refuses to render inside another page/iframe as a GitHub Pages-compatible clickjacking guard. A stronger `frame-ancestors 'none'` header template is included for hosts that support custom response headers.
+- `Referrer-Policy: no-referrer` is applied to the static page and sensitive Google/Drive fetches use `no-store` and `no-referrer`.
+- Google OAuth continues to use only `drive.file`; active bearer tokens remain tab/session scoped, while long remember periods store reconnect metadata only.
+- New AES-GCM payloads are format v2 and bind ciphertext to `record:<kind>:<id>` or `image:<id>` with authenticated additional data. Moving a valid ciphertext blob to a different entity/record kind therefore fails authentication. Existing v1 payloads remain readable.
+- Vault configuration is validated before expensive KDF work; hostile iteration counts, malformed IV/key envelopes, oversized configs and invalid recovery metadata are rejected.
+- New vaults use PBKDF2-HMAC-SHA256 at 600,000 iterations for the password path. Security-question answers use their own salted PBKDF2 verifier; they remain only an additional recovery check, while the random recovery key is the actual cryptographic recovery secret.
+- Image and SQLite imports validate size, extension/type and file signatures before processing. Images also enforce decoded-pixel limits; SQLite parsing runs in a Worker with a timeout and row/string caps. OCR output is bounded before it is retained by the app.
+- Remote Drive record/image downloads have strict byte limits and remote sync metadata is validated before use.
+- CSV export neutralizes spreadsheet formula prefixes (`=`, `+`, `-`, `@`) to reduce formula-injection surprises when a user opens the export in spreadsheet software.
+- External URLs are allowlisted and opened with `noopener,noreferrer`; Google profile images are accepted only from HTTPS `googleusercontent.com` hosts.
+- Production builds explicitly disable source maps. The service worker no longer keeps a separate persistent cache of third-party executable OCR assets.
+- CI now runs source security invariants, an AES-GCM/AAD tamper smoke test, a high-severity `npm audit` gate, a post-build secret/CSP/source-map scan, weekly CodeQL and Dependabot configuration.
+
+GitHub Pages cannot apply arbitrary HTTP response headers from this repository. O-Wallet therefore uses a CSP meta policy plus an in-app frame guard there. `public/_headers` contains the stronger equivalent headers for compatible static hosts such as Cloudflare Pages.
 
 
 ## v0.9.0 incremental Drive sync
@@ -156,15 +223,15 @@ Implemented:
 - automatic Drive pull immediately after restoring/unlocking on a new device;
 - protection against accidentally overwriting a different O-Wallet vault already present in the selected Drive.
 
-Still intentionally early-stage / needs hardening before serious public use:
+Still intentionally early-stage / remaining production work:
 
 - bank-specific prebuilt semantic pattern packs beyond user-created templates;
 - import/restore from decrypted JSON/CSV exports and additional third-party app formats;
-- automated integration tests against Google Drive;
+- automated end-to-end integration tests against Google Drive;
 - password-change and recovery-key rotation flows;
 - sync compaction/indexing for very large histories;
 - remote tombstone / expired-image cleanup;
-- stronger hostile-client / XSS hardening;
+- independent cryptographic/security review before making high-assurance claims;
 - self-hosted OCR runtime/language assets if fully offline **first-run** OCR is required.
 
 ---
@@ -188,9 +255,12 @@ Set:
 
 ```env
 VITE_GOOGLE_CLIENT_ID=123456789-example.apps.googleusercontent.com
+VITE_GOOGLE_API_KEY=your-public-google-api-key
 ```
 
-The Vite variable is build-time configuration. A Google OAuth **Client ID is public information** in a browser app; do not put a Google OAuth `client_secret` in this project.
+`VITE_GOOGLE_API_KEY` is used by Shared Wallets for Google Picker and public reads of encrypted shared files. It is also public browser configuration; restrict it in Google Cloud by HTTP referrer and API.
+
+The Vite variables are build-time configuration. A Google OAuth **Client ID is public information** in a browser app; do not put a Google OAuth `client_secret` in this project.
 
 ---
 
@@ -200,6 +270,16 @@ The repository includes:
 
 ```text
 .github/workflows/deploy.yml
+.github/workflows/codeql.yml
+.github/dependabot.yml
+```
+
+The deploy workflow resolves a lock for the run, installs dependencies with lifecycle scripts disabled, executes security checks/audit, builds, scans `dist/`, and only then uploads the Pages artifact. For strongest reproducibility, generate and commit `package-lock.json` once from a trusted machine after dependency review:
+
+```bash
+npm install --package-lock-only --ignore-scripts
+git add package-lock.json
+git commit -m "Lock dependencies"
 ```
 
 After configuration, a push to `main` automatically builds and deploys the app to GitHub Pages.
@@ -222,6 +302,17 @@ O-Wallet's Vite config uses `base: './'`, so a repository-specific Vite base pat
 
 If the default branch is not `main`, edit `.github/workflows/deploy.yml`.
 
+## Recommended GitHub repository security
+
+Code cannot enforce account/repository settings. For a public deployment, also enable these in GitHub:
+
+- passkey or 2FA on maintainer accounts;
+- branch protection/ruleset for `main`;
+- require the build/security checks before merge;
+- restrict who can push to `main`;
+- review changes to `.github/workflows/` like application code;
+- keep Dependabot and CodeQL/security alerts enabled.
+
 ## 2. Create a Google Cloud project
 
 Open Google Cloud Console and create/select a project for the deployment.
@@ -230,6 +321,7 @@ Enable:
 
 ```text
 Google Drive API
+Google Picker API
 ```
 
 Official Drive API documentation:
@@ -601,3 +693,24 @@ Selecting multiple images exposes **Batch OCR**. OCR is processed sequentially w
 - If silent renewal cannot proceed, the UI shows **Reconnect required** and a user-initiated reconnect button. Local encrypted data remains available.
 - Legacy builds that stored an access token in long-lived local storage are migrated: a still-valid token is moved to `sessionStorage`, while `localStorage` retains only reconnect metadata.
 - The project-portfolio footer is branded **O-Lab** and links to `https://oppai1442.github.io/all/`.
+
+
+## 7. Create a browser API key for Shared Wallets
+
+Create a Google Cloud API key for the same project. This key is visible in the browser and **must not be treated as a secret**.
+
+Recommended restrictions:
+
+```text
+Application restriction: Websites (HTTP referrers)
+https://<username>.github.io/*
+http://localhost:5173/*
+
+API restrictions:
+Google Drive API
+Google Picker API
+```
+
+Store it in the GitHub Actions repository variable `VITE_GOOGLE_API_KEY`. The deploy workflow injects it at build time together with `VITE_GOOGLE_CLIENT_ID`.
+
+If a deployment does not configure this key, personal wallets continue to work but Shared Wallets are disabled.

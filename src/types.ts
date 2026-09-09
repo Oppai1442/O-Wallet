@@ -4,6 +4,7 @@ export type ImageRetentionMode = 'forever' | 'days'
 export type RememberDuration = 'off' | 'tab' | '1h' | '8h' | '1d' | '7d' | '30d'
 export type VaultRememberDuration = 'off' | '15m' | '1h' | '8h' | '1d' | '7d' | '30d'
 export type AppLanguage = 'vi' | 'en'
+export type AiProvider = 'openrouter'
 export type OcrField = 'generic' | 'amount' | 'occurredAt' | 'merchant' | 'balanceAfter' | 'description' | 'ignore'
 
 export interface OcrRegion {
@@ -38,6 +39,32 @@ export interface OcrTemplate {
   updatedAt: string
 }
 
+
+export interface AiVisionSettings {
+  provider: AiProvider
+  /** User-configured OpenRouter Chat Completions endpoint. Blank means AI is not configured. */
+  endpoint?: string
+  /** Vision-capable OpenRouter model slug. Blank means AI is not configured. */
+  model?: string
+}
+
+
+export type VoiceInputLanguage = 'vi-VN' | 'en-US'
+export type VoiceInputField = 'type' | 'amount' | 'date' | 'time' | 'account' | 'destinationAccount' | 'category' | 'merchant' | 'description'
+
+export interface VoiceAccentCorrection {
+  heard: string
+  expected: string
+  updatedAt: string
+}
+
+export interface VoiceInputSettings {
+  language: VoiceInputLanguage
+  fieldOrder: VoiceInputField[]
+  corrections: VoiceAccentCorrection[]
+  calibrationCompletedAt?: string
+}
+
 export interface BudgetConfig {
   id: string
   categoryId: string
@@ -65,6 +92,105 @@ export interface TransactionRule {
   updatedAt: string
 }
 
+
+
+export type SharedWalletRole = 'owner' | 'member' | 'viewer'
+
+export interface SharedWalletMember {
+  id: string
+  email: string
+  role: SharedWalletRole
+  status: 'invited' | 'active' | 'removed'
+  invitedAt: string
+  joinedAt?: string
+  canonicalName?: string
+  googleSub?: string
+  /** Public, encrypted feed file owned by this member. */
+  feedFileId?: string
+  /** Tiny owner-owned registration file used only during invitation/join. */
+  registrationFileId?: string
+}
+
+export interface SharedWalletControl {
+  schemaVersion: 1
+  groupId: string
+  name: string
+  ownerMemberId: string
+  keyVersion: number
+  createdAt: string
+  updatedAt: string
+  members: SharedWalletMember[]
+}
+
+export interface SharedWalletMembership {
+  groupId: string
+  name: string
+  controlFileId: string
+  memberId: string
+  role: SharedWalletRole
+  /** Current group key and its version. */
+  groupKey: string
+  keyVersion: number
+  /** Older keys are retained so historical feeds remain readable after membership rotation. */
+  groupKeyHistory?: Record<string, string>
+  /** Unique per-member transport secret used only to receive future group-key rotations. */
+  transportKey: string
+  /** Folder in this user's own Drive. It is never shared as a writable group root. */
+  localRootId: string
+  /** Public, encrypted feed owned by this member. */
+  feedFileId: string
+  joinedAt: string
+}
+
+export interface SharedTransaction {
+  id: string
+  groupId: string
+  type: 'expense' | 'income'
+  amount: number
+  currency: string
+  occurredAt: string
+  category?: string
+  merchant?: string
+  description?: string
+  note?: string
+  tags?: string[]
+  createdByMemberId: string
+  createdAt: string
+  updatedAt: string
+  deleted: boolean
+}
+
+export interface SharedMemberProfile {
+  groupId: string
+  memberId: string
+  googleSub: string
+  email: string
+  name: string
+  updatedAt: string
+}
+
+export interface SharedMemberFeed {
+  schemaVersion: 1
+  groupId: string
+  memberId: string
+  revision: number
+  keyVersion: number
+  profile: SharedMemberProfile
+  transactions: SharedTransaction[]
+  updatedAt: string
+}
+
+export interface EncryptedSharedRecordRow {
+  key: string
+  groupId: string
+  id: string
+  fileId?: string
+  version: number
+  updatedAt: string
+  createdByMemberId: string
+  deleted: boolean
+  payload: EncryptedPayload
+}
 
 export interface ExternalImportTrace {
   adapterId: string
@@ -143,6 +269,15 @@ export interface AppSettings {
   budgets?: BudgetConfig[]
   accountCatalogues?: AccountCatalogue[]
   transactionRules?: TransactionRule[]
+  /** AI endpoint/model sync as encrypted settings. API keys never sync. */
+  aiVision?: AiVisionSettings
+  /** Guided speech-entry preferences and accent corrections. Audio is never stored. */
+  voiceInput?: VoiceInputSettings
+  sharedWallets?: SharedWalletMembership[]
+  /** Per-user aliases. They are encrypted in the personal vault and never written to the shared wallet. */
+  sharedWalletAliases?: Record<string, Record<string, string>>
+  /** Owner-only invitation transport secrets. Stored inside the owner's encrypted personal vault. */
+  sharedWalletOwnerSecrets?: Record<string, Record<string, string>>
   transactionDefaults?: {
     accountId?: string
     categoryId?: string
@@ -156,7 +291,7 @@ export type WalletEntity = Transaction | Account | Category | AppSettings
 export type RecordKind = 'transaction' | 'account' | 'category' | 'settings'
 
 export interface EncryptedPayload {
-  version: 1
+  version: 1 | 2
   iv: string
   ciphertext: ArrayBuffer
 }
@@ -212,6 +347,7 @@ export interface SecurityQuestionConfig {
   questionId: string
   answerSalt: string
   answerHash: string
+  answerKdfIterations?: number
 }
 
 export interface VaultConfig {

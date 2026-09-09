@@ -1,21 +1,22 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
-import { BarChart3, ExternalLink, Home, LockKeyhole, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon, Wallet } from 'lucide-react'
+import { BarChart3, ExternalLink, Home, LockKeyhole, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon, Users, Wallet } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { useI18n } from '../i18n'
 import { Analytics } from './Analytics'
 import { Dashboard } from './Dashboard'
 import { Settings } from './Settings'
 import { Transactions } from './Transactions'
+import { SharedWallets } from './SharedWallets'
 import { Button } from './ui'
 
 const TransactionModal = lazy(() => import('./TransactionModal').then((module) => ({ default: module.TransactionModal })))
 
-type Page = 'home' | 'transactions' | 'analytics' | 'settings'
+type Page = 'home' | 'transactions' | 'shared' | 'analytics' | 'settings'
 
 const PAGE_PARAM = 'page'
 const ACTION_PARAM = 'action'
 const ADD_ACTION = 'add'
-const validPages: Page[] = ['home', 'transactions', 'analytics', 'settings']
+const validPages: Page[] = ['home', 'transactions', 'shared', 'analytics', 'settings']
 
 function readPageFromUrl(): Page {
   const value = new URLSearchParams(window.location.search).get(PAGE_PARAM)
@@ -45,6 +46,7 @@ function pageHref(page: Page) {
 
 function Main({ page }: { page: Page }) {
   if (page === 'transactions') return <Transactions />
+  if (page === 'shared') return <SharedWallets />
   if (page === 'analytics') return <Analytics />
   if (page === 'settings') return <Settings />
   return <Dashboard />
@@ -79,6 +81,7 @@ export function Shell() {
   const nav: Array<{ id: Page; label: string; icon: typeof Home }> = [
     { id: 'home', label: t('nav.home'), icon: Home },
     { id: 'transactions', label: t('nav.transactions'), icon: ReceiptText },
+    { id: 'shared', label: t('nav.shared'), icon: Users },
     { id: 'analytics', label: t('nav.analytics'), icon: BarChart3 },
     { id: 'settings', label: t('nav.settings'), icon: SettingsIcon },
   ]
@@ -167,7 +170,7 @@ export function Shell() {
       </div>
 
       <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-stone-200 bg-white/95 px-2 pt-2 backdrop-blur-xl dark:border-stone-800 dark:bg-stone-950/95 md:hidden">
-        <div className="mx-auto grid max-w-lg grid-cols-5 gap-1">
+        <div className="mx-auto grid max-w-xl grid-cols-6 gap-1">
           {nav.slice(0, 2).map((item) => <MobileNav key={item.id} active={page === item.id} href={pageHref(item.id)} icon={<item.icon size={19} />} label={item.label} onClick={() => navigatePage(item.id)} />)}
           <button aria-label={t('nav.addTransaction')} onClick={openAdd} className="mx-auto -mt-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-stone-950 text-white shadow-lg shadow-stone-950/20 dark:bg-white dark:text-stone-950"><Plus size={25} /></button>
           {nav.slice(2).map((item) => <MobileNav key={item.id} active={page === item.id} href={pageHref(item.id)} icon={<item.icon size={19} />} label={item.label} onClick={() => navigatePage(item.id)} />)}

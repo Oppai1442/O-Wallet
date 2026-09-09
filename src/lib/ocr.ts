@@ -8,6 +8,7 @@ import type {
   ParsedTransactionCandidate,
   TransactionType,
 } from '../types'
+import { SECURITY_LIMITS } from './security'
 
 let workerPromise: Promise<Worker> | undefined
 let progressSink: ((progress: number, status: string) => void) | undefined
@@ -75,8 +76,8 @@ export async function recognizeImage(
   const worker = await getWorker(onProgress)
   const result = await worker.recognize(image, {}, { blocks: true })
   return {
-    text: result.data.text ?? '',
-    boxes: collectWords(result.data.blocks),
+    text: (result.data.text ?? '').slice(0, SECURITY_LIMITS.maxOcrTextChars),
+    boxes: collectWords(result.data.blocks).slice(0, SECURITY_LIMITS.maxOcrBoxes),
   }
 }
 

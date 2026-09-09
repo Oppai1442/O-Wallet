@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Database, FileUp, ImageOff, LoaderCircle, RefreshCw } from 'lucide-react'
 import { useWallet } from '../WalletContext'
-import { useI18n } from '../i18n'
+import { localizeError, useI18n } from '../i18n'
 import { findDuplicateTransaction } from '../lib/duplicates'
 import { parseExternalBackup } from '../lib/importers/client'
 import type { ExternalImportBundle, ExternalImportTransaction, ExternalImportUnsupportedRow } from '../lib/importers/types'
@@ -97,8 +97,7 @@ export function ExternalImport() {
       const parsed = await parseExternalBackup(file)
       setBundle(parsed)
     } catch (readError) {
-      console.error('External backup import read failed', readError)
-      setError(t('import.readError'))
+      setError(localizeError(readError, t, 'import.readError'))
     } finally {
       setReading(false)
       if (inputRef.current) inputRef.current.value = ''
@@ -319,8 +318,7 @@ export function ExternalImport() {
         skippedUnsupported,
       })
     } catch (importError) {
-      console.error('External backup import failed', importError)
-      setError(t('import.importError'))
+      setError(localizeError(importError, t, 'import.importError'))
     } finally {
       setImporting(false)
     }

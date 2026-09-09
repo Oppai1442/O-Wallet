@@ -1,12 +1,15 @@
 {
   "name": "o-wallet",
   "private": true,
-  "version": "0.9.0",
+  "version": "0.13.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "security:check": "node scripts/security-check.mjs && node scripts/crypto-smoke.mjs",
+    "security:dist": "node scripts/dist-security-check.mjs",
+    "check": "npm run security:check && npm run build && npm run security:dist"
   },
   "dependencies": {
     "dexie": "4.4.5",

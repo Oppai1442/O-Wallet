@@ -3,13 +3,15 @@ import type {
   AppSettings,
   Category,
   EncryptedImageRow,
+  EncryptedPayload,
   EncryptedRecordRow,
   RecordKind,
   Transaction,
   WalletEntity,
 } from '../types'
 import { decryptBytes, decryptJson, encryptBytes, encryptJson } from './crypto'
-import { db, getDeviceId, queueSyncEntities, queueSyncEntity } from './db'
+import { assertJsonPayloadSize, reportDiagnostic, safeDownloadFilename, SECURITY_LIMITS, sniffRasterImageMime, validateImageFile } from './security'
+import { db, deleteKv, getDeviceId, getKv, queueSyncEntities, queueSyncEntity, setKv } from './db'
 
 function recordKind(entity: WalletEntity): RecordKind {
   if ('type' in entity) return 'transaction'
@@ -27,17 +29,42 @@ export class WalletRepository {
     this.remoteImageLoader = loader
   }
 
+  async setLocalSecret(name: string, value: string) {
+    if (!name || name.length > 128) throw new Error('error.invalidLocalSecret')
+    if (!value || value.length > 4_096) throw new Error('error.invalidLocalSecret')
+    const payload = await encryptBytes(this.key, new TextEncoder().encode(value), `local-secret:${name}`)
+    await setKv(`local-secret:${name}`, payload)
+  }
+
+  async getLocalSecret(name: string) {
+    if (!name || name.length > 128) return undefined
+    const payload = await getKv<EncryptedPayload>(`local-secret:${name}`)
+    if (!payload) return undefined
+    try {
+      const clear = await decryptBytes(this.key, payload, `local-secret:${name}`)
+      return new TextDecoder().decode(clear)
+    } catch (error) {
+      reportDiagnostic(`local-secret:${name}`, error)
+      return undefined
+    }
+  }
+
+  async deleteLocalSecret(name: string) {
+    await deleteKv(`local-secret:${name}`)
+  }
+
   async getAll<T extends WalletEntity>(kind: RecordKind, includeDeleted = false): Promise<T[]> {
     const rows = await db.records.where('kind').equals(kind).toArray()
     const result: T[] = []
     for (const row of rows) {
       if (!includeDeleted && row.deleted) continue
       try {
-        const value = await decryptJson<T>(this.key, row.payload)
+        const value = await decryptJson<T>(this.key, row.payload, `record:${row.kind}:${row.id}`)
+        if (value.id !== row.id || recordKind(value) !== row.kind) throw new Error('Encrypted record identity mismatch.')
         if (!includeDeleted && value.deleted) continue
         result.push(value)
       } catch (error) {
-        console.error('Failed to decrypt record', row.id, error)
+        reportDiagnostic(`record-decrypt:${row.id}`, error)
       }
     }
     return result
@@ -46,17 +73,21 @@ export class WalletRepository {
   async get<T extends WalletEntity>(id: string): Promise<T | undefined> {
     const row = await db.records.get(id)
     if (!row) return undefined
-    return decryptJson<T>(this.key, row.payload)
+    const value = await decryptJson<T>(this.key, row.payload, `record:${row.kind}:${row.id}`)
+    if (value.id !== row.id || recordKind(value) !== row.kind) throw new Error('Encrypted record identity mismatch.')
+    return value
   }
 
   async put<T extends WalletEntity>(entity: T) {
+    assertJsonPayloadSize(entity)
     const deviceId = await getDeviceId()
     const existing = await db.records.get(entity.id)
     const nextVersion = (existing?.version ?? 0) + 1
-    const payload = await encryptJson(this.key, entity)
+    const kind = recordKind(entity)
+    const payload = await encryptJson(this.key, entity, `record:${kind}:${entity.id}`)
     const row: EncryptedRecordRow = {
       id: entity.id,
-      kind: recordKind(entity),
+      kind,
       version: nextVersion,
       updatedAt: entity.updatedAt,
       deviceId,
@@ -70,6 +101,7 @@ export class WalletRepository {
 
   async putMany<T extends WalletEntity>(entities: T[]) {
     if (entities.length === 0) return []
+    for (const entity of entities) assertJsonPayloadSize(entity)
     const deviceId = await getDeviceId()
     const allRows: EncryptedRecordRow[] = []
     const chunkSize = 250
@@ -77,15 +109,18 @@ export class WalletRepository {
     for (let offset = 0; offset < entities.length; offset += chunkSize) {
       const chunk = entities.slice(offset, offset + chunkSize)
       const existing = await db.records.bulkGet(chunk.map((entity) => entity.id))
-      const rows = await Promise.all(chunk.map(async (entity, index) => ({
-        id: entity.id,
-        kind: recordKind(entity),
-        version: (existing[index]?.version ?? 0) + 1,
-        updatedAt: entity.updatedAt,
-        deviceId,
-        deleted: entity.deleted,
-        payload: await encryptJson(this.key, entity),
-      } satisfies EncryptedRecordRow)))
+      const rows = await Promise.all(chunk.map(async (entity, index) => {
+        const kind = recordKind(entity)
+        return {
+          id: entity.id,
+          kind,
+          version: (existing[index]?.version ?? 0) + 1,
+          updatedAt: entity.updatedAt,
+          deviceId,
+          deleted: entity.deleted,
+          payload: await encryptJson(this.key, entity, `record:${kind}:${entity.id}`),
+        } satisfies EncryptedRecordRow
+      }))
       await db.records.bulkPut(rows)
       allRows.push(...rows)
     }
@@ -102,6 +137,7 @@ export class WalletRepository {
   }
 
   async saveImage(file: File) {
+    await validateImageFile(file)
     const raw = new Uint8Array(await file.arrayBuffer())
     const header = new TextEncoder().encode(JSON.stringify({
       mimeType: file.type || 'application/octet-stream',
@@ -122,7 +158,7 @@ export class WalletRepository {
       updatedAt: now,
       deviceId,
       deleted: false,
-      payload: await encryptBytes(this.key, clear),
+      payload: await encryptBytes(this.key, clear, `image:${id}`),
     }
     await db.images.put(row)
     await queueSyncEntity('image', row.id)
@@ -135,14 +171,22 @@ export class WalletRepository {
       row = await this.remoteImageLoader(id)
     }
     if (!row || row.deleted) return undefined
-    const clear = await decryptBytes(this.key, row.payload)
+    const clear = await decryptBytes(this.key, row.payload, `image:${id}`)
     if (clear.byteLength < 4) throw new Error('error.corruptImage')
     const headerLength = new DataView(clear.buffer, clear.byteOffset, clear.byteLength).getUint32(0, false)
+    if (headerLength <= 0 || headerLength > SECURITY_LIMITS.maxImageHeaderBytes) throw new Error('error.corruptImage')
     const headerEnd = 4 + headerLength
     if (headerEnd > clear.byteLength) throw new Error('error.corruptImage')
-    const header = JSON.parse(new TextDecoder().decode(clear.slice(4, headerEnd))) as { mimeType: string; originalName: string; originalSize: number }
-    const blob = new Blob([clear.slice(headerEnd) as BlobPart], { type: header.mimeType })
-    return { blob, ...header }
+    const header = JSON.parse(new TextDecoder().decode(clear.slice(4, headerEnd))) as { mimeType?: string; originalName?: string; originalSize?: number }
+    const imageBytes = clear.slice(headerEnd)
+    if (imageBytes.byteLength <= 0 || imageBytes.byteLength > SECURITY_LIMITS.maxImageBytes) throw new Error('error.corruptImage')
+    const mimeType = sniffRasterImageMime(imageBytes)
+    if (!mimeType) throw new Error('error.corruptImage')
+    const originalSize = Number(header.originalSize)
+    if (Number.isFinite(originalSize) && originalSize >= 0 && originalSize !== imageBytes.byteLength) throw new Error('error.corruptImage')
+    const originalName = safeDownloadFilename(header.originalName ?? 'screenshot', 'screenshot')
+    const blob = new Blob([imageBytes as BlobPart], { type: mimeType })
+    return { blob, mimeType, originalName, originalSize: imageBytes.byteLength }
   }
 
   async deleteImage(id: string) {
@@ -155,7 +199,7 @@ export class WalletRepository {
       updatedAt: now,
       deviceId: await getDeviceId(),
       deleted: true,
-      payload: await encryptBytes(this.key, new Uint8Array()),
+      payload: await encryptBytes(this.key, new Uint8Array(), `image:${id}`),
     })
     await queueSyncEntity('image', id)
   }

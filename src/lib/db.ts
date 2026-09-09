@@ -2,6 +2,7 @@ import Dexie, { type EntityTable } from 'dexie'
 import type {
   DeviceSessionPreferences,
   EncryptedImageRow,
+  EncryptedSharedRecordRow,
   EncryptedRecordRow,
   GoogleAccountBinding,
   RememberedVaultUnlock,
@@ -24,6 +25,7 @@ class OWalletDatabase extends Dexie {
   syncQueue!: EntityTable<SyncQueueRow, 'key'>
   remoteRecords!: EntityTable<RemoteEntityRow, 'id'>
   remoteImages!: EntityTable<RemoteEntityRow, 'id'>
+  sharedRecords!: EntityTable<EncryptedSharedRecordRow, 'key'>
 
   constructor() {
     super('o-wallet-v1')
@@ -39,6 +41,16 @@ class OWalletDatabase extends Dexie {
       syncQueue: '&key,entityType,entityId,queuedAt',
       remoteRecords: '&id,fileId,updatedAt,deleted,version',
       remoteImages: '&id,fileId,updatedAt,deleted,version',
+    })
+
+    this.version(3).stores({
+      kv: '&key',
+      records: '&id,kind,updatedAt,deviceId,deleted,version',
+      images: '&id,updatedAt,deviceId,deleted,version',
+      syncQueue: '&key,entityType,entityId,queuedAt',
+      remoteRecords: '&id,fileId,updatedAt,deleted,version',
+      remoteImages: '&id,fileId,updatedAt,deleted,version',
+      sharedRecords: '&key,groupId,id,updatedAt,createdByMemberId,deleted,version',
     })
   }
 }
@@ -156,29 +168,33 @@ export async function clearGoogleAccountBinding() {
 }
 
 export async function clearLocalWalletData() {
-  await db.transaction('rw', [db.records, db.images, db.syncQueue, db.remoteRecords, db.remoteImages, db.kv], async () => {
+  await db.transaction('rw', [db.records, db.images, db.syncQueue, db.remoteRecords, db.remoteImages, db.sharedRecords, db.kv], async () => {
     await db.records.clear()
     await db.images.clear()
     await db.syncQueue.clear()
     await db.remoteRecords.clear()
     await db.remoteImages.clear()
+    await db.sharedRecords.clear()
     await db.kv.delete('sync-v2-state')
+    await db.kv.where('key').startsWith('local-secret:').delete()
   })
 }
 
 // Removes only account/vault data from this browser. Device preferences and language remain.
 export async function clearLocalVaultForAccountSwitch() {
-  await db.transaction('rw', [db.records, db.images, db.syncQueue, db.remoteRecords, db.remoteImages, db.kv], async () => {
+  await db.transaction('rw', [db.records, db.images, db.syncQueue, db.remoteRecords, db.remoteImages, db.sharedRecords, db.kv], async () => {
     await db.records.clear()
     await db.images.clear()
     await db.syncQueue.clear()
     await db.remoteRecords.clear()
     await db.remoteImages.clear()
+    await db.sharedRecords.clear()
     await db.kv.bulkDelete([
       'vault-config',
       'remembered-vault-unlock',
       'google-account-binding',
       'sync-v2-state',
     ])
+    await db.kv.where('key').startsWith('local-secret:').delete()
   })
 }

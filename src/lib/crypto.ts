@@ -3,6 +3,7 @@ import type { EncryptedPayload, SecurityQuestionConfig, VaultConfig } from '../t
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 const PBKDF2_ITERATIONS = 600_000
+const SECURITY_QUESTION_ITERATIONS = 120_000
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
@@ -70,19 +71,27 @@ async function recoveryKeyToAesKey(recoveryKey: string) {
   return importAesKey(digest, ['encrypt', 'decrypt'])
 }
 
-async function encryptRaw(key: CryptoKey, data: Uint8Array) {
+async function encryptRaw(key: CryptoKey, data: Uint8Array, additionalData?: Uint8Array) {
   const iv = randomBytes(12)
   const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: toArrayBuffer(iv) },
+    {
+      name: 'AES-GCM',
+      iv: toArrayBuffer(iv),
+      additionalData: additionalData ? toArrayBuffer(additionalData) : undefined,
+    },
     key,
     toArrayBuffer(data),
   )
   return { iv, ciphertext }
 }
 
-async function decryptRaw(key: CryptoKey, iv: Uint8Array, ciphertext: ArrayBuffer) {
+async function decryptRaw(key: CryptoKey, iv: Uint8Array, ciphertext: ArrayBuffer, additionalData?: Uint8Array) {
   const clear = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: toArrayBuffer(iv) },
+    {
+      name: 'AES-GCM',
+      iv: toArrayBuffer(iv),
+      additionalData: additionalData ? toArrayBuffer(additionalData) : undefined,
+    },
     key,
     ciphertext,
   )
@@ -95,14 +104,43 @@ export function generateRecoveryKey() {
 }
 
 
-async function hashSecurityAnswer(answer: string, salt: Uint8Array) {
-  const digest = await sha256(
-    new Uint8Array([
-      ...salt,
-      ...encoder.encode(`:${normalizeAnswer(answer)}`),
-    ]),
-  )
-  return bytesToBase64Url(digest)
+async function hashSecurityAnswer(answer: string, salt: Uint8Array, iterations?: number) {
+  const normalized = encoder.encode(normalizeAnswer(answer))
+  if (!iterations) {
+    // Backward compatibility for vaults created before v0.10.
+    const digest = await sha256(new Uint8Array([...salt, ...encoder.encode(':'), ...normalized]))
+    return bytesToBase64Url(digest)
+  }
+  const material = await crypto.subtle.importKey('raw', toArrayBuffer(normalized), 'PBKDF2', false, ['deriveBits'])
+  const bits = await crypto.subtle.deriveBits({
+    name: 'PBKDF2',
+    hash: 'SHA-256',
+    salt: toArrayBuffer(salt),
+    iterations,
+  }, material, 256)
+  return bytesToBase64Url(new Uint8Array(bits))
+}
+
+
+function assertVaultConfigParameters(config: VaultConfig) {
+  try {
+    if (config.schemaVersion !== 1 || config.kdf.name !== 'PBKDF2-SHA256') throw new Error()
+    if (!Number.isInteger(config.kdf.iterations) || config.kdf.iterations < 100_000 || config.kdf.iterations > 5_000_000) throw new Error()
+    if (base64UrlToBytes(config.kdf.salt).length < 16 || base64UrlToBytes(config.kdf.salt).length > 64) throw new Error()
+    if (base64UrlToBytes(config.passwordWrappedDek.iv).length !== 12) throw new Error()
+    if (base64UrlToBytes(config.passwordWrappedDek.ciphertext).length !== 48) throw new Error()
+    if (base64UrlToBytes(config.recovery.wrappedDek.iv).length !== 12) throw new Error()
+    if (base64UrlToBytes(config.recovery.wrappedDek.ciphertext).length !== 48) throw new Error()
+    if (!Array.isArray(config.recovery.questions) || config.recovery.questions.length < 2 || config.recovery.questions.length > 10) throw new Error()
+    for (const question of config.recovery.questions) {
+      if (!question.questionId || question.questionId.length > 128) throw new Error()
+      if (base64UrlToBytes(question.answerSalt).length < 16 || base64UrlToBytes(question.answerSalt).length > 64) throw new Error()
+      if (base64UrlToBytes(question.answerHash).length !== 32) throw new Error()
+      if (question.answerKdfIterations !== undefined && (!Number.isInteger(question.answerKdfIterations) || question.answerKdfIterations < 10_000 || question.answerKdfIterations > 1_000_000)) throw new Error()
+    }
+  } catch {
+    throw new Error('error.invalidVaultConfig')
+  }
 }
 
 export async function createVault(
@@ -111,9 +149,11 @@ export async function createVault(
   questions: Array<{ questionId: string; answer: string }>,
 ): Promise<{ config: VaultConfig; dek: CryptoKey }> {
   if (password.length < 8) throw new Error('error.passwordTooShort')
+  if (password.length > 256) throw new Error('error.passwordTooLong')
   if (questions.length < 2 || questions.some((item) => !item.answer.trim())) {
     throw new Error('error.securityQuestionsRequired')
   }
+  if (questions.some((item) => item.answer.length > 256)) throw new Error('error.securityAnswerTooLong')
 
   const dekRaw = randomBytes(32)
   const dek = await importAesKey(dekRaw, ['encrypt', 'decrypt'])
@@ -131,7 +171,8 @@ export async function createVault(
     questionConfigs.push({
       questionId: question.questionId,
       answerSalt: bytesToBase64Url(answerSalt),
-      answerHash: await hashSecurityAnswer(question.answer, answerSalt),
+      answerHash: await hashSecurityAnswer(question.answer, answerSalt, SECURITY_QUESTION_ITERATIONS),
+      answerKdfIterations: SECURITY_QUESTION_ITERATIONS,
     })
   }
 
@@ -161,6 +202,7 @@ export async function createVault(
 }
 
 export async function unlockVaultWithPassword(config: VaultConfig, password: string) {
+  assertVaultConfigParameters(config)
   const key = await derivePasswordKey(
     password,
     base64UrlToBytes(config.kdf.salt),
@@ -183,13 +225,14 @@ export async function unlockVaultWithRecovery(
   recoveryKey: string,
   answers: string[],
 ) {
+  assertVaultConfigParameters(config)
   if (answers.length !== config.recovery.questions.length) {
     throw new Error('error.missingSecurityAnswers')
   }
 
   for (let i = 0; i < config.recovery.questions.length; i += 1) {
     const expected = config.recovery.questions[i]
-    const actual = await hashSecurityAnswer(answers[i], base64UrlToBytes(expected.answerSalt))
+    const actual = await hashSecurityAnswer(answers[i], base64UrlToBytes(expected.answerSalt), expected.answerKdfIterations)
     if (actual !== expected.answerHash) throw new Error('error.wrongSecurityAnswer')
   }
 
@@ -206,25 +249,35 @@ export async function unlockVaultWithRecovery(
   }
 }
 
-export async function encryptBytes(key: CryptoKey, bytes: Uint8Array): Promise<EncryptedPayload> {
-  const encrypted = await encryptRaw(key, bytes)
+function aadBytes(context: string | undefined) {
+  return context ? encoder.encode(`O-Wallet payload v2:${context}`) : undefined
+}
+
+export async function encryptBytes(key: CryptoKey, bytes: Uint8Array, context?: string): Promise<EncryptedPayload> {
+  const encrypted = await encryptRaw(key, bytes, aadBytes(context))
   return {
-    version: 1,
+    version: context ? 2 : 1,
     iv: bytesToBase64Url(encrypted.iv),
     ciphertext: encrypted.ciphertext,
   }
 }
 
-export async function decryptBytes(key: CryptoKey, payload: EncryptedPayload) {
-  return decryptRaw(key, base64UrlToBytes(payload.iv), payload.ciphertext)
+export async function decryptBytes(key: CryptoKey, payload: EncryptedPayload, context?: string) {
+  if (payload.version === 2 && !context) throw new Error('Missing encrypted payload context.')
+  return decryptRaw(
+    key,
+    base64UrlToBytes(payload.iv),
+    payload.ciphertext,
+    payload.version === 2 ? aadBytes(context) : undefined,
+  )
 }
 
-export async function encryptJson<T>(key: CryptoKey, value: T) {
-  return encryptBytes(key, encoder.encode(JSON.stringify(value)))
+export async function encryptJson<T>(key: CryptoKey, value: T, context?: string) {
+  return encryptBytes(key, encoder.encode(JSON.stringify(value)), context)
 }
 
-export async function decryptJson<T>(key: CryptoKey, payload: EncryptedPayload): Promise<T> {
-  const clear = await decryptBytes(key, payload)
+export async function decryptJson<T>(key: CryptoKey, payload: EncryptedPayload, context?: string): Promise<T> {
+  const clear = await decryptBytes(key, payload, context)
   return JSON.parse(decoder.decode(clear)) as T
 }
 
@@ -243,9 +296,9 @@ export function packEncryptedPayload(payload: EncryptedPayload) {
 
 export function unpackEncryptedPayload(buffer: ArrayBuffer): EncryptedPayload {
   const bytes = new Uint8Array(buffer)
-  if (bytes.length < 14 || bytes[0] !== 1) throw new Error('Unsupported encrypted payload.')
+  if (bytes.length < 14 || (bytes[0] !== 1 && bytes[0] !== 2)) throw new Error('Unsupported encrypted payload.')
   return {
-    version: 1,
+    version: bytes[0] as 1 | 2,
     iv: bytesToBase64Url(bytes.slice(1, 13)),
     ciphertext: toArrayBuffer(bytes.slice(13)),
   }

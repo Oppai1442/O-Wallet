@@ -2,6 +2,7 @@
 
 import initSqlJs, { type Database, type SqlValue } from 'sql.js'
 import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url'
+import { SECURITY_LIMITS } from '../lib/security'
 import type {
   ExternalImportAccount,
   ExternalImportBundle,
@@ -39,7 +40,10 @@ function scalarNumber(db: Database, sql: string, fallback = 0) {
 }
 
 function text(value: SqlValue | undefined | null) {
-  return value === null || value === undefined ? '' : String(value)
+  const result = value === null || value === undefined ? '' : String(value)
+  return result.length > SECURITY_LIMITS.maxImportedStringLength
+    ? result.slice(0, SECURITY_LIMITS.maxImportedStringLength)
+    : result
 }
 
 function finiteNumber(value: SqlValue | undefined | null) {
@@ -77,7 +81,14 @@ function detectMoneyManager(db: Database) {
 
 function parseMoneyManager(db: Database, fileName: string): ExternalImportBundle {
   const tables = sqliteTables(db)
-  if (!detectMoneyManager(db)) throw new Error('Unsupported SQLite backup format.')
+  if (!detectMoneyManager(db)) throw new Error('error.importUnsupportedSchema')
+
+  const transactionCount = scalarNumber(db, 'SELECT COUNT(*) FROM INOUTCOME', 0)
+  const accountCount = scalarNumber(db, 'SELECT COUNT(*) FROM ASSETS', 0)
+  const categoryCount = scalarNumber(db, 'SELECT COUNT(*) FROM ZCATEGORY', 0)
+  if (transactionCount > SECURITY_LIMITS.maxImportedTransactions) throw new Error('error.importTooManyTransactions')
+  if (accountCount > SECURITY_LIMITS.maxImportedAccounts) throw new Error('error.importTooManyAccounts')
+  if (categoryCount > SECURITY_LIMITS.maxImportedCategories) throw new Error('error.importTooManyCategories')
 
   const sourceSchemaVersion = scalarNumber(db, 'PRAGMA user_version', 0) || undefined
   const accountRows = queryRows(db, `
@@ -359,17 +370,22 @@ ctx.onmessage = async (event: MessageEvent<ExternalImportWorkerRequest>) => {
   if (!event.data || event.data.type !== 'parse') return
   let db: Database | undefined
   try {
+    if (event.data.buffer.byteLength > SECURITY_LIMITS.maxSqliteImportBytes) throw new Error('error.importTooLarge')
+    const header = new Uint8Array(event.data.buffer, 0, Math.min(16, event.data.buffer.byteLength))
+    const expected = new TextEncoder().encode('SQLite format 3\0')
+    if (header.length < expected.length || !expected.every((value, index) => header[index] === value)) {
+      throw new Error('error.importNotSqlite')
+    }
     const SQL = await initSqlJs({ locateFile: () => sqlWasmUrl })
     db = new SQL.Database(new Uint8Array(event.data.buffer))
     const bundle = parseMoneyManager(db, event.data.fileName)
     const response: ExternalImportWorkerResponse = { type: 'result', bundle }
     ctx.postMessage(response)
   } catch (error) {
-    console.error('External import worker failed', error)
-    const response: ExternalImportWorkerResponse = {
-      type: 'error',
-      message: error instanceof Error ? error.message : 'Could not read the backup file.',
-    }
+    const message = error instanceof Error && error.message.startsWith('error.')
+      ? error.message
+      : 'error.importReadFailed'
+    const response: ExternalImportWorkerResponse = { type: 'error', message }
     ctx.postMessage(response)
   } finally {
     db?.close()

@@ -5,6 +5,7 @@ import { accountDisplayName, useI18n, type Language } from '../i18n'
 import { categoryPath, selectableCategories } from '../lib/categories'
 import { bytesToHuman, formatMoney } from '../lib/format'
 import { findExistingDriveLayout, openDriveFolderUrl } from '../lib/drive'
+import { openTrustedExternalUrl, safeGoogleProfileImageUrl } from '../lib/security'
 import type {
   AppSettings,
   BudgetConfig,
@@ -14,6 +15,8 @@ import type {
 } from '../types'
 import { ExternalImport } from './ExternalImport'
 import { AccountManager } from './AccountManager'
+import { AiSettings } from './AiSettings'
+import { VoiceSettings } from './VoiceSettings'
 import { CategoryManager } from './CategoryManager'
 import { RuleManager } from './RuleManager'
 import { CategoryPicker } from './CategoryPicker'
@@ -32,7 +35,9 @@ function downloadText(filename: string, text: string, mime = 'application/json')
 
 function csvCell(value: unknown) {
   const text = value === undefined || value === null ? '' : String(value)
-  return `"${text.replaceAll('"', '""')}"`
+  // Prevent spreadsheet formula injection when exported CSV is opened in Excel/Sheets.
+  const safe = /^[=+@-]/.test(text.trimStart()) ? `'${text}` : text
+  return `"${safe.replaceAll('"', '""')}"`
 }
 
 export function Settings() {
@@ -166,16 +171,16 @@ export function Settings() {
 
         {googleSession ? (
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            {googleSession.user.picture && <img src={googleSession.user.picture} className="h-10 w-10 rounded-full" alt={t('settings.googleProfileAlt')} />}
+            {safeGoogleProfileImageUrl(googleSession.user.picture) && <img src={safeGoogleProfileImageUrl(googleSession.user.picture)} className="h-10 w-10 rounded-full" alt={t('settings.googleProfileAlt')} />}
             <div className="mr-auto min-w-0"><div className="truncate text-sm font-bold text-stone-800 dark:text-stone-100">{googleSession.user.name}</div><div className="truncate text-xs text-stone-500">{googleSession.user.email}</div></div>
             <Button variant="secondary" onClick={() => void syncNow()} disabled={syncBusy}><RefreshCw className={syncBusy ? 'animate-spin' : ''} size={17} />{syncBusy ? syncMessage || t('common.syncing') : t('settings.syncNow')}</Button>
-            {driveFolder && <Button variant="secondary" onClick={() => window.open(openDriveFolderUrl(driveFolder), '_blank', 'noopener,noreferrer')}><FolderOpen size={17} /> {t('settings.openDrive')}</Button>}
+            {driveFolder && <Button variant="secondary" onClick={() => openTrustedExternalUrl(openDriveFolderUrl(driveFolder))}><FolderOpen size={17} /> {t('settings.openDrive')}</Button>}
             <Button variant="ghost" onClick={disconnectGoogle}><Unplug size={17} /> {t('settings.disconnect')}</Button>
           </div>
         ) : (googleRememberedUser || googleBinding) ? (
           <div className="mt-4 rounded-xl border border-stone-200/80 bg-stone-50/70 p-3 dark:border-stone-800 dark:bg-stone-950/40">
             <div className="flex flex-wrap items-center gap-3">
-              {(googleRememberedUser?.picture || googleBinding?.picture) && <img src={googleRememberedUser?.picture ?? googleBinding?.picture} className="h-10 w-10 rounded-full" alt={t('settings.googleProfileAlt')} />}
+              {safeGoogleProfileImageUrl(googleRememberedUser?.picture ?? googleBinding?.picture) && <img src={safeGoogleProfileImageUrl(googleRememberedUser?.picture ?? googleBinding?.picture)} className="h-10 w-10 rounded-full" alt={t('settings.googleProfileAlt')} />}
               <div className="mr-auto min-w-0">
                 <div className="truncate text-sm font-bold text-stone-800 dark:text-stone-100">{googleRememberedUser?.name ?? googleBinding?.name}</div>
                 <div className="truncate text-xs text-stone-500">{googleRememberedUser?.email ?? googleBinding?.email}</div>
@@ -230,6 +235,10 @@ export function Settings() {
           <div className="mt-4 space-y-2">{templates.length === 0 ? <div className="rounded-xl bg-stone-50 p-3 text-sm text-stone-500 dark:bg-stone-950">{t('settings.noOcrTemplates')}</div> : templates.map((template) => <div key={template.id} className="flex items-center gap-3 rounded-xl border border-stone-200 p-3 dark:border-stone-800"><div className="min-w-0 flex-1"><div className="truncate font-bold text-stone-800 dark:text-stone-100">{template.name}</div><div className="text-xs text-stone-500">{t('settings.regionCount', { count: template.regions.length })}</div></div><Button variant="ghost" className="px-2 text-rose-500" onClick={() => void removeTemplate(template.id)}><Trash2 size={16} /></Button></div>)}</div>
         </Card>
       </div>
+
+      <VoiceSettings settings={settings} onSaveSettings={updateSettings} />
+
+      <AiSettings settings={settings} repository={repository} onSaveSettings={updateSettings} />
 
       <ExternalImport />
 

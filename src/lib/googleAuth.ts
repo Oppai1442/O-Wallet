@@ -1,4 +1,5 @@
 import type { GoogleSession, GoogleUser, RememberDuration } from '../types'
+import { safeGoogleProfileImageUrl } from './security'
 
 const GOOGLE_SCRIPT = 'https://accounts.google.com/gsi/client'
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
@@ -105,6 +106,7 @@ function loadGoogleIdentityScript() {
     script.src = GOOGLE_SCRIPT
     script.async = true
     script.defer = true
+    script.referrerPolicy = 'no-referrer'
     script.onload = () => resolve()
     script.onerror = () => reject(new Error('error.googleScriptLoad'))
     document.head.appendChild(script)
@@ -116,9 +118,18 @@ function loadGoogleIdentityScript() {
 async function fetchGoogleUser(accessToken: string): Promise<GoogleUser> {
   const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
     headers: { Authorization: `Bearer ${accessToken}` },
+    cache: 'no-store',
+    referrerPolicy: 'no-referrer',
   })
   if (!response.ok) throw new Error('error.googleProfile')
-  return response.json() as Promise<GoogleUser>
+  const raw = await response.json() as Partial<GoogleUser>
+  if (typeof raw.sub !== 'string' || !raw.sub || typeof raw.email !== 'string' || !raw.email) throw new Error('error.googleProfile')
+  return {
+    sub: raw.sub.slice(0, 128),
+    email: raw.email.slice(0, 320),
+    name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 160) : raw.email.slice(0, 160),
+    picture: safeGoogleProfileImageUrl(raw.picture),
+  }
 }
 
 export async function connectGoogle(prompt: GooglePrompt = 'select_account', loginHint?: string): Promise<GoogleSession> {
@@ -136,7 +147,7 @@ export async function connectGoogle(prompt: GooglePrompt = 'select_account', log
       login_hint: loginHint,
       callback: (response) => {
         if (response.error || !response.access_token) {
-          reject(new Error(response.error_description || response.error || 'error.googleAuthorization'))
+          reject(new Error('error.googleAuthorization'))
           return
         }
         resolve({ accessToken: response.access_token, expiresIn: response.expires_in ?? 3600 })

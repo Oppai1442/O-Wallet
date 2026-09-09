@@ -86,8 +86,8 @@ export function Onboarding() {
           <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{t('onboarding.createHint')}</p>
 
           <div className="mt-6 grid gap-4 sm:grid-cols-2">
-            <div><Label>{t('onboarding.password')}</Label><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t('onboarding.passwordPlaceholder')} /></div>
-            <div><Label>{t('onboarding.confirmPassword')}</Label><Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} /></div>
+            <div><Label>{t('onboarding.password')}</Label><Input type="password" maxLength={256} value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t('onboarding.passwordPlaceholder')} /></div>
+            <div><Label>{t('onboarding.confirmPassword')}</Label><Input type="password" maxLength={256} value={confirm} onChange={(e) => setConfirm(e.target.value)} /></div>
           </div>
 
           <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-500/20 dark:bg-blue-500/10">
@@ -106,12 +106,12 @@ export function Onboarding() {
             <div>
               <Label>{t('onboarding.securityQuestion1')}</Label>
               <Select value={q1} onChange={(e) => setQ1(e.target.value as SecurityQuestionId)}>{SECURITY_QUESTIONS.map((q) => <option value={q.id} key={q.id}>{questionLabel(q.id, t)}</option>)}</Select>
-              <Input className="mt-2" value={a1} onChange={(e) => setA1(e.target.value)} placeholder={t('onboarding.answer')} />
+              <Input className="mt-2" maxLength={256} value={a1} onChange={(e) => setA1(e.target.value)} placeholder={t('onboarding.answer')} />
             </div>
             <div>
               <Label>{t('onboarding.securityQuestion2')}</Label>
               <Select value={q2} onChange={(e) => setQ2(e.target.value as SecurityQuestionId)}>{SECURITY_QUESTIONS.map((q) => <option value={q.id} key={q.id}>{questionLabel(q.id, t)}</option>)}</Select>
-              <Input className="mt-2" value={a2} onChange={(e) => setA2(e.target.value)} placeholder={t('onboarding.answer')} />
+              <Input className="mt-2" maxLength={256} value={a2} onChange={(e) => setA2(e.target.value)} placeholder={t('onboarding.answer')} />
             </div>
           </div>
 

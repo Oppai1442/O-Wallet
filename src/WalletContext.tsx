@@ -51,6 +51,7 @@ import {
 } from './lib/googleAuth'
 import { downloadVaultConfig } from './lib/drive'
 import { fetchRemoteImageToLocal, syncWalletToDrive } from './lib/sync'
+import { reportDiagnostic } from './lib/security'
 
 type VaultStatus = 'loading' | 'new' | 'locked' | 'unlocked'
 export type GoogleConnectionState = 'disconnected' | 'connected' | 'reconnecting' | 'attention'
@@ -177,7 +178,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       })
     } catch (rememberError) {
       // Some privacy-focused browsers may refuse structured-cloning CryptoKey into IndexedDB.
-      console.warn('Could not persist remembered vault key.', rememberError)
+      reportDiagnostic('remembered-vault-key', rememberError)
       await clearRememberedVaultUnlock().catch(() => undefined)
     }
   }, [])
@@ -243,7 +244,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         setStatus('locked')
       }
     })().catch((initError) => {
-      console.error(initError)
+      reportDiagnostic('init', initError)
       if (!cancelled) setStatus('new')
     })
     return () => { cancelled = true }
@@ -469,7 +470,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           await refreshWithRepository(repository)
         }
       } catch (bootstrapError) {
-        console.error('Vault bootstrap failed.', bootstrapError)
+        reportDiagnostic('vault-bootstrap', bootstrapError)
         // Keep the local vault usable even if Drive is temporarily unavailable.
         await repository.ensureDefaults().catch(() => undefined)
         await refreshWithRepository(repository).catch(() => undefined)

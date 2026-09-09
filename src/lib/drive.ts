@@ -5,6 +5,7 @@ import {
   VAULT_FILE_NAME,
 } from '../constants'
 import type { DriveLayout, VaultConfig } from '../types'
+import { SECURITY_LIMITS } from './security'
 
 const DRIVE_API = 'https://www.googleapis.com/drive/v3'
 const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3'
@@ -30,13 +31,16 @@ function authHeaders(token: string, extra?: HeadersInit) {
 async function driveJson<T>(token: string, url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
+    cache: 'no-store',
+    referrerPolicy: 'no-referrer',
     headers: authHeaders(token, init?.headers),
   })
-  if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(`Google Drive API ${response.status}: ${text || response.statusText}`)
-  }
+  if (!response.ok) throw new Error(`Google Drive API ${response.status}`)
   return response.json() as Promise<T>
+}
+
+function driveQueryLiteral(value: string) {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
 }
 
 function qs(params: Record<string, string | undefined>) {
@@ -117,7 +121,7 @@ export async function listAllDriveFiles(token: string, query: string) {
   return result
 }
 
-async function createFolder(
+export async function createDriveFolder(
   token: string,
   name: string,
   parentId?: string,
@@ -136,9 +140,10 @@ async function createFolder(
 }
 
 async function findChild(token: string, parentId: string, name: string, mimeType?: string) {
-  const escapedName = name.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+  const escapedName = driveQueryLiteral(name)
+  const escapedParent = driveQueryLiteral(parentId)
   const query = [
-    `'${parentId}' in parents`,
+    `'${escapedParent}' in parents`,
     `name = '${escapedName}'`,
     'trashed = false',
     mimeType ? `mimeType = '${mimeType}'` : undefined,
@@ -154,9 +159,9 @@ async function findChildByAppProperty(
   mimeType?: string,
 ) {
   const query = [
-    `'${parentId}' in parents`,
+    `'${driveQueryLiteral(parentId)}' in parents`,
     'trashed = false',
-    `appProperties has { key='${key}' and value='${value}' }`,
+    `appProperties has { key='${driveQueryLiteral(key)}' and value='${driveQueryLiteral(value)}' }`,
     mimeType ? `mimeType = '${mimeType}'` : undefined,
   ].filter(Boolean).join(' and ')
   return (await listAllDriveFiles(token, query))[0]
@@ -193,7 +198,7 @@ export async function findExistingDriveLayout(token: string): Promise<DriveLayou
 export async function ensureDriveLayout(token: string): Promise<DriveLayout> {
   let layout = await findExistingDriveLayout(token)
   if (!layout) {
-    const root = await createFolder(token, DRIVE_ROOT_NAME, undefined, {
+    const root = await createDriveFolder(token, DRIVE_ROOT_NAME, undefined, {
       owalletRoot: '1',
       schema: '1',
     })
@@ -201,10 +206,10 @@ export async function ensureDriveLayout(token: string): Promise<DriveLayout> {
   }
 
   if (!layout.recordsId) {
-    layout.recordsId = (await createFolder(token, RECORDS_FOLDER_NAME, layout.rootId, { owalletFolder: 'records' })).id
+    layout.recordsId = (await createDriveFolder(token, RECORDS_FOLDER_NAME, layout.rootId, { owalletFolder: 'records' })).id
   }
   if (!layout.imagesId) {
-    layout.imagesId = (await createFolder(token, IMAGES_FOLDER_NAME, layout.rootId, { owalletFolder: 'images' })).id
+    layout.imagesId = (await createDriveFolder(token, IMAGES_FOLDER_NAME, layout.rootId, { owalletFolder: 'images' })).id
   }
   if (!layout.vaultFileId) {
     const vault = await findChild(token, layout.rootId, VAULT_FILE_NAME)
@@ -213,19 +218,40 @@ export async function ensureDriveLayout(token: string): Promise<DriveLayout> {
   return layout
 }
 
-export async function downloadDriveFile(token: string, fileId: string) {
+export async function downloadDriveFile(token: string, fileId: string, maxBytes?: number) {
   const response = await fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media`, {
     headers: authHeaders(token),
+    cache: 'no-store',
+    referrerPolicy: 'no-referrer',
   })
-  if (!response.ok) throw new Error('error.driveDownload')
-  return response.arrayBuffer()
+  if (!response.ok) throw new Error(`Google Drive API ${response.status}`)
+  const declared = Number(response.headers.get('content-length') ?? 0)
+  if (maxBytes && declared > maxBytes) throw new Error('error.driveFileTooLarge')
+  const buffer = await response.arrayBuffer()
+  if (maxBytes && buffer.byteLength > maxBytes) throw new Error('error.driveFileTooLarge')
+  return buffer
 }
 
 export async function downloadVaultConfig(token: string, existingLayout?: DriveLayout): Promise<VaultConfig | undefined> {
   const layout = existingLayout ?? await findExistingDriveLayout(token)
   if (!layout?.vaultFileId) return undefined
-  const bytes = await downloadDriveFile(token, layout.vaultFileId)
-  return JSON.parse(new TextDecoder().decode(bytes)) as VaultConfig
+  const bytes = await downloadDriveFile(token, layout.vaultFileId, SECURITY_LIMITS.maxVaultConfigBytes)
+  const parsed = JSON.parse(new TextDecoder().decode(bytes)) as Partial<VaultConfig>
+  if (
+    parsed.schemaVersion !== 1
+    || typeof parsed.createdAt !== 'string'
+    || parsed.kdf?.name !== 'PBKDF2-SHA256'
+    || typeof parsed.kdf?.iterations !== 'number'
+    || !Number.isInteger(parsed.kdf.iterations)
+    || parsed.kdf.iterations < 100_000
+    || typeof parsed.kdf?.salt !== 'string'
+    || typeof parsed.passwordWrappedDek?.iv !== 'string'
+    || typeof parsed.passwordWrappedDek?.ciphertext !== 'string'
+    || typeof parsed.recovery?.wrappedDek?.iv !== 'string'
+    || typeof parsed.recovery?.wrappedDek?.ciphertext !== 'string'
+    || !Array.isArray(parsed.recovery?.questions)
+  ) throw new Error('error.invalidVaultConfig')
+  return parsed as VaultConfig
 }
 
 function multipartBody(metadata: Record<string, unknown>, content: Blob) {
@@ -294,4 +320,89 @@ export async function trashDriveFile(token: string, fileId: string) {
 
 export function openDriveFolderUrl(folderId: string) {
   return `https://drive.google.com/drive/folders/${encodeURIComponent(folderId)}`
+}
+
+
+export async function getDriveFileMeta(token: string, fileId: string) {
+  return driveJson<DriveFileMeta>(token, `${DRIVE_API}/files/${encodeURIComponent(fileId)}?${qs({
+    fields: 'id,name,mimeType,modifiedTime,size,appProperties,trashed',
+  })}`)
+}
+
+export async function listDriveChildren(token: string, parentId: string) {
+  return listAllDriveFiles(token, `'${driveQueryLiteral(parentId)}' in parents and trashed = false`)
+}
+
+export interface DrivePermission {
+  id: string
+  type?: string
+  role?: string
+  emailAddress?: string
+  displayName?: string
+}
+
+export async function createDrivePermission(
+  token: string,
+  fileId: string,
+  email: string,
+  role: 'reader' | 'writer',
+  options?: { sendNotificationEmail?: boolean; emailMessage?: string; expirationTime?: string },
+) {
+  const query = qs({
+    sendNotificationEmail: String(options?.sendNotificationEmail ?? true),
+    emailMessage: options?.emailMessage,
+    fields: 'id,type,role,emailAddress,displayName',
+  })
+  return driveJson<DrivePermission>(token, `${DRIVE_API}/files/${encodeURIComponent(fileId)}/permissions?${query}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'user', role, emailAddress: email, expirationTime: options?.expirationTime }),
+  })
+}
+
+export async function deleteDrivePermission(token: string, fileId: string, permissionId: string) {
+  const response = await fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}/permissions/${encodeURIComponent(permissionId)}`, {
+    method: 'DELETE',
+    cache: 'no-store',
+    referrerPolicy: 'no-referrer',
+    headers: authHeaders(token),
+  })
+  if (!response.ok && response.status !== 404) throw new Error(`Google Drive API ${response.status}`)
+}
+
+export async function findDriveChildByAppProperty(
+  token: string,
+  parentId: string,
+  key: string,
+  value: string,
+  mimeType?: string,
+) {
+  return findChildByAppProperty(token, parentId, key, value, mimeType)
+}
+
+export async function createAnyoneReaderPermission(token: string, fileId: string) {
+  return driveJson<DrivePermission>(token, `${DRIVE_API}/files/${encodeURIComponent(fileId)}/permissions?${qs({ fields: 'id,type,role' })}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'anyone', role: 'reader', allowFileDiscovery: false }),
+  })
+}
+
+export function googleApiKeyConfigured() {
+  return Boolean((import.meta.env.VITE_GOOGLE_API_KEY ?? '').trim())
+}
+
+export async function downloadPublicDriveFile(fileId: string, maxBytes?: number) {
+  const apiKey = (import.meta.env.VITE_GOOGLE_API_KEY ?? '').trim()
+  if (!apiKey) throw new Error('error.sharedApiKeyMissing')
+  const response = await fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media&key=${encodeURIComponent(apiKey)}`, {
+    cache: 'no-store',
+    referrerPolicy: 'no-referrer',
+  })
+  if (!response.ok) throw new Error(`Google Drive public API ${response.status}`)
+  const declared = Number(response.headers.get('content-length') ?? 0)
+  if (maxBytes && declared > maxBytes) throw new Error('error.driveFileTooLarge')
+  const buffer = await response.arrayBuffer()
+  if (maxBytes && buffer.byteLength > maxBytes) throw new Error('error.driveFileTooLarge')
+  return buffer
 }

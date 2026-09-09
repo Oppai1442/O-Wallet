@@ -229,3 +229,105 @@ Local writes enqueue `record:<id>` or `image:<id>` in the same browser database.
 Images use lazy cross-device hydration. A remote image change updates `remoteImages` metadata without downloading ciphertext. `WalletRepository.getImageBlob()` asks the active Drive session to hydrate a missing encrypted image only when it is viewed, then caches those bytes in IndexedDB. Records remain eager because they are small and required for balances/search/analytics.
 
 Drive layout IDs are cached because renames do not change file IDs. A 404 invalidates the cache and triggers layout rediscovery. An invalid/expired change cursor falls back to one full reconciliation.
+
+
+## Security boundary hardening (v0.10.0)
+
+The security model deliberately avoids an O-Wallet application backend, but this does not make the browser untrusted-data-free. While unlocked, the browser possesses the DEK and can display plaintext. v0.10.0 therefore adds controls around the client execution and input boundaries:
+
+```text
+static deployment
+  -> production CSP / no-referrer / frame guard
+  -> exact-pinned dependency graph + CI checks
+  -> Google OAuth (drive.file only)
+  -> bounded Drive downloads
+  -> vault parameter validation
+  -> AES-GCM v2 + entity AAD
+  -> encrypted IndexedDB / Drive payloads
+
+untrusted files
+  -> magic-byte + size validation
+  -> image pixel limits / OCR output limits
+  -> SQLite Worker timeout + row/string limits
+  -> normalized entities
+  -> normal encrypted repository write
+```
+
+AES-GCM v2 binds each payload to its logical identity. The ciphertext envelope itself still contains only format version, IV and ciphertext; entity identity remains ordinary sync metadata but is authenticated as AAD during encryption/decryption. v1 payloads remain readable for compatibility.
+
+The security policy has two deployment tiers:
+
+1. **GitHub Pages:** meta CSP, referrer meta, runtime clickjacking guard.
+2. **Header-capable static host:** the same controls plus `public/_headers` (`frame-ancestors`, `nosniff`, COOP, Permissions-Policy).
+
+No frontend policy can protect an already-unlocked vault from a compromised browser/device or a malicious production bundle. Deployment integrity and maintainer-account security remain part of the trust boundary.
+
+
+## Optional AI image extraction (v0.11.0)
+
+AI is an opt-in client-side integration, not a new O-Wallet backend. The browser sends an image directly to the configured OpenRouter endpoint only after the user presses the AI action. The OpenRouter endpoint and model live in encrypted `AppSettings`, while the API key is encrypted locally under the vault DEK and stored as a device-only IndexedDB secret.
+
+```text
+image selected by user
+  ├─ normal OCR -> Tesseract in browser only
+  └─ AI action  -> browser -> OpenRouter -> model provider -> JSON suggestion
+                                             ↓
+                                  normalize/validate locally
+                                             ↓
+                                  local transaction rules
+                                             ↓
+                                      editable form
+```
+
+The reference CSP only permits `https://openrouter.ai` for AI network traffic. Arbitrary custom model hosts are intentionally not enabled because allowing unrestricted HTTPS destinations would weaken the CSP exfiltration boundary.
+
+
+
+## Guided speech entry (v0.13.0)
+
+Voice entry is a client-side, field-oriented workflow rather than a free-form command parser. The user chooses a recognition language and an ordered list of fields. Each step has a current/default value, so pressing Next without speaking simply keeps that value.
+
+```text
+microphone
+   ↓
+browser SpeechRecognition
+   ↓
+interim/final transcript
+   ↓
+accent correction profile
+   ↓
+field-specific parser / account-category matcher
+   ↓
+transaction draft
+```
+
+The accent profile is deliberately lightweight. Calibration stores recognized-text → expected-text corrections from a few short domain samples; it does not attempt to train or fine-tune an acoustic model in the browser. The same profile is encrypted inside `AppSettings.voiceInput` and therefore follows the user's normal Drive sync. No recorded audio is stored by O-Wallet.
+
+Amount/date/time fields use deterministic parsers. Account/category fields use the user's existing vocabulary and full category paths. When the browser exposes contextual phrase biasing, those known phrases are supplied as hints; the feature remains optional because browser support is not uniform.
+
+The reference deployment does not make a direct network request for speech recognition. Browser implementations may still process audio through their own speech service. Hosts that apply `public/_headers` now allow microphone access to the same origin with `Permissions-Policy: microphone=(self)`.
+
+## Shared wallets (v0.12.0)
+
+Shared wallets deliberately avoid a single folder with write permission granted to every participant.
+
+```text
+owner personal Drive                  member personal Drive
+└─ shared-wallets/<group>/            └─ shared-wallets/<group>/
+   ├─ control.owg (encrypted)            └─ feed.owf (encrypted)
+   └─ invite-<member>.owr                    ↑ member writes only own feed
+
+control.owg
+├─ membership metadata
+├─ per-member encrypted group-key envelopes
+└─ references to member-owned feed file IDs
+```
+
+- A `SharedTransaction` records `createdByMemberId`; creator identity is stable even when a user changes their private nickname for that member.
+- Nicknames live only in `AppSettings.sharedWalletAliases` in the current user's personal encrypted vault. They are not shared state.
+- The owner stores invitation transport secrets only in `AppSettings.sharedWalletOwnerSecrets` in the owner's personal encrypted vault.
+- Invitees are contacted by email through a Google Drive permission notification on a tiny encrypted registration file. The invitation URL contains only a random transport secret and identifiers; the initial group key ring is encrypted inside the registration file, which is shared only to the invited Google account and explicitly authorized through Google Picker under `drive.file`. The Drive permission expires with the invite.
+- Pending invitees are deliberately omitted from the public control file's key envelopes. After the owner observes a successful join, that member becomes active and begins receiving future key-ring envelopes through the control file.
+- Member feeds and the control file can be read as public-by-link ciphertext. Their contents remain AES-GCM encrypted with group keys; public readability is a transport/access mechanism, not plaintext sharing.
+- Removing an active member first freezes their latest feed into an owner-owned encrypted archive, then rotates the current group key. The removed member can no longer rewrite their historical ledger through their own Drive file. New/re-written live feed data uses the new key. Existing plaintext or old keys legitimately obtained before removal cannot be revoked retroactively.
+- Each participant stores a small encrypted merged-ledger snapshot in their own Drive for read-only recovery if live group control is unavailable.
