@@ -6,7 +6,7 @@ import { Analytics } from './Analytics'
 import { Dashboard } from './Dashboard'
 import { Settings } from './Settings'
 import { Transactions } from './Transactions'
-import { SharedWallets } from './SharedWallets'
+import { SharedWalletProfiles } from './SharedWalletProfiles'
 import { Button } from './ui'
 
 const TransactionModal = lazy(() => import('./TransactionModal').then((module) => ({ default: module.TransactionModal })))
@@ -53,7 +53,7 @@ function pageHref(page: Page) {
 
 function Main({ page }: { page: Page }) {
   if (page === 'transactions') return <Transactions />
-  if (page === 'shared') return <SharedWallets />
+  if (page === 'shared') return <SharedWalletProfiles />
   if (page === 'analytics') return <Analytics />
   if (page === 'settings') return <Settings />
   return <Dashboard />
@@ -66,6 +66,7 @@ export function Shell() {
   const [showAdd, setShowAdd] = useState(() => readAddFromUrl())
   const [voiceOnOpen, setVoiceOnOpen] = useState(() => readVoiceFromUrl())
   const contentScrollRef = useRef<HTMLDivElement>(null)
+  const sharedProfileActive = page === 'shared'
 
   useEffect(() => {
     const current = new URLSearchParams(window.location.search).get(PAGE_PARAM)
@@ -105,12 +106,14 @@ export function Shell() {
   }
 
   function openAdd() {
+    if (sharedProfileActive) return
     setVoiceOnOpen(false)
     setShowAdd(true)
     writeUrl({ page, add: true })
   }
 
   function openVoice() {
+    if (sharedProfileActive) return
     setVoiceOnOpen(true)
     setShowAdd(true)
     writeUrl({ page, voice: true })
@@ -147,8 +150,8 @@ export function Shell() {
         </nav>
 
         <div className="shrink-0 space-y-2 border-t border-stone-200/70 bg-white pt-3 dark:border-stone-800 dark:bg-stone-950">
-          <Button className="w-full px-0 xl:px-4" title={t('nav.addTransaction')} onClick={openAdd}><Plus size={17} /><span className="hidden xl:inline">{t('nav.addTransaction')}</span></Button>
-          <Button variant="secondary" className="w-full justify-center px-0 xl:justify-start xl:px-4" title={t('voice.entryButton')} onClick={openVoice}><Mic size={17} /><span className="hidden xl:inline">{t('voice.entryButton')}</span></Button>
+          <Button className="w-full px-0 xl:px-4" title={sharedProfileActive ? t('nav.shared') : t('nav.addTransaction')} onClick={openAdd} disabled={sharedProfileActive}><Plus size={17} /><span className="hidden xl:inline">{t('nav.addTransaction')}</span></Button>
+          <Button variant="secondary" className="w-full justify-center px-0 xl:justify-start xl:px-4" title={t('voice.entryButton')} onClick={openVoice} disabled={sharedProfileActive}><Mic size={17} /><span className="hidden xl:inline">{t('voice.entryButton')}</span></Button>
           <Button variant="ghost" className="w-full justify-center px-0 xl:justify-start xl:px-4" title={t('nav.lock')} onClick={lock}><LockKeyhole size={17} /><span className="hidden xl:inline">{t('nav.lock')}</span></Button>
         </div>
       </aside>
@@ -168,8 +171,8 @@ export function Shell() {
                 {googleConnectionState === 'connected' && googleSession && <Button variant="secondary" className="px-3" onClick={() => void syncNow()} disabled={syncBusy}><RefreshCw size={16} className={syncBusy ? 'animate-spin' : ''} /><span className="hidden sm:inline">{syncBusy ? syncMessage || t('common.syncing') : t('nav.sync')}</span></Button>}
                 {googleConnectionState === 'reconnecting' && googleRememberedUser && <Button variant="secondary" className="px-3" disabled><RefreshCw size={16} className="animate-spin" /><span className="hidden sm:inline">{t('common.reconnecting')}</span></Button>}
                 {googleConnectionState === 'attention' && googleRememberedUser && <Button variant="secondary" className="px-3" onClick={() => void retryGoogleConnection()}><RefreshCw size={16} /><span className="hidden sm:inline">{t('settings.reconnectGoogle')}</span></Button>}
-                <Button variant="secondary" className="hidden sm:inline-flex md:hidden" onClick={openVoice}><Mic size={16} /> {t('voice.entryButton')}</Button>
-                <Button className="hidden sm:inline-flex md:hidden" onClick={openAdd}><Plus size={16} /> {t('common.add')}</Button>
+                {!sharedProfileActive && <Button variant="secondary" className="hidden sm:inline-flex md:hidden" onClick={openVoice}><Mic size={16} /> {t('voice.entryButton')}</Button>}
+                {!sharedProfileActive && <Button className="hidden sm:inline-flex md:hidden" onClick={openAdd}><Plus size={16} /> {t('common.add')}</Button>}
               </div>
             </div>
           </header>
@@ -183,7 +186,7 @@ export function Shell() {
                 <span>·</span>
                 <span>{t('footer.moreProjects')}</span>
                 <ExternalLink size={13} />
-              </a><span className="ml-2 text-[10px] text-stone-400">v0.14.0</span>
+              </a><span className="ml-2 text-[10px] text-stone-400">v0.15.0</span>
             </div>
           </footer>
         </div>
@@ -192,12 +195,12 @@ export function Shell() {
       <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-stone-200 bg-white/95 px-2 pt-2 backdrop-blur-xl dark:border-stone-800 dark:bg-stone-950/95 md:hidden">
         <div className="mx-auto grid max-w-xl grid-cols-6 gap-1">
           {nav.slice(0, 2).map((item) => <MobileNav key={item.id} active={page === item.id} href={pageHref(item.id)} icon={<item.icon size={19} />} label={item.label} onClick={() => navigatePage(item.id)} />)}
-          <button aria-label={t('nav.addTransaction')} onClick={openAdd} className="mx-auto -mt-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-stone-950 text-white shadow-lg shadow-stone-950/20 dark:bg-white dark:text-stone-950"><Plus size={25} /></button>
+          <button aria-label={t('nav.addTransaction')} onClick={openAdd} disabled={sharedProfileActive} className={`mx-auto -mt-5 flex h-14 w-14 items-center justify-center rounded-2xl shadow-lg ${sharedProfileActive ? 'bg-stone-300 text-stone-500 dark:bg-stone-800 dark:text-stone-500' : 'bg-stone-950 text-white shadow-stone-950/20 dark:bg-white dark:text-stone-950'}`}><Plus size={25} /></button>
           {nav.slice(2).map((item) => <MobileNav key={item.id} active={page === item.id} href={pageHref(item.id)} icon={<item.icon size={19} />} label={item.label} onClick={() => navigatePage(item.id)} />)}
         </div>
       </nav>
 
-      <Suspense fallback={null}>{showAdd && <TransactionModal onClose={closeAdd} initialVoice={voiceOnOpen} />}</Suspense>
+      <Suspense fallback={null}>{showAdd && !sharedProfileActive && <TransactionModal onClose={closeAdd} initialVoice={voiceOnOpen} />}</Suspense>
     </div>
   )
 }
