@@ -33,6 +33,7 @@ import {
   getDeviceSessionPreferences,
   getGoogleAccountBinding,
   getRememberedVaultUnlock,
+  getSyncState,
   getVaultConfig,
   setDeviceSessionPreferences,
   setGoogleAccountBinding,
@@ -49,7 +50,7 @@ import {
   revokeGoogle,
 } from './lib/googleAuth'
 import { downloadVaultConfig } from './lib/drive'
-import { syncWalletToDrive } from './lib/sync'
+import { fetchRemoteImageToLocal, syncWalletToDrive } from './lib/sync'
 
 type VaultStatus = 'loading' | 'new' | 'locked' | 'unlocked'
 export type GoogleConnectionState = 'disconnected' | 'connected' | 'reconnecting' | 'attention'
@@ -146,6 +147,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const googleRetryCooldown = useRef(0)
 
   const repository = useMemo(() => (dek ? new WalletRepository(dek) : undefined), [dek])
+
+  useEffect(() => {
+    if (!repository) return
+    if (googleSession && googleSession.expiresAt > Date.now()) {
+      repository.setRemoteImageLoader((imageId) => fetchRemoteImageToLocal(googleSession.accessToken, imageId))
+    } else {
+      repository.setRemoteImageLoader(undefined)
+    }
+    return () => repository.setRemoteImageLoader(undefined)
+  }, [repository, googleSession])
 
   const rememberVault = useCallback(async (
     key: CryptoKey,
@@ -399,7 +410,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     try {
       if (session.expiresAt <= Date.now()) throw new Error('error.tokenExpired')
       const binding = await assertGoogleAccount(session)
-      const remoteVault = await downloadVaultConfig(session.accessToken)
+      const cachedSyncState = await getSyncState()
+      const remoteVault = await downloadVaultConfig(session.accessToken, cachedSyncState?.driveLayout)
       if (remoteVault && remoteVault.createdAt !== config.createdAt) {
         throw new Error('error.driveVaultMismatch')
       }

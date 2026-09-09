@@ -5,6 +5,10 @@ import type {
   EncryptedRecordRow,
   GoogleAccountBinding,
   RememberedVaultUnlock,
+  RemoteEntityRow,
+  SyncEntityType,
+  SyncQueueRow,
+  SyncState,
   VaultConfig,
 } from '../types'
 
@@ -17,6 +21,9 @@ class OWalletDatabase extends Dexie {
   kv!: EntityTable<KeyValueRow, 'key'>
   records!: EntityTable<EncryptedRecordRow, 'id'>
   images!: EntityTable<EncryptedImageRow, 'id'>
+  syncQueue!: EntityTable<SyncQueueRow, 'key'>
+  remoteRecords!: EntityTable<RemoteEntityRow, 'id'>
+  remoteImages!: EntityTable<RemoteEntityRow, 'id'>
 
   constructor() {
     super('o-wallet-v1')
@@ -24,6 +31,14 @@ class OWalletDatabase extends Dexie {
       kv: '&key',
       records: '&id,kind,updatedAt,deviceId,deleted,version',
       images: '&id,updatedAt,deviceId,deleted,version',
+    })
+    this.version(2).stores({
+      kv: '&key',
+      records: '&id,kind,updatedAt,deviceId,deleted,version',
+      images: '&id,updatedAt,deviceId,deleted,version',
+      syncQueue: '&key,entityType,entityId,queuedAt',
+      remoteRecords: '&id,fileId,updatedAt,deleted,version',
+      remoteImages: '&id,fileId,updatedAt,deleted,version',
     })
   }
 }
@@ -49,6 +64,46 @@ export async function getVaultConfig() {
 
 export async function setVaultConfig(config: VaultConfig) {
   await setKv('vault-config', config)
+}
+
+export async function getSyncState() {
+  return getKv<SyncState>('sync-v2-state')
+}
+
+export async function setSyncState(state: SyncState) {
+  await setKv('sync-v2-state', state)
+}
+
+export async function clearSyncState() {
+  await deleteKv('sync-v2-state')
+}
+
+export function syncQueueKey(entityType: SyncEntityType, entityId: string) {
+  return `${entityType}:${entityId}`
+}
+
+export async function queueSyncEntity(entityType: SyncEntityType, entityId: string) {
+  await db.syncQueue.put({
+    key: syncQueueKey(entityType, entityId),
+    entityType,
+    entityId,
+    queuedAt: new Date().toISOString(),
+  })
+}
+
+export async function queueSyncEntities(entityType: SyncEntityType, entityIds: string[]) {
+  if (entityIds.length === 0) return
+  const now = new Date().toISOString()
+  await db.syncQueue.bulkPut(entityIds.map((entityId) => ({
+    key: syncQueueKey(entityType, entityId),
+    entityType,
+    entityId,
+    queuedAt: now,
+  })))
+}
+
+export async function dequeueSyncEntity(entityType: SyncEntityType, entityId: string) {
+  await db.syncQueue.delete(syncQueueKey(entityType, entityId))
 }
 
 export async function getDeviceId() {
@@ -101,21 +156,29 @@ export async function clearGoogleAccountBinding() {
 }
 
 export async function clearLocalWalletData() {
-  await db.transaction('rw', db.records, db.images, async () => {
+  await db.transaction('rw', [db.records, db.images, db.syncQueue, db.remoteRecords, db.remoteImages, db.kv], async () => {
     await db.records.clear()
     await db.images.clear()
+    await db.syncQueue.clear()
+    await db.remoteRecords.clear()
+    await db.remoteImages.clear()
+    await db.kv.delete('sync-v2-state')
   })
 }
 
 // Removes only account/vault data from this browser. Device preferences and language remain.
 export async function clearLocalVaultForAccountSwitch() {
-  await db.transaction('rw', db.records, db.images, db.kv, async () => {
+  await db.transaction('rw', [db.records, db.images, db.syncQueue, db.remoteRecords, db.remoteImages, db.kv], async () => {
     await db.records.clear()
     await db.images.clear()
+    await db.syncQueue.clear()
+    await db.remoteRecords.clear()
+    await db.remoteImages.clear()
     await db.kv.bulkDelete([
       'vault-config',
       'remembered-vault-unlock',
       'google-account-binding',
+      'sync-v2-state',
     ])
   })
 }

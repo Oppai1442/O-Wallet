@@ -4,7 +4,7 @@ O-Wallet is a private, local-first expense tracker built as a static PWA.
 
 **No O-Wallet runtime backend is required.** The production deployment is static HTML/CSS/JS. The browser performs OCR, encryption, analytics and sync; encrypted cloud data is stored in the user's own Google Drive.
 
-Current release: **v0.8.1**
+Current release: **v0.9.0**
 
 ## Highlights
 
@@ -14,7 +14,7 @@ Current release: **v0.8.1**
 - IndexedDB via Dexie; transaction and image payloads are AES-256-GCM ciphertext.
 - Google Identity Services + Google Drive API with `drive.file`.
 - Visible `O-Wallet/` folder in each user's own Google Drive.
-- Cross-device sync with UUID + version + timestamp + device ID + tombstones.
+- Incremental cross-device sync with UUID + version + timestamp + device ID + tombstones, a persistent dirty queue, bounded parallel uploads and Google Drive change cursors.
 - Google session survives reload within the current tab; longer remember windows persist only reconnect metadata, retry silent renewal automatically, and expose a manual reconnect action when Google requires interaction.
 - Optional per-device remembered vault unlock (15 minutes to 30 days); default remains password-on-reload.
 - Local account switching clears only browser-side O-Wallet data and never deletes the Drive folder.
@@ -24,7 +24,7 @@ Current release: **v0.8.1**
 - OCR region templates can be named, encrypted in synced settings and reused across devices.
 - Multi-image OCR creates one draft transaction per screenshot, provides a review/repair queue, and saves selected drafts in one pass.
 - Semantic duplicate detection warns about likely duplicate OCR imports; exact matches are skipped by default until the user explicitly re-selects them.
-- Screenshot bytes are encrypted directly; images are **not** converted to base64 before encryption.
+- Screenshot bytes are encrypted directly; images are **not** converted to base64 before encryption. Secondary devices download image bytes lazily when an image is opened.
 - Dashboard and analytics with range filters, cash-flow charts, category pie charts and monthly budget progress.
 - Advanced transaction search/filtering, tags, edit and duplicate actions.
 - Account groups (catalogues), editable account names and removable accounts.
@@ -40,6 +40,21 @@ Current release: **v0.8.1**
 - Footer links to **O-Lab**, the project hub at `https://oppai1442.github.io/all/`.
 
 
+
+## v0.9.0 incremental Drive sync
+
+Drive synchronization was redesigned for wallets with larger histories and screenshot collections.
+
+- The first sync still performs one complete reconciliation so upgrades and new devices are safe.
+- After that, O-Wallet stores a Google Drive Changes API cursor and asks Drive only for files changed since the previous sync.
+- Local edits are written to a persistent IndexedDB sync queue, so later syncs do not scan every local record just to discover what changed.
+- Record/image uploads run through a bounded pool of five concurrent Drive requests instead of one request at a time.
+- Drive folder/file IDs are cached locally and reused; renamed O-Wallet folders continue to work because IDs are stable.
+- Screenshot bytes are lazy on secondary devices. Sync downloads image metadata only; encrypted image bytes are fetched and cached when the user actually opens that image. Transactions and settings therefore become usable without waiting for a large image library.
+- The vault config is no longer rewritten on every sync when it has not changed.
+- If a cached Drive layout is removed or a Drive change cursor becomes invalid, O-Wallet falls back to rediscovery/full reconciliation automatically.
+
+This keeps the existing per-entity UUID/version/timestamp/device conflict model while making steady-state sync proportional to the number of changes rather than the total wallet size.
 
 ## v0.8.1 shell layout and URL state
 

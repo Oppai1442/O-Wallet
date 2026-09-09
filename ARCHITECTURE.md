@@ -209,3 +209,23 @@ Top-level UI state is encoded in query parameters instead of being kept only in 
 - `&action=add` for the add-transaction dialog
 
 The shell listens to `popstate`, so browser Back/Forward navigation restores the corresponding section without a full page reload.
+
+
+## Incremental Drive synchronization (v0.9.0)
+
+Steady-state synchronization no longer performs a full remote/local scan. IndexedDB now keeps three synchronization structures in addition to encrypted wallet content:
+
+```text
+syncQueue       local entity IDs that changed
+remoteRecords   entity ID -> Drive file ID + version stamp
+remoteImages    image ID  -> Drive file ID + version stamp
+sync-v2-state   Drive layout IDs + Changes API cursor
+```
+
+The first sync captures a Drive start-page token, performs a full reconciliation, then consumes changes since that token. This closes the race window where another device could edit Drive while the initial folder listing is running. Later syncs call `changes.list` from the saved cursor and process only changed O-Wallet files.
+
+Local writes enqueue `record:<id>` or `image:<id>` in the same browser database. The queue survives reloads and failed network requests. Pushes run with bounded concurrency (currently 5); an item is removed only after the uploaded stamp still matches the current local row, so a mutation that occurs while an upload is in flight remains queued.
+
+Images use lazy cross-device hydration. A remote image change updates `remoteImages` metadata without downloading ciphertext. `WalletRepository.getImageBlob()` asks the active Drive session to hydrate a missing encrypted image only when it is viewed, then caches those bytes in IndexedDB. Records remain eager because they are small and required for balances/search/analytics.
+
+Drive layout IDs are cached because renames do not change file IDs. A 404 invalidates the cache and triggers layout rediscovery. An invalid/expired change cursor falls back to one full reconciliation.

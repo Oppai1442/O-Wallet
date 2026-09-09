@@ -125,3 +125,8 @@ Source-specific semantics that are not reliable enough to infer are surfaced for
 ## v0.8.0 metadata additions
 
 Account group names, category hierarchy metadata and OCR automation rules are encrypted inside normal O-Wallet records/settings before Drive sync. Rule text can contain recipient names or spending patterns, so it is intentionally not kept as plaintext application metadata.
+
+
+## Sync metadata in v0.9.0
+
+Incremental synchronization stores non-secret operational metadata in IndexedDB: Drive file IDs, entity IDs, version/timestamp/device stamps, a Drive Changes API cursor and pending sync IDs. Encrypted transaction/image payloads remain unchanged. Remote image bytes are downloaded only when viewed on a secondary device. OAuth access tokens are still handled by the existing Google session layer and are not added to the sync metadata tables.

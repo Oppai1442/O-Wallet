@@ -16,6 +16,7 @@ export interface DriveFileMeta {
   mimeType?: string
   modifiedTime?: string
   size?: string
+  trashed?: boolean
   appProperties?: Record<string, string>
 }
 
@@ -44,6 +45,51 @@ function qs(params: Record<string, string | undefined>) {
     if (value !== undefined) search.set(key, value)
   })
   return search.toString()
+}
+
+
+export interface DriveChange {
+  fileId: string
+  removed?: boolean
+  file?: DriveFileMeta
+}
+
+export async function getDriveStartPageToken(token: string) {
+  const result = await driveJson<{ startPageToken: string }>(
+    token,
+    `${DRIVE_API}/changes/startPageToken?${qs({ fields: 'startPageToken' })}`,
+  )
+  return result.startPageToken
+}
+
+export async function listDriveChanges(
+  token: string,
+  pageToken: string,
+): Promise<{ changes: DriveChange[]; nextPageToken?: string; newStartPageToken?: string }> {
+  return driveJson(token, `${DRIVE_API}/changes?${qs({
+    pageToken,
+    spaces: 'drive',
+    pageSize: '1000',
+    includeRemoved: 'true',
+    fields: 'nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,modifiedTime,size,appProperties,trashed))',
+  })}`)
+}
+
+export async function listAllDriveChanges(token: string, startToken: string) {
+  const changes: DriveChange[] = []
+  let pageToken = startToken
+  let newStartPageToken: string | undefined
+  do {
+    const page = await listDriveChanges(token, pageToken)
+    changes.push(...page.changes)
+    if (page.nextPageToken) {
+      pageToken = page.nextPageToken
+    } else {
+      newStartPageToken = page.newStartPageToken
+      break
+    }
+  } while (true)
+  return { changes, newStartPageToken }
 }
 
 export async function listDriveFiles(
@@ -175,8 +221,8 @@ export async function downloadDriveFile(token: string, fileId: string) {
   return response.arrayBuffer()
 }
 
-export async function downloadVaultConfig(token: string): Promise<VaultConfig | undefined> {
-  const layout = await findExistingDriveLayout(token)
+export async function downloadVaultConfig(token: string, existingLayout?: DriveLayout): Promise<VaultConfig | undefined> {
+  const layout = existingLayout ?? await findExistingDriveLayout(token)
   if (!layout?.vaultFileId) return undefined
   const bytes = await downloadDriveFile(token, layout.vaultFileId)
   return JSON.parse(new TextDecoder().decode(bytes)) as VaultConfig
@@ -226,8 +272,8 @@ export async function uploadDriveFile(
   )
 }
 
-export async function uploadVaultConfig(token: string, config: VaultConfig) {
-  const layout = await ensureDriveLayout(token)
+export async function uploadVaultConfig(token: string, config: VaultConfig, existingLayout?: DriveLayout) {
+  const layout = existingLayout ?? await ensureDriveLayout(token)
   const file = await uploadDriveFile(token, {
     id: layout.vaultFileId,
     name: VAULT_FILE_NAME,

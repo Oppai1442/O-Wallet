@@ -9,7 +9,7 @@ import type {
   WalletEntity,
 } from '../types'
 import { decryptBytes, decryptJson, encryptBytes, encryptJson } from './crypto'
-import { db, getDeviceId } from './db'
+import { db, getDeviceId, queueSyncEntities, queueSyncEntity } from './db'
 
 function recordKind(entity: WalletEntity): RecordKind {
   if ('type' in entity) return 'transaction'
@@ -19,7 +19,13 @@ function recordKind(entity: WalletEntity): RecordKind {
 }
 
 export class WalletRepository {
+  private remoteImageLoader?: (id: string) => Promise<EncryptedImageRow | undefined>
+
   constructor(private readonly key: CryptoKey) {}
+
+  setRemoteImageLoader(loader?: (id: string) => Promise<EncryptedImageRow | undefined>) {
+    this.remoteImageLoader = loader
+  }
 
   async getAll<T extends WalletEntity>(kind: RecordKind, includeDeleted = false): Promise<T[]> {
     const rows = await db.records.where('kind').equals(kind).toArray()
@@ -58,6 +64,7 @@ export class WalletRepository {
       payload,
     }
     await db.records.put(row)
+    await queueSyncEntity('record', row.id)
     return row
   }
 
@@ -83,6 +90,7 @@ export class WalletRepository {
       allRows.push(...rows)
     }
 
+    await queueSyncEntities('record', allRows.map((row) => row.id))
     return allRows
   }
 
@@ -117,11 +125,15 @@ export class WalletRepository {
       payload: await encryptBytes(this.key, clear),
     }
     await db.images.put(row)
+    await queueSyncEntity('image', row.id)
     return row
   }
 
   async getImageBlob(id: string) {
-    const row = await db.images.get(id)
+    let row = await db.images.get(id)
+    if (!row && this.remoteImageLoader) {
+      row = await this.remoteImageLoader(id)
+    }
     if (!row || row.deleted) return undefined
     const clear = await decryptBytes(this.key, row.payload)
     if (clear.byteLength < 4) throw new Error('error.corruptImage')
@@ -145,6 +157,7 @@ export class WalletRepository {
       deleted: true,
       payload: await encryptBytes(this.key, new Uint8Array()),
     })
+    await queueSyncEntity('image', id)
   }
 
   async ensureDefaults() {

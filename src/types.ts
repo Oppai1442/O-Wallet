@@ -180,6 +180,34 @@ export interface EncryptedImageRow {
   payload: EncryptedPayload
 }
 
+
+export type SyncEntityType = 'record' | 'image'
+
+export interface SyncQueueRow {
+  key: string
+  entityType: SyncEntityType
+  entityId: string
+  queuedAt: string
+}
+
+export interface RemoteEntityRow {
+  id: string
+  fileId: string
+  version: number
+  updatedAt: string
+  deviceId: string
+  deleted: boolean
+  size?: number
+}
+
+export interface SyncState {
+  schemaVersion: 1
+  changeToken?: string
+  driveLayout?: DriveLayout
+  vaultFingerprint?: string
+  initializedAt?: string
+}
+
 export interface SecurityQuestionConfig {
   questionId: string
   answerSalt: string

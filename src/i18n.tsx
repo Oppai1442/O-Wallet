@@ -288,7 +288,7 @@ const vi: Record<string, string> = {
   'import.otherCategory': 'Khác (đã nhập)',
 
   'sync.prepare': 'Đang chuẩn bị thư mục O-Wallet…',
-  'sync.index': 'Đang kiểm tra dữ liệu trên Google Drive…',
+  'sync.index': 'Đang kiểm tra thay đổi trên Google Drive…',
   'sync.records': 'Đang cập nhật dữ liệu…',
   'sync.images': 'Đang cập nhật ảnh…',
   'sync.done': 'Đồng bộ hoàn tất.',
@@ -770,7 +770,7 @@ const en: Record<string, string> = {
   'import.otherCategory': 'Other (imported)',
 
   'sync.prepare': 'Preparing the O-Wallet folder…',
-  'sync.index': 'Checking Google Drive data…',
+  'sync.index': 'Checking Google Drive changes…',
   'sync.records': 'Updating data…',
   'sync.images': 'Updating images…',
   'sync.done': 'Sync complete.',
