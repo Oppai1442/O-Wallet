@@ -98,6 +98,7 @@ export interface SharedWalletLifecycle {
   requestedAt?: string
   purgeAfter?: string
   deletedAt?: string
+  finalSnapshotFileId?: string
 }
 
 export interface SharedWalletMember {
@@ -218,11 +219,7 @@ export interface SharedWalletArchive {
   members: SharedWalletMember[]
   memberNames: Record<string, string>
   finalBalances: Record<string, number>
-  totals: {
-    income: number
-    expense: number
-    net: number
-  }
+  totals: { income: number; expense: number; net: number }
 }
 
 export interface EncryptedSharedRecordRow {
