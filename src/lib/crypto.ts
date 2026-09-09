@@ -9,6 +9,31 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 }
 
+function aesGcmParams(iv: Uint8Array, additionalData?: Uint8Array): AesGcmParams {
+  const params: AesGcmParams = {
+    name: 'AES-GCM',
+    iv: toArrayBuffer(iv),
+  }
+  // Chromium/WebIDL can reject an optional BufferSource member when the property
+  // exists with the value `undefined`. Omit the member entirely when no AAD is used.
+  if (additionalData !== undefined) params.additionalData = toArrayBuffer(additionalData)
+  return params
+}
+
+function isAesAuthenticationFailure(error: unknown) {
+  return typeof error === 'object'
+    && error !== null
+    && 'name' in error
+    && (error as { name?: unknown }).name === 'OperationError'
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array) {
+  if (left.length !== right.length) return false
+  let diff = 0
+  for (let i = 0; i < left.length; i += 1) diff |= left[i] ^ right[i]
+  return diff === 0
+}
+
 export function randomBytes(length: number) {
   return crypto.getRandomValues(new Uint8Array(length))
 }
@@ -74,11 +99,7 @@ async function recoveryKeyToAesKey(recoveryKey: string) {
 async function encryptRaw(key: CryptoKey, data: Uint8Array, additionalData?: Uint8Array) {
   const iv = randomBytes(12)
   const ciphertext = await crypto.subtle.encrypt(
-    {
-      name: 'AES-GCM',
-      iv: toArrayBuffer(iv),
-      additionalData: additionalData ? toArrayBuffer(additionalData) : undefined,
-    },
+    aesGcmParams(iv, additionalData),
     key,
     toArrayBuffer(data),
   )
@@ -87,11 +108,7 @@ async function encryptRaw(key: CryptoKey, data: Uint8Array, additionalData?: Uin
 
 async function decryptRaw(key: CryptoKey, iv: Uint8Array, ciphertext: ArrayBuffer, additionalData?: Uint8Array) {
   const clear = await crypto.subtle.decrypt(
-    {
-      name: 'AES-GCM',
-      iv: toArrayBuffer(iv),
-      additionalData: additionalData ? toArrayBuffer(additionalData) : undefined,
-    },
+    aesGcmParams(iv, additionalData),
     key,
     ciphertext,
   )
@@ -102,7 +119,6 @@ export function generateRecoveryKey() {
   const raw = Array.from(randomBytes(24), (byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase()
   return raw.match(/.{1,6}/g)?.join('-') ?? raw
 }
-
 
 async function hashSecurityAnswer(answer: string, salt: Uint8Array, iterations?: number) {
   const normalized = encoder.encode(normalizeAnswer(answer))
@@ -120,7 +136,6 @@ async function hashSecurityAnswer(answer: string, salt: Uint8Array, iterations?:
   }, material, 256)
   return bytesToBase64Url(new Uint8Array(bits))
 }
-
 
 function assertVaultConfigParameters(config: VaultConfig) {
   try {
@@ -164,6 +179,17 @@ export async function createVault(
 
   const recoveryAes = await recoveryKeyToAesKey(recoveryKey)
   const recoveryWrapped = await encryptRaw(recoveryAes, dekRaw)
+
+  // Verify both independent key envelopes before persisting a vault configuration.
+  // This is cheap (AES only; the expensive KDFs above are reused) and prevents a
+  // partially unusable vault from ever being committed locally or to Drive.
+  const [passwordRoundTrip, recoveryRoundTrip] = await Promise.all([
+    decryptRaw(passwordKey, passwordWrapped.iv, passwordWrapped.ciphertext),
+    decryptRaw(recoveryAes, recoveryWrapped.iv, recoveryWrapped.ciphertext),
+  ])
+  if (!bytesEqual(passwordRoundTrip, dekRaw) || !bytesEqual(recoveryRoundTrip, dekRaw)) {
+    throw new Error('error.createVault')
+  }
 
   const questionConfigs: SecurityQuestionConfig[] = []
   for (const question of questions) {
@@ -215,8 +241,9 @@ export async function unlockVaultWithPassword(config: VaultConfig, password: str
       toArrayBuffer(base64UrlToBytes(config.passwordWrappedDek.ciphertext)),
     )
     return importAesKey(raw, ['encrypt', 'decrypt'])
-  } catch {
-    throw new Error('error.wrongPassword')
+  } catch (error) {
+    if (isAesAuthenticationFailure(error)) throw new Error('error.wrongPassword')
+    throw error
   }
 }
 
@@ -244,8 +271,9 @@ export async function unlockVaultWithRecovery(
       toArrayBuffer(base64UrlToBytes(config.recovery.wrappedDek.ciphertext)),
     )
     return importAesKey(raw, ['encrypt', 'decrypt'])
-  } catch {
-    throw new Error('error.wrongRecoveryKey')
+  } catch (error) {
+    if (isAesAuthenticationFailure(error)) throw new Error('error.wrongRecoveryKey')
+    throw error
   }
 }
 
