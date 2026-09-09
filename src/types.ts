@@ -123,8 +123,16 @@ export interface SharedWalletLedger {
   budgets: BudgetConfig[]
   accountCatalogues: AccountCatalogue[]
   transactionRules: TransactionRule[]
-  /** Shared voice preferences. If omitted, the device's personal voice profile is used. */
+  /** Per-shared-profile OCR teaching/templates. Image bytes are not stored here. */
+  ocrTemplates?: OcrTemplate[]
+  /** Endpoint/model may be profile-specific. The API key remains device-local. */
+  aiVision?: AiVisionSettings
+  /** Same guided speech-entry configuration used by the personal profile. */
   voiceInput?: VoiceInputSettings
+  transactionDefaults?: {
+    accountId?: string
+    categoryId?: string
+  }
 }
 
 export interface SharedWalletControl {
@@ -175,9 +183,11 @@ export interface SharedTransaction {
   /** Legacy free-text category from pre-v0.14 shared wallets. */
   category?: string
   merchant?: string
+  balanceAfter?: number
   description?: string
   note?: string
   tags?: string[]
+  batch?: TransactionBatchInfo
   createdByMemberId: string
   /** Provenance retained when an archived wallet is reopened as a new wallet. */
   sourceCreatedByMemberId?: string
