@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
-import { BarChart3, ExternalLink, Home, LockKeyhole, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon, Users, Wallet } from 'lucide-react'
+import { BarChart3, ExternalLink, Home, LockKeyhole, Mic, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon, Users, Wallet } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { useI18n } from '../i18n'
 import { Analytics } from './Analytics'
@@ -16,6 +16,7 @@ type Page = 'home' | 'transactions' | 'shared' | 'analytics' | 'settings'
 const PAGE_PARAM = 'page'
 const ACTION_PARAM = 'action'
 const ADD_ACTION = 'add'
+const VOICE_ACTION = 'voice'
 const validPages: Page[] = ['home', 'transactions', 'shared', 'analytics', 'settings']
 
 function readPageFromUrl(): Page {
@@ -24,13 +25,19 @@ function readPageFromUrl(): Page {
 }
 
 function readAddFromUrl() {
-  return new URLSearchParams(window.location.search).get(ACTION_PARAM) === ADD_ACTION
+  const action = new URLSearchParams(window.location.search).get(ACTION_PARAM)
+  return action === ADD_ACTION || action === VOICE_ACTION
 }
 
-function writeUrl({ page, add, mode = 'push' }: { page: Page; add?: boolean; mode?: 'push' | 'replace' }) {
+function readVoiceFromUrl() {
+  return new URLSearchParams(window.location.search).get(ACTION_PARAM) === VOICE_ACTION
+}
+
+function writeUrl({ page, add, voice, mode = 'push' }: { page: Page; add?: boolean; voice?: boolean; mode?: 'push' | 'replace' }) {
   const url = new URL(window.location.href)
   url.searchParams.set(PAGE_PARAM, page)
-  if (add) url.searchParams.set(ACTION_PARAM, ADD_ACTION)
+  if (voice) url.searchParams.set(ACTION_PARAM, VOICE_ACTION)
+  else if (add) url.searchParams.set(ACTION_PARAM, ADD_ACTION)
   else url.searchParams.delete(ACTION_PARAM)
   const nextUrl = `${url.pathname}${url.search}${url.hash}`
   if (mode === 'replace') window.history.replaceState({}, '', nextUrl)
@@ -57,6 +64,7 @@ export function Shell() {
   const { t } = useI18n()
   const [page, setPage] = useState<Page>(() => readPageFromUrl())
   const [showAdd, setShowAdd] = useState(() => readAddFromUrl())
+  const [voiceOnOpen, setVoiceOnOpen] = useState(() => readVoiceFromUrl())
   const contentScrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -66,6 +74,7 @@ export function Shell() {
     const onPopState = () => {
       setPage(readPageFromUrl())
       setShowAdd(readAddFromUrl())
+      setVoiceOnOpen(readVoiceFromUrl())
       contentScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' })
     }
     window.addEventListener('popstate', onPopState)
@@ -90,17 +99,26 @@ export function Shell() {
     if (nextPage === page && !showAdd) return
     setPage(nextPage)
     setShowAdd(false)
+    setVoiceOnOpen(false)
     writeUrl({ page: nextPage })
     contentScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' })
   }
 
   function openAdd() {
+    setVoiceOnOpen(false)
     setShowAdd(true)
     writeUrl({ page, add: true })
   }
 
+  function openVoice() {
+    setVoiceOnOpen(true)
+    setShowAdd(true)
+    writeUrl({ page, voice: true })
+  }
+
   function closeAdd() {
     setShowAdd(false)
+    setVoiceOnOpen(false)
     writeUrl({ page, add: false, mode: 'replace' })
   }
 
@@ -130,6 +148,7 @@ export function Shell() {
 
         <div className="shrink-0 space-y-2 border-t border-stone-200/70 bg-white pt-3 dark:border-stone-800 dark:bg-stone-950">
           <Button className="w-full px-0 xl:px-4" title={t('nav.addTransaction')} onClick={openAdd}><Plus size={17} /><span className="hidden xl:inline">{t('nav.addTransaction')}</span></Button>
+          <Button variant="secondary" className="w-full justify-center px-0 xl:justify-start xl:px-4" title={t('voice.entryButton')} onClick={openVoice}><Mic size={17} /><span className="hidden xl:inline">{t('voice.entryButton')}</span></Button>
           <Button variant="ghost" className="w-full justify-center px-0 xl:justify-start xl:px-4" title={t('nav.lock')} onClick={lock}><LockKeyhole size={17} /><span className="hidden xl:inline">{t('nav.lock')}</span></Button>
         </div>
       </aside>
@@ -149,6 +168,7 @@ export function Shell() {
                 {googleConnectionState === 'connected' && googleSession && <Button variant="secondary" className="px-3" onClick={() => void syncNow()} disabled={syncBusy}><RefreshCw size={16} className={syncBusy ? 'animate-spin' : ''} /><span className="hidden sm:inline">{syncBusy ? syncMessage || t('common.syncing') : t('nav.sync')}</span></Button>}
                 {googleConnectionState === 'reconnecting' && googleRememberedUser && <Button variant="secondary" className="px-3" disabled><RefreshCw size={16} className="animate-spin" /><span className="hidden sm:inline">{t('common.reconnecting')}</span></Button>}
                 {googleConnectionState === 'attention' && googleRememberedUser && <Button variant="secondary" className="px-3" onClick={() => void retryGoogleConnection()}><RefreshCw size={16} /><span className="hidden sm:inline">{t('settings.reconnectGoogle')}</span></Button>}
+                <Button variant="secondary" className="hidden sm:inline-flex md:hidden" onClick={openVoice}><Mic size={16} /> {t('voice.entryButton')}</Button>
                 <Button className="hidden sm:inline-flex md:hidden" onClick={openAdd}><Plus size={16} /> {t('common.add')}</Button>
               </div>
             </div>
@@ -163,7 +183,7 @@ export function Shell() {
                 <span>·</span>
                 <span>{t('footer.moreProjects')}</span>
                 <ExternalLink size={13} />
-              </a>
+              </a><span className="ml-2 text-[10px] text-stone-400">v0.13.1</span>
             </div>
           </footer>
         </div>
@@ -177,7 +197,7 @@ export function Shell() {
         </div>
       </nav>
 
-      <Suspense fallback={null}>{showAdd && <TransactionModal onClose={closeAdd} />}</Suspense>
+      <Suspense fallback={null}>{showAdd && <TransactionModal onClose={closeAdd} initialVoice={voiceOnOpen} />}</Suspense>
     </div>
   )
 }

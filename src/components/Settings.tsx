@@ -141,7 +141,7 @@ export function Settings() {
     const accountMap = new Map(accounts.map((item) => [item.id, accountDisplayName(item, t)]))
     const rows = transactions.map((tx) => [
       tx.id, tx.type, tx.amount, tx.currency, tx.occurredAt,
-      categoryMap.get(tx.categoryId) ?? tx.categoryId,
+      categoryMap.get(tx.categoryId) ?? t('categories.uncategorized'),
       accountMap.get(tx.accountId) ?? tx.accountId,
       tx.merchant ?? '', tx.balanceAfter ?? '', tx.description ?? '', tx.note ?? '', (tx.tags ?? []).join('|'), tx.imageIds.length,
     ].map(csvCell).join(','))
@@ -236,7 +236,7 @@ export function Settings() {
         </Card>
       </div>
 
-      <VoiceSettings settings={settings} onSaveSettings={updateSettings} />
+      <div id="voice-settings" className="scroll-mt-24"><VoiceSettings settings={settings} onSaveSettings={updateSettings} /></div>
 
       <AiSettings settings={settings} repository={repository} onSaveSettings={updateSettings} />
 

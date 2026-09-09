@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { Copy, Image as ImageIcon, Pencil, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react'
+import { Copy, Image as ImageIcon, Mic, Pencil, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { accountDisplayName, useI18n } from '../i18n'
 import { categoryPath, selectableCategories } from '../lib/categories'
@@ -30,6 +30,7 @@ export function Transactions() {
   const [sort, setSort] = useState<SortKey>('newest')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
+  const [showVoiceAdd, setShowVoiceAdd] = useState(false)
   const [editTx, setEditTx] = useState<Transaction>()
   const [duplicateTx, setDuplicateTx] = useState<Transaction>()
   const [viewImage, setViewImage] = useState<string>()
@@ -46,7 +47,8 @@ export function Transactions() {
     const result = transactions.filter((tx) => {
       if (type !== 'all' && tx.type !== type) return false
       if (accountId !== 'all' && tx.accountId !== accountId && tx.destinationAccountId !== accountId) return false
-      if (categoryId !== 'all' && tx.categoryId !== categoryId) return false
+      if (categoryId === '__uncategorized__' && tx.categoryId) return false
+      if (categoryId !== 'all' && categoryId !== '__uncategorized__' && tx.categoryId !== categoryId) return false
       if (min !== undefined && tx.amount < min) return false
       if (max !== undefined && tx.amount > max) return false
       const time = new Date(tx.occurredAt).getTime()
@@ -82,7 +84,7 @@ export function Transactions() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div><h1 className="text-2xl font-semibold tracking-tight text-stone-950 dark:text-white">{t('transactions.title')}</h1><p className="mt-1 text-sm text-stone-500">{t('transactions.subtitle', { count: transactions.length })}</p></div>
-        <Button onClick={() => setShowAdd(true)}><Plus size={17} /> {t('common.add')}</Button>
+        <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => setShowVoiceAdd(true)}><Mic size={17} /> {t('voice.entryButton')}</Button><Button onClick={() => setShowAdd(true)}><Plus size={17} /> {t('common.add')}</Button></div>
       </div>
 
       <Card className="p-3 sm:p-4">
@@ -95,7 +97,7 @@ export function Transactions() {
         {showAdvanced && (
           <div className="mt-4 grid gap-3 border-t border-stone-200 pt-4 dark:border-stone-800 sm:grid-cols-2 lg:grid-cols-4">
             <div><Label>{t('transactions.account')}</Label><Select value={accountId} onChange={(e) => setAccountId(e.target.value)}><option value="all">{t('common.all')}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{accountDisplayName(account, t)}</option>)}</Select></div>
-            <div><Label>{t('transactions.category')}</Label><Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}><option value="all">{t('common.all')}</option>{selectableCategories(categories).map((category) => <option key={category.id} value={category.id}>{categoryPath(category, categories)}</option>)}</Select></div>
+            <div><Label>{t('transactions.category')}</Label><Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}><option value="all">{t('common.all')}</option><option value="__uncategorized__">{t('categories.uncategorized')}</option>{selectableCategories(categories).map((category) => <option key={category.id} value={category.id}>{categoryPath(category, categories)}</option>)}</Select></div>
             <div><Label>{t('transactions.fromDate')}</Label><Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></div>
             <div><Label>{t('transactions.toDate')}</Label><Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} /></div>
             <div><Label>{t('transactions.minAmount')}</Label><Input type="number" min="0" value={minAmount} onChange={(e) => setMinAmount(e.target.value)} /></div>
@@ -120,7 +122,7 @@ export function Transactions() {
                     <Badge tone={tx.type === 'income' ? 'green' : tx.type === 'expense' ? 'red' : 'slate'}>{t(`transaction.${tx.type}`)}</Badge>
                     {isFutureTransaction(tx, now) && <Badge tone="indigo">{t('transactions.scheduled')}</Badge>}
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-500"><span>{formatDateTime(tx.occurredAt, locale)}</span><span>{categoryMap.get(tx.categoryId) ?? t('common.other')}</span><span>{accountMap.get(tx.accountId) ?? t('transactions.unknownAccount')}</span></div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-500"><span>{formatDateTime(tx.occurredAt, locale)}</span><span>{categoryMap.get(tx.categoryId) ?? t('categories.uncategorized')}</span><span>{accountMap.get(tx.accountId) ?? t('transactions.unknownAccount')}</span></div>
                   {(tx.tags?.length ?? 0) > 0 && <div className="mt-2 flex flex-wrap gap-1">{tx.tags?.map((tag) => <span key={tag} className="rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">#{tag}</span>)}</div>}
                   {tx.note && <div className="mt-1 truncate text-xs text-stone-400">{tx.note}</div>}
                 </div>
@@ -140,6 +142,7 @@ export function Transactions() {
 
       <Suspense fallback={null}>
         {showAdd && <TransactionModal onClose={() => setShowAdd(false)} />}
+        {showVoiceAdd && <TransactionModal initialVoice onClose={() => setShowVoiceAdd(false)} />}
         {editTx && <TransactionModal transaction={editTx} onClose={() => setEditTx(undefined)} />}
         {duplicateTx && <TransactionModal duplicateFrom={duplicateTx} onClose={() => setDuplicateTx(undefined)} />}
       </Suspense>

@@ -4,7 +4,7 @@ O-Wallet is a private, local-first expense tracker built as a static PWA.
 
 **No O-Wallet runtime backend is required.** The production deployment is static HTML/CSS/JS. The browser performs OCR, encryption, analytics and sync; encrypted cloud data is stored in the user's own Google Drive.
 
-Current release: **v0.13.0**
+Current release: **v0.13.1**
 
 ## Highlights
 
@@ -15,7 +15,7 @@ Current release: **v0.13.0**
 - Google Identity Services + Google Drive API with `drive.file`.
 - Visible `O-Wallet/` folder in each user's own Google Drive.
 - Incremental cross-device sync with UUID + version + timestamp + device ID + tombstones, a persistent dirty queue, bounded parallel uploads and Google Drive change cursors.
-- Google session survives reload within the current tab; longer remember windows persist only reconnect metadata, retry silent renewal automatically, and expose a manual reconnect action when Google requires interaction.
+- Google session survives reload within the current tab. Longer remember windows persist only reconnect metadata; after a new browser session Drive reconnect is explicit, avoiding background OAuth popup flashes.
 - Optional per-device remembered vault unlock (15 minutes to 30 days); default remains password-on-reload.
 - Local account switching clears only browser-side O-Wallet data and never deletes the Drive folder.
 - Tesseract.js OCR runs in the browser with Vietnamese + English recognition assets and can parse user-selected spatial regions.
@@ -40,6 +40,15 @@ Current release: **v0.13.0**
 - Footer links to **O-Lab**, the project hub at `https://oppai1442.github.io/all/`.
 
 
+
+
+## v0.13.1 UX / state fixes
+
+- Transactions may be saved without a category; they appear as **Uncategorized / Chưa phân loại** until the user assigns one.
+- Newly created accounts/categories/settings are reflected in the open UI immediately instead of waiting for a reload.
+- Voice entry is exposed as a first-class shortcut in the shell, while shared wallets remain a dedicated navigation page.
+- A valid Google token survives F5 in the same tab. After a new browser session, O-Wallet no longer attempts a background OAuth popup; reconnect is explicit when Drive access is needed.
+- The PWA service worker now takes over new releases immediately (`skipWaiting` + `clientsClaim`) to reduce stale-build confusion after deploy.
 
 ## v0.13.0 guided voice entry
 

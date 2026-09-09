@@ -14,7 +14,7 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
   const { t, locale } = useI18n()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [name, setName] = useState('')
-  const [nodeType, setNodeType] = useState<'group' | 'item'>('group')
+  const [nodeType, setNodeType] = useState<'group' | 'item'>('item')
   const [kind, setKind] = useState<Category['kind']>('expense')
   const [parentId, setParentId] = useState('')
   const [editingId, setEditingId] = useState<string>()

@@ -137,7 +137,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [googleReconnectUntil, setGoogleReconnectUntil] = useState<number>()
   const [googleReconnectMode, setGoogleReconnectMode] = useState<RememberDuration>()
   const [googleConnectionState, setGoogleConnectionState] = useState<GoogleConnectionState>('disconnected')
-  const [googleReconnectNonce, setGoogleReconnectNonce] = useState(0)
   const [devicePreferences, setDevicePreferencesState] = useState<DeviceSessionPreferences>(DEFAULT_DEVICE_PREFERENCES)
   const [syncBusy, setSyncBusy] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
@@ -145,7 +144,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string>()
   const autoSyncTimer = useRef<number | undefined>(undefined)
   const bootstrapKey = useRef<string | undefined>(undefined)
-  const googleRetryCooldown = useRef(0)
 
   const repository = useMemo(() => (dek ? new WalletRepository(dek) : undefined), [dek])
 
@@ -211,7 +209,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         && storedGoogle.reconnectUntil
         && storedGoogle.reconnectUntil > Date.now()
       ) {
-        setGoogleConnectionState('reconnecting')
+        setGoogleConnectionState('attention')
       } else {
         setGoogleConnectionState('disconnected')
       }
@@ -282,92 +280,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setGoogleReconnectUntil(stored.reconnectUntil)
     setGoogleReconnectMode(stored.mode ?? mode)
     setGoogleConnectionState('connected')
-    googleRetryCooldown.current = 0
     if (resumeSync) bootstrapKey.current = undefined
   }, [])
 
-  // Retry a remembered Google grant without blocking vault startup. The access token
-  // itself is short-lived; the long remember window means "keep trying to renew".
-  useEffect(() => {
-    if (
-      googleSession
-      || !googleClientConfigured()
-      || !googleRememberedUser
-      || !googleReconnectUntil
-      || googleReconnectUntil <= Date.now()
-    ) return
+  // A remembered account is kept locally, but O-Wallet does not silently open
+  // a Google OAuth popup during startup. If no valid tab token exists, the shell shows
+  // an explicit reconnect action instead.
 
-    let cancelled = false
-    const delays = [0, 1_200, 4_000]
-
-    void (async () => {
-      setGoogleConnectionState('reconnecting')
-      for (const delay of delays) {
-        if (delay) await new Promise<void>((resolve) => window.setTimeout(() => resolve(), delay))
-        if (cancelled) return
-        try {
-          const renewed = await connectGoogleAuth('none', googleRememberedUser.email)
-          if (renewed.user.sub !== googleRememberedUser.sub) throw new Error('error.googleAccountMismatch')
-          if (cancelled) return
-          acceptGoogleSession(renewed, googleReconnectMode ?? devicePreferences.googleRemember)
-          return
-        } catch {
-          // Retry below. GIS silent renewal can fail temporarily because of cookies,
-          // browser privacy policy, connectivity, or Google requiring user interaction.
-        }
-      }
-      if (!cancelled) setGoogleConnectionState('attention')
-    })()
-
-    return () => { cancelled = true }
-  }, [
-    acceptGoogleSession,
-    devicePreferences.googleRemember,
-    googleReconnectMode,
-    googleReconnectNonce,
-    googleReconnectUntil,
-    googleRememberedUser,
-    googleSession,
-  ])
-
-  // A focus/online event is a useful time to retry after the initial burst, but keep
-  // a cooldown so returning focus repeatedly does not hammer Google.
-  useEffect(() => {
-    if (googleSession || !googleRememberedUser || !googleReconnectUntil) return
-    const retry = () => {
-      if (googleReconnectUntil <= Date.now()) return
-      const now = Date.now()
-      if (now - googleRetryCooldown.current < 15_000) return
-      googleRetryCooldown.current = now
-      setGoogleReconnectNonce((value) => value + 1)
-    }
-    window.addEventListener('focus', retry)
-    window.addEventListener('online', retry)
-    return () => {
-      window.removeEventListener('focus', retry)
-      window.removeEventListener('online', retry)
-    }
-  }, [googleReconnectUntil, googleRememberedUser, googleSession])
-
-  // Renew shortly before expiry while the app remains open. Failure is harmless while
-  // the current token is still valid; the expiry timer below will move into retry mode.
+  // Keep a valid token until it expires. Background OAuth renewal is intentionally
+  // disabled because some browsers visibly flash Google's popup even for prompt=none.
+  // F5 in the same tab keeps the sessionStorage token; a new browser session reconnects
+  // only after an explicit user action.
   useEffect(() => {
     if (!googleSession) return
     const token = googleSession
-    let renewTimer: number | undefined
-
-    if (googleReconnectUntil && googleReconnectUntil > Date.now()) {
-      const renewIn = Math.max(0, token.expiresAt - Date.now() - 90_000)
-      renewTimer = window.setTimeout(() => {
-        void connectGoogleAuth('none', token.user.email)
-          .then((renewed) => {
-            if (renewed.user.sub !== token.user.sub) return
-            acceptGoogleSession(renewed, googleReconnectMode ?? devicePreferences.googleRemember, false)
-          })
-          .catch(() => undefined)
-      }, renewIn)
-    }
-
     const expireIn = Math.max(0, token.expiresAt - Date.now() + 250)
     const expiryTimer = window.setTimeout(() => {
       setGoogleSession((current) => {
@@ -375,24 +301,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return undefined
       })
       if (googleReconnectUntil && googleReconnectUntil > Date.now()) {
-        setGoogleConnectionState('reconnecting')
-        setGoogleReconnectNonce((value) => value + 1)
+        setGoogleConnectionState('attention')
       } else {
         setGoogleConnectionState('disconnected')
       }
     }, expireIn)
-
-    return () => {
-      if (renewTimer !== undefined) window.clearTimeout(renewTimer)
-      window.clearTimeout(expiryTimer)
-    }
-  }, [
-    acceptGoogleSession,
-    devicePreferences.googleRemember,
-    googleReconnectMode,
-    googleReconnectUntil,
-    googleSession,
-  ])
+    return () => window.clearTimeout(expiryTimer)
+  }, [googleReconnectUntil, googleSession])
 
   const assertGoogleAccount = useCallback(async (session: GoogleSession) => {
     const binding = googleBinding ?? await getGoogleAccountBinding()
@@ -440,7 +355,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         if (googleReconnectUntil && googleReconnectUntil > Date.now()) {
           setGoogleConnectionState('reconnecting')
           bootstrapKey.current = undefined
-          setGoogleReconnectNonce((value) => value + 1)
         } else {
           setGoogleConnectionState('attention')
         }
@@ -726,6 +640,41 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     vaultConfig,
   ])
 
+  const applyEntityToMemory = useCallback((entity: WalletEntity) => {
+    if ('type' in entity) {
+      setTransactions((current) => {
+        const next = current.filter((item) => item.id !== entity.id)
+        if (!entity.deleted) next.push(entity as Transaction)
+        next.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
+        return next
+      })
+      return
+    }
+    if ('openingBalance' in entity) {
+      setAccounts((current) => {
+        const next = current.filter((item) => item.id !== entity.id)
+        const account = entity as Account
+        if (!account.deleted && !account.archived) next.push(account)
+        return next
+      })
+      return
+    }
+    if ('icon' in entity) {
+      setCategories((current) => {
+        const next = current.filter((item) => item.id !== entity.id)
+        const category = entity as Category
+        if (!category.deleted && !category.archived) next.push(category)
+        return next
+      })
+      return
+    }
+    const appSettings = entity as AppSettings
+    if (!appSettings.deleted) {
+      setSettings(appSettings)
+      if (appSettings.language) setLanguage(appSettings.language)
+    }
+  }, [setLanguage])
+
   const notifyMutation = useCallback(async () => {
     await refresh()
     if (!settings?.autoSync || !googleSession) return
@@ -738,14 +687,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const saveEntity = useCallback(async <T extends WalletEntity>(entity: T) => {
     if (!repository) throw new Error(t('error.vaultLocked'))
     await repository.put(entity)
+    applyEntityToMemory(entity)
     await notifyMutation()
-  }, [repository, notifyMutation, t])
+  }, [repository, applyEntityToMemory, notifyMutation, t])
 
   const saveEntities = useCallback(async <T extends WalletEntity>(entities: T[]) => {
     if (!repository) throw new Error(t('error.vaultLocked'))
     await repository.putMany(entities)
+    for (const entity of entities) applyEntityToMemory(entity)
     await notifyMutation()
-  }, [repository, notifyMutation, t])
+  }, [repository, applyEntityToMemory, notifyMutation, t])
 
   const deleteTransaction = useCallback(async (id: string) => {
     if (!repository) return

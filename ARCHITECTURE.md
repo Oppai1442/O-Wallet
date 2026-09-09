@@ -331,3 +331,11 @@ control.owg
 - Member feeds and the control file can be read as public-by-link ciphertext. Their contents remain AES-GCM encrypted with group keys; public readability is a transport/access mechanism, not plaintext sharing.
 - Removing an active member first freezes their latest feed into an owner-owned encrypted archive, then rotates the current group key. The removed member can no longer rewrite their historical ledger through their own Drive file. New/re-written live feed data uses the new key. Existing plaintext or old keys legitimately obtained before removal cannot be revoked retroactively.
 - Each participant stores a small encrypted merged-ledger snapshot in their own Drive for read-only recovery if live group control is unavailable.
+
+
+## v0.13.1 state/UX notes
+
+- Category selection is optional for personal transactions. Empty category IDs are treated as an uncategorized state, not as a hidden built-in category.
+- Local entity saves update React state immediately, then reconcile from encrypted IndexedDB, so newly created accounts/categories are available without a reload.
+- A valid GIS access token remains in `sessionStorage` across F5. O-Wallet no longer attempts background OAuth token acquisition after a new browser session because some browsers visibly flash the GIS popup; Drive reconnect is triggered by an explicit user action.
+- Voice entry has a direct shell shortcut and URL action (`?action=voice`). Shared wallets remain a dedicated `?page=shared` route.

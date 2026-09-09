@@ -101,7 +101,7 @@ export function VoiceEntry({
     if (target === 'amount') return Number(draft.amount) > 0
     if (target === 'account') return Boolean(draft.accountId)
     if (target === 'destinationAccount') return draft.type !== 'transfer' || Boolean(draft.destinationAccountId && draft.destinationAccountId !== draft.accountId)
-    if (target === 'category') return Boolean(draft.categoryId)
+    if (target === 'category') return true
     return true
   }
 

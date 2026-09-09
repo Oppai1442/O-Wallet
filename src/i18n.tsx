@@ -182,7 +182,7 @@ const vi: Record<string, string> = {
   'modal.saving': 'Đang lưu',
   'modal.save': 'Lưu giao dịch',
   'modal.errorOcr': 'Không đọc được nội dung ảnh.',
-  'modal.errorMissingFields': 'Cần nhập số tiền, tài khoản và danh mục.',
+  'modal.errorMissingFields': 'Cần nhập số tiền và tài khoản.',
   'modal.errorTransferAccounts': 'Tài khoản đích phải khác tài khoản nguồn.',
   'modal.errorSave': 'Không lưu được giao dịch.',
 
@@ -515,6 +515,7 @@ const vi: Record<string, string> = {
   'accounts.deleteCatalogueConfirm': 'Xóa nhóm này? Các tài khoản bên trong sẽ được chuyển về Chưa phân nhóm.',
   'categories.managerHint': 'Tạo cây danh mục theo bất kỳ độ sâu nào. Chỉ mục cuối cùng mới được chọn khi ghi giao dịch.',
   'categories.empty': 'Chưa có danh mục. Có thể tạo nhóm đầu tiên ở bên dưới.',
+  'categories.uncategorized': 'Chưa phân loại',
   'categories.create': 'Tạo danh mục',
   'categories.name': 'Tên',
   'categories.type': 'Loại mục',
@@ -861,7 +862,7 @@ const en: Record<string, string> = {
   'modal.saving': 'Saving',
   'modal.save': 'Save transaction',
   'modal.errorOcr': 'Could not read the image.',
-  'modal.errorMissingFields': 'Amount, account and category are required.',
+  'modal.errorMissingFields': 'Amount and account are required.',
   'modal.errorTransferAccounts': 'The destination account must differ from the source account.',
   'modal.errorSave': 'Could not save the transaction.',
 
@@ -1194,6 +1195,7 @@ const en: Record<string, string> = {
   'accounts.deleteCatalogueConfirm': 'Delete this group? Its accounts will move to Ungrouped.',
   'categories.managerHint': 'Build a category tree with any depth. Only the final item in a path can be selected for a transaction.',
   'categories.empty': 'No categories yet. Create the first group below.',
+  'categories.uncategorized': 'Uncategorized',
   'categories.create': 'Create category',
   'categories.name': 'Name',
   'categories.type': 'Node type',

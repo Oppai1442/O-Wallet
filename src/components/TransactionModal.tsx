@@ -29,10 +29,12 @@ export function TransactionModal({
   onClose,
   transaction,
   duplicateFrom,
+  initialVoice = false,
 }: {
   onClose: () => void
   transaction?: Transaction
   duplicateFrom?: Transaction
+  initialVoice?: boolean
 }) {
   const { accounts, categories, repository, saveEntity, saveEntities, settings, transactions } = useWallet()
   const { t } = useI18n()
@@ -76,7 +78,7 @@ export function TransactionModal({
   const [batchDrafts, setBatchDrafts] = useState<BatchOcrDraft[]>([])
   const [activeBatchId, setActiveBatchId] = useState<string>()
   const [saving, setSaving] = useState(false)
-  const [showVoiceEntry, setShowVoiceEntry] = useState(false)
+  const [showVoiceEntry, setShowVoiceEntry] = useState(initialVoice)
   const [error, setError] = useState<string>()
 
   const eligibleCategories = useMemo(
@@ -449,7 +451,7 @@ export function TransactionModal({
     }
     for (const draft of selected) {
       const numericAmount = Number(draft.amount)
-      if (!numericAmount || numericAmount <= 0 || !draft.accountId || !draft.categoryId || !draft.occurredAt) {
+      if (!numericAmount || numericAmount <= 0 || !draft.accountId || !draft.occurredAt) {
         setActiveBatchId(draft.id)
         setError(t('batch.errorInvalidDraft'))
         return
@@ -503,7 +505,7 @@ export function TransactionModal({
 
   async function save() {
     const numericAmount = Number(amount)
-    if (!repository || !numericAmount || numericAmount <= 0 || !accountId || !categoryId) {
+    if (!repository || !numericAmount || numericAmount <= 0 || !accountId) {
       setError(t('modal.errorMissingFields'))
       return
     }

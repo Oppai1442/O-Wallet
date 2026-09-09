@@ -65,6 +65,8 @@ export default defineConfig({
       workbox: {
         navigateFallback: 'index.html',
         cleanupOutdatedCaches: true,
+        skipWaiting: true,
+        clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,wasm}'],
         // Do not persist third-party executable OCR assets in O-Wallet's service-worker
         // cache. They remain constrained by CSP and the browser's ordinary HTTP cache.

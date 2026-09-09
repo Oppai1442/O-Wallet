@@ -34,7 +34,7 @@ export function Dashboard() {
   const filtered = useMemo(() => filteredTransactions(transactions, range, now), [transactions, range, now])
   const summary = useMemo(() => summarize(filtered), [filtered])
   const trend = useMemo(() => trendData(filtered, range, locale), [filtered, range, locale])
-  const pie = useMemo(() => categoryBreakdown(filtered, categories, (category) => categoryPath(category, categories), t('common.other')), [filtered, categories, t])
+  const pie = useMemo(() => categoryBreakdown(filtered, categories, (category) => categoryPath(category, categories), t('categories.uncategorized')), [filtered, categories, t])
   const balance = useMemo(() => totalBalance(accounts, transactions, now), [accounts, transactions, now])
   const budgetRows = useMemo(() => {
     const budgets = settings?.budgets ?? []
@@ -51,7 +51,7 @@ export function Dashboard() {
       return {
         ...budget,
         spent,
-        name: category ? categoryPath(category, categories) : t('common.other'),
+        name: category ? categoryPath(category, categories) : t('categories.uncategorized'),
         percent: budget.monthlyLimit > 0 ? Math.min(150, spent / budget.monthlyLimit * 100) : 0,
       }
     }).sort((a, b) => b.percent - a.percent)
