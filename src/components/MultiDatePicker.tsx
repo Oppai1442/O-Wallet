@@ -12,7 +12,8 @@ function monthStart(input?: string) {
   return new Date(value.getFullYear(), value.getMonth(), 1, 12)
 }
 
-export function MultiDatePicker({ selected, onChange }: { selected: string[]; onChange: (dates: string[]) => void }) {
+export function MultiDatePicker({ selected: selectedProp, value, onChange }: { selected?: string[]; value?: string[]; onChange: (dates: string[]) => void }) {
+  const selected = selectedProp ?? value ?? []
   const { t, locale } = useI18n()
   const [month, setMonth] = useState(() => monthStart(selected[0]))
   const selectedSet = useMemo(() => new Set(selected), [selected])
