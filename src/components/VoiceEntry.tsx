@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, Mic, RotateCcw, X } from 'lucide-react'
 import type { Account, AppSettings, Category, TransactionType, VoiceInputField } from '../types'
 import { useI18n } from '../i18n'
@@ -52,6 +52,7 @@ export function VoiceEntry({
   categories,
   onApply,
   onClose,
+  autoListen = false,
 }: {
   initial: VoiceEntryDraft
   settings?: AppSettings
@@ -59,6 +60,7 @@ export function VoiceEntry({
   categories: Category[]
   onApply: (draft: VoiceEntryDraft) => void
   onClose: () => void
+  autoListen?: boolean
 }) {
   const { t, locale } = useI18n()
   const voice = getVoiceSettings(settings)
@@ -75,6 +77,7 @@ export function VoiceEntry({
   const [message, setMessage] = useState('')
   const [candidates, setCandidates] = useState<VoiceOptionMatch[]>([])
   const controllerRef = useRef<AbortController | undefined>(undefined)
+  const autoListenStarted = useRef(false)
   const supported = speechRecognitionSupported()
   const field = fields[Math.min(index, Math.max(0, fields.length - 1))] ?? 'amount'
 
@@ -181,6 +184,15 @@ export function VoiceEntry({
     }
   }
 
+  useEffect(() => {
+    if (!autoListen || !supported || autoListenStarted.current) return
+    autoListenStarted.current = true
+    const id = window.setTimeout(() => { void listen() }, 60)
+    return () => window.clearTimeout(id)
+  }, [autoListen, supported])
+
+  useEffect(() => () => controllerRef.current?.abort(), [])
+
   function chooseCandidate(candidate: VoiceOptionMatch) {
     if (field === 'account') patch({ accountId: candidate.id })
     else if (field === 'destinationAccount') patch({ destinationAccountId: candidate.id })
@@ -242,8 +254,8 @@ export function VoiceEntry({
 
           <div className="mt-5">{renderEditor()}</div>
 
-          <div className="mt-5 rounded-2xl border border-stone-200 bg-stone-50 p-4 text-center dark:border-stone-800 dark:bg-stone-950/60">
-            <Button className="min-w-44" onClick={() => void listen()} disabled={listening || !supported}><Mic size={18} /> {listening ? t('voice.listening') : heard ? t('voice.listenAgain') : t('voice.listen')}</Button>
+          <div className={`mt-5 rounded-2xl border p-4 text-center transition ${listening ? 'border-blue-300 bg-blue-50 dark:border-blue-700 dark:bg-blue-500/10' : 'border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-950/60'}`}>
+            <Button className="min-w-44" onClick={() => void listen()} disabled={listening || !supported}><Mic size={18} className={listening ? 'animate-pulse' : ''} /> {listening ? t('voice.listening') : heard ? t('voice.listenAgain') : t('voice.listen')}</Button>
             {(interim || heard) && <div className="mt-3 text-sm text-stone-600 dark:text-stone-300">“{interim || heard}”</div>}
             {!supported && <div className="mt-2 text-xs text-amber-600 dark:text-amber-300">{t('voice.unsupported')}</div>}
             {message && <div className="mt-2 text-xs text-rose-600 dark:text-rose-300">{message}</div>}
