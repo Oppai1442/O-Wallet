@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
-import { BarChart3, ExternalLink, Home, LockKeyhole, Mic, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon, Users, Wallet } from 'lucide-react'
+import { BarChart3, ChevronUp, ExternalLink, Home, LockKeyhole, Menu, Mic, Plus, ReceiptText, RefreshCw, Settings as SettingsIcon, Users, Wallet } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { useI18n } from '../i18n'
 import { Analytics } from './Analytics'
@@ -61,12 +61,15 @@ function Main({ page }: { page: Page }) {
 
 export function Shell() {
   const { googleSession, googleRememberedUser, googleConnectionState, syncBusy, syncMessage, syncNow, retryGoogleConnection, lock } = useWallet()
-  const { t } = useI18n()
+  const { t, language } = useI18n()
   const [page, setPage] = useState<Page>(() => readPageFromUrl())
   const [showAdd, setShowAdd] = useState(() => readAddFromUrl())
   const [voiceOnOpen, setVoiceOnOpen] = useState(() => readVoiceFromUrl())
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const contentScrollRef = useRef<HTMLDivElement>(null)
+  const mobileTouchStartY = useRef<number | null>(null)
   const sharedProfileActive = page === 'shared'
+  const moreLabel = language === 'vi' ? 'Thêm' : 'More'
 
   useEffect(() => {
     const current = new URLSearchParams(window.location.search).get(PAGE_PARAM)
@@ -76,6 +79,7 @@ export function Shell() {
       setPage(readPageFromUrl())
       setShowAdd(readAddFromUrl())
       setVoiceOnOpen(readVoiceFromUrl())
+      setMobileMenuOpen(false)
       contentScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' })
     }
     window.addEventListener('popstate', onPopState)
@@ -97,16 +101,18 @@ export function Shell() {
   ]
 
   function navigatePage(nextPage: Page) {
-    if (nextPage === page && !showAdd) return
+    if (nextPage === page && !showAdd) { setMobileMenuOpen(false); return }
     setPage(nextPage)
     setShowAdd(false)
     setVoiceOnOpen(false)
+    setMobileMenuOpen(false)
     writeUrl({ page: nextPage })
     contentScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' })
   }
 
   function openAdd() {
     if (sharedProfileActive) return
+    setMobileMenuOpen(false)
     setVoiceOnOpen(false)
     setShowAdd(true)
     writeUrl({ page, add: true })
@@ -114,6 +120,7 @@ export function Shell() {
 
   function openVoice() {
     if (sharedProfileActive) return
+    setMobileMenuOpen(false)
     setVoiceOnOpen(true)
     setShowAdd(true)
     writeUrl({ page, voice: true })
@@ -124,6 +131,21 @@ export function Shell() {
     setVoiceOnOpen(false)
     writeUrl({ page, add: false, mode: 'replace' })
   }
+
+  function onMobileTouchStart(event: React.TouchEvent) {
+    mobileTouchStartY.current = event.touches[0]?.clientY ?? null
+  }
+
+  function onMobileTouchEnd(event: React.TouchEvent) {
+    const start = mobileTouchStartY.current
+    mobileTouchStartY.current = null
+    if (start === null) return
+    const end = event.changedTouches[0]?.clientY ?? start
+    if (start - end > 32) setMobileMenuOpen(true)
+    else if (end - start > 32) setMobileMenuOpen(false)
+  }
+
+  const moreActive = page === 'shared' || page === 'analytics' || page === 'settings'
 
   return (
     <div className="h-[100dvh] overflow-hidden bg-transparent text-stone-900 dark:text-stone-100">
@@ -186,17 +208,33 @@ export function Shell() {
                 <span>·</span>
                 <span>{t('footer.moreProjects')}</span>
                 <ExternalLink size={13} />
-              </a><span className="ml-2 text-[10px] text-stone-400">v0.15.0</span>
+              </a><span className="ml-2 text-[10px] text-stone-400">v0.15.2</span>
             </div>
           </footer>
         </div>
       </div>
 
-      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-stone-200 bg-white/95 px-2 pt-2 backdrop-blur-xl dark:border-stone-800 dark:bg-stone-950/95 md:hidden">
-        <div className="mx-auto grid max-w-xl grid-cols-6 gap-1">
-          {nav.slice(0, 2).map((item) => <MobileNav key={item.id} active={page === item.id} href={pageHref(item.id)} icon={<item.icon size={19} />} label={item.label} onClick={() => navigatePage(item.id)} />)}
+      {mobileMenuOpen && <>
+        <button aria-label="Close navigation" className="fixed inset-0 z-30 bg-black/20 md:hidden" onClick={() => setMobileMenuOpen(false)} />
+        <div className="safe-bottom fixed inset-x-2 bottom-[4.8rem] z-40 mx-auto max-w-xl rounded-2xl border border-stone-200 bg-white/98 p-3 shadow-2xl backdrop-blur-xl dark:border-stone-800 dark:bg-stone-950/98 md:hidden">
+          <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-stone-300 dark:bg-stone-700" />
+          <div className="grid grid-cols-3 gap-2">
+            {nav.slice(2).map((item) => <button key={item.id} onClick={() => navigatePage(item.id)} className={`flex min-w-0 flex-col items-center gap-1.5 rounded-xl px-2 py-3 text-xs font-semibold ${page === item.id ? 'bg-stone-100 text-blue-600 dark:bg-stone-900 dark:text-blue-400' : 'text-stone-600 dark:text-stone-300'}`}><item.icon size={20}/><span className="max-w-full truncate">{item.label}</span></button>)}
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 border-t border-stone-200 pt-2 dark:border-stone-800">
+            <button disabled={sharedProfileActive} onClick={openVoice} className="flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold text-stone-600 disabled:opacity-40 dark:text-stone-300"><Mic size={17}/>{t('voice.entryButton')}</button>
+            <button onClick={() => { setMobileMenuOpen(false); lock() }} className="flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold text-stone-600 dark:text-stone-300"><LockKeyhole size={17}/>{t('nav.lock')}</button>
+          </div>
+        </div>
+      </>}
+
+      <nav onTouchStart={onMobileTouchStart} onTouchEnd={onMobileTouchEnd} className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-stone-200 bg-white/95 px-2 pt-2 backdrop-blur-xl dark:border-stone-800 dark:bg-stone-950/95 md:hidden">
+        <button aria-label={moreLabel} onClick={() => setMobileMenuOpen(true)} className="absolute left-1/2 top-0 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-stone-200 bg-white px-3 py-0.5 text-stone-400 shadow-sm dark:border-stone-800 dark:bg-stone-950"><ChevronUp size={13}/></button>
+        <div className="mx-auto grid max-w-xl grid-cols-4 gap-1">
+          <MobileNav active={page === 'home'} href={pageHref('home')} icon={<Home size={19}/>} label={t('nav.home')} onClick={() => navigatePage('home')} />
+          <MobileNav active={page === 'transactions'} href={pageHref('transactions')} icon={<ReceiptText size={19}/>} label={t('nav.transactions')} onClick={() => navigatePage('transactions')} />
           <button aria-label={t('nav.addTransaction')} onClick={openAdd} disabled={sharedProfileActive} className={`mx-auto -mt-5 flex h-14 w-14 items-center justify-center rounded-2xl shadow-lg ${sharedProfileActive ? 'bg-stone-300 text-stone-500 dark:bg-stone-800 dark:text-stone-500' : 'bg-stone-950 text-white shadow-stone-950/20 dark:bg-white dark:text-stone-950'}`}><Plus size={25} /></button>
-          {nav.slice(2).map((item) => <MobileNav key={item.id} active={page === item.id} href={pageHref(item.id)} icon={<item.icon size={19} />} label={item.label} onClick={() => navigatePage(item.id)} />)}
+          <button aria-label={moreLabel} aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen((current) => !current)} className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-[10px] font-semibold ${moreActive || mobileMenuOpen ? 'text-blue-600 dark:text-blue-400' : 'text-stone-500'}`}><Menu size={19}/><span className="max-w-full truncate">{moreLabel}</span></button>
         </div>
       </nav>
 
