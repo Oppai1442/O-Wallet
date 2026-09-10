@@ -195,7 +195,7 @@ export async function listDriveChildren(token: string, parentId: string) { retur
 
 export interface DrivePermission { id: string; type?: string; role?: string; emailAddress?: string; displayName?: string }
 
-export async function createDrivePermission(token: string, fileId: string, email: string, role: 'reader' | 'writer', options?: { sendNotificationEmail?: boolean; emailMessage?: string }) {
+export async function createDrivePermission(token: string, fileId: string, email: string, role: 'reader' | 'writer', options?: { sendNotificationEmail?: boolean; emailMessage?: string; expirationTime?: string }) {
   const query = qs({ sendNotificationEmail: String(options?.sendNotificationEmail ?? true), emailMessage: options?.emailMessage, fields: 'id,type,role,emailAddress,displayName' })
   return driveJson<DrivePermission>(token, `${DRIVE_API}/files/${encodeURIComponent(fileId)}/permissions?${query}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'user', role, emailAddress: email }),
