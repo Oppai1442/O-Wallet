@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Fingerprint, KeyRound, LockKeyhole, ShieldCheck, Wallet } from 'lucide-react'
 import { questionLabel, useI18n } from '../i18n'
 import {
+  clearQuickUnlockConfig,
   enableQuickUnlock,
   handOffQuickUnlockToWallet,
   hasQuickUnlockForVault,
@@ -20,18 +21,18 @@ const COPY = {
     quickUnlockHint: 'Dùng vân tay, Face ID hoặc Windows Hello của thiết bị này. Password vẫn là phương án dự phòng.',
     quickUnlockBusy: 'Đang xác thực…',
     enableQuick: 'Bật Quick Unlock trên thiết bị này sau khi mở khóa',
-    enableHint: 'O-Wallet chỉ bật nếu trình duyệt hỗ trợ WebAuthn PRF. Credential không được đồng bộ lên Drive.',
-    unsupported: 'Thiết bị hoặc trình duyệt này chưa hỗ trợ Quick Unlock an toàn bằng WebAuthn PRF.',
-    failed: 'Không thể mở bằng sinh trắc học. Hãy dùng password và thử thiết lập lại nếu cần.',
+    enableHint: 'O-Wallet ưu tiên WebAuthn PRF; trên một số Windows Hello sẽ dùng platform verification tương thích hơn. Credential chỉ nằm trên thiết bị này.',
+    unsupported: 'Thiết bị hoặc trình duyệt này chưa hỗ trợ platform authenticator cho Quick Unlock.',
+    failed: 'Quick Unlock cũ không dùng được trên thiết bị này. Cấu hình local đã được gỡ; hãy nhập password và bật lại Quick Unlock một lần.',
   },
   en: {
     quickUnlock: 'Quick unlock with biometrics',
     quickUnlockHint: 'Use this device’s fingerprint, Face ID, or Windows Hello. Your password remains the fallback.',
     quickUnlockBusy: 'Authenticating…',
     enableQuick: 'Enable Quick Unlock on this device after unlocking',
-    enableHint: 'O-Wallet only enables this when WebAuthn PRF is supported. The credential never syncs to Drive.',
-    unsupported: 'This device or browser does not support secure WebAuthn PRF Quick Unlock.',
-    failed: 'Biometric unlock failed. Use your password and set Quick Unlock up again if needed.',
+    enableHint: 'O-Wallet prefers WebAuthn PRF and uses a more compatible platform-verification path for some Windows Hello providers. The credential stays on this device.',
+    unsupported: 'This device or browser does not expose a platform authenticator for Quick Unlock.',
+    failed: 'The existing Quick Unlock credential cannot be used on this device. Its local setup was removed; enter your password and enable Quick Unlock once again.',
   },
 } as const
 
@@ -101,6 +102,9 @@ export function Unlock() {
     } catch (quickUnlockError) {
       if (!isQuickUnlockCancellation(quickUnlockError)) {
         reportDiagnostic('quick-unlock-open', quickUnlockError)
+        await clearQuickUnlockConfig().catch((clearError) => reportDiagnostic('quick-unlock-clear-stale', clearError))
+        setQuickAvailable(false)
+        setEnableQuick(false)
         setQuickError(quickUnlockError instanceof Error && quickUnlockError.message === 'error.quickUnlockUnsupported' ? L.unsupported : L.failed)
       }
     } finally {
