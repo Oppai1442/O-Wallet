@@ -1,0 +1,4 @@
+# Cloudflare Deploy will ask you to provide this Worker secret.
+# Generate a unique random value with at least 32 characters and paste the same value
+# into O-Wallet Settings → Personal Cloud after deployment.
+PAIRING_TOKEN=replace-with-a-unique-random-token-at-least-32-characters
