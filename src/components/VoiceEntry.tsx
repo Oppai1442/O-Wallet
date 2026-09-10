@@ -52,7 +52,7 @@ export function VoiceEntry({
   categories,
   onApply,
   onClose,
-  autoListen = false,
+  autoListen = new URLSearchParams(window.location.search).get('action') === 'voice',
 }: {
   initial: VoiceEntryDraft
   settings?: AppSettings
