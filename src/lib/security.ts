@@ -44,7 +44,6 @@ export function sniffRasterImageMime(bytes: Uint8Array): string | undefined {
   return undefined
 }
 
-
 export function assertJsonPayloadSize(value: unknown, maxBytes = SECURITY_LIMITS.maxClearRecordBytes) {
   const encoded = new TextEncoder().encode(JSON.stringify(value))
   if (encoded.byteLength > maxBytes) throw new Error('error.recordTooLarge')
@@ -61,8 +60,6 @@ export async function validateImageFile(file: File) {
   if (!sniffed) throw new Error('error.imageTypeUnsupported')
   if (file.type && file.type !== sniffed) throw new Error('error.imageTypeMismatch')
 
-  // Decode metadata before OCR so a small compressed image cannot expand into an
-  // unreasonable bitmap and freeze/crash the tab.
   if ('createImageBitmap' in globalThis) {
     const bitmap = await createImageBitmap(file)
     try {
@@ -137,7 +134,7 @@ function redactSensitiveText(value: string) {
 }
 
 export function reportDiagnostic(context: string, error?: unknown) {
-  if (!import.meta.env.DEV) return
+  if (!import.meta.env.DEV && !context.startsWith('quick-unlock')) return
   const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error ?? '')
   console.warn(`[O-Wallet:${context}] ${redactSensitiveText(message)}`)
 }
