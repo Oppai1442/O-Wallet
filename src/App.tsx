@@ -15,8 +15,6 @@ function DelayedLoader() {
     return () => window.clearTimeout(id)
   }, [])
 
-  // Most local IndexedDB boots complete before this delay. Keeping the initial frame
-  // visually empty avoids a one-frame "loading → app" flash on fast devices.
   if (!visible) return <div className="min-h-[100dvh]" aria-hidden="true" />
 
   return (
@@ -30,9 +28,9 @@ function DelayedLoader() {
 }
 
 function AppBody() {
-  const { status } = useWallet()
+  const { status, googleAutoConnecting } = useWallet()
   if (status === 'loading') return <DelayedLoader />
-  if (status === 'new') return <div className="ow-fade-in"><Onboarding /></div>
+  if (status === 'new') return <div className="ow-fade-in"><Onboarding autoConnecting={googleAutoConnecting} /></div>
   if (status === 'locked') return <div className="ow-fade-in"><Unlock /></div>
   return <div className="ow-fade-in"><Shell /></div>
 }
