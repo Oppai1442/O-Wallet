@@ -5,7 +5,7 @@ const CONFIG_KEY = 'personal-cloud-config-v1'
 const SECRET_NAME = 'personal-cloud-pairing-token'
 const REQUEST_TIMEOUT_MS = 10_000
 
-export const PERSONAL_CLOUD_DEPLOY_URL = 'https://deploy.workers.cloudflare.com/?url=https://github.com/Oppai1442/O-Wallet/tree/main/cloudflare/personal-worker'
+export const PERSONAL_CLOUD_DEPLOY_URL = 'https://deploy.workers.cloudflare.com/?url=https%3A%2F%2Fgithub.com%2FOppai1442%2FO-Wallet'
 export const CLOUDFLARE_DASHBOARD_URL = 'https://dash.cloudflare.com/'
 
 export interface PersonalCloudCapabilities {
