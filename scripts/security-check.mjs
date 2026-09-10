@@ -50,7 +50,9 @@ const inviteInterface = sharedWalletSource.match(/interface InvitePayload \{([\s
 if (/\bkeyRing\b/.test(inviteInterface) || /\bgroupKey\b/.test(inviteInterface)) fail('Shared-wallet invitation URL payload must not contain group keys')
 if (!sharedWalletSource.includes("member.status !== 'active'")) fail('Pending shared-wallet invitees must not receive public control key envelopes')
 if (!sharedWalletSource.includes('registration.keyRing')) fail('Shared-wallet initial key ring is not protected inside the registration file')
-if (!sharedWalletSource.includes('expirationTime: registration.expiresAt')) fail('Shared-wallet invitation Drive permission is missing expiration')
+if (!sharedWalletSource.includes('INVITE_TTL_MS')) fail('Shared-wallet invitation TTL is missing')
+if (!sharedWalletSource.includes('Date.parse(invite.expiresAt) < Date.now()')) fail('Shared-wallet invitation URL expiry validation is missing')
+if (!sharedWalletSource.includes('Date.parse(registration.expiresAt) < Date.now()')) fail('Shared-wallet registration expiry validation is missing')
 if (!sharedWalletSource.includes('createdByMemberId')) fail('Shared-wallet creator attribution is missing')
 if (!sharedWalletSource.includes('archiveMemberFeedBeforeRemoval')) fail('Shared-wallet member-removal archive is missing')
 
