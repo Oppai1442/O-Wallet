@@ -17,7 +17,7 @@ const PAGE_PARAM = 'page'
 const ACTION_PARAM = 'action'
 const ADD_ACTION = 'add'
 const VOICE_ACTION = 'voice'
-const HOLD_FOR_VOICE_MS = 520
+const HOLD_FOR_VOICE_MS = 460
 const validPages: Page[] = ['home', 'transactions', 'shared', 'analytics', 'settings']
 
 function readPageFromUrl(): Page {
@@ -62,18 +62,18 @@ function Main({ page }: { page: Page }) {
 
 export function Shell() {
   const { googleSession, googleRememberedUser, googleConnectionState, syncBusy, syncMessage, syncNow, retryGoogleConnection, lock } = useWallet()
-  const { t } = useI18n()
+  const { t, language } = useI18n()
   const [page, setPage] = useState<Page>(() => readPageFromUrl())
   const [showAdd, setShowAdd] = useState(() => readAddFromUrl())
   const [voiceOnOpen, setVoiceOnOpen] = useState(() => readVoiceFromUrl())
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [fabHolding, setFabHolding] = useState(false)
-  const [fabVoiceArmed, setFabVoiceArmed] = useState(false)
   const contentScrollRef = useRef<HTMLDivElement>(null)
   const mobileTouchStartY = useRef<number | null>(null)
   const fabHoldTimer = useRef<number | undefined>(undefined)
   const fabPointerActive = useRef(false)
   const sharedProfileActive = page === 'shared'
+  const holdHint = language === 'vi' ? 'Giữ để nói' : 'Hold for voice'
 
   useEffect(() => {
     const current = new URLSearchParams(window.location.search).get(PAGE_PARAM)
@@ -156,12 +156,14 @@ export function Shell() {
     event.currentTarget.setPointerCapture?.(event.pointerId)
     fabPointerActive.current = true
     setFabHolding(true)
-    setFabVoiceArmed(false)
     if (fabHoldTimer.current) window.clearTimeout(fabHoldTimer.current)
     fabHoldTimer.current = window.setTimeout(() => {
       if (!fabPointerActive.current) return
-      setFabVoiceArmed(true)
-      navigator.vibrate?.(35)
+      fabPointerActive.current = false
+      fabHoldTimer.current = undefined
+      setFabHolding(false)
+      navigator.vibrate?.([28, 20, 45])
+      openVoice()
     }, HOLD_FOR_VOICE_MS)
   }
 
@@ -170,11 +172,8 @@ export function Shell() {
     fabPointerActive.current = false
     if (fabHoldTimer.current) window.clearTimeout(fabHoldTimer.current)
     fabHoldTimer.current = undefined
-    const useVoice = fabVoiceArmed
     setFabHolding(false)
-    setFabVoiceArmed(false)
-    if (useVoice) openVoice()
-    else openAdd()
+    openAdd()
   }
 
   function cancelFabHold() {
@@ -182,8 +181,9 @@ export function Shell() {
     if (fabHoldTimer.current) window.clearTimeout(fabHoldTimer.current)
     fabHoldTimer.current = undefined
     setFabHolding(false)
-    setFabVoiceArmed(false)
   }
+
+  const moreActive = page === 'shared' || page === 'analytics' || page === 'settings'
 
   return (
     <div className="h-[100dvh] overflow-hidden bg-transparent text-stone-900 dark:text-stone-100">
@@ -196,14 +196,26 @@ export function Shell() {
       <div ref={contentScrollRef} className="h-[100dvh] overflow-y-auto overscroll-y-contain md:pl-20 xl:pl-64"><div className="flex min-h-full flex-col">
         <header className="sticky top-0 z-30 shrink-0 border-b border-stone-200/70 bg-[#f7f7f5]/92 px-4 py-3 backdrop-blur-xl dark:border-stone-800 dark:bg-[#0c0c0b]/92 sm:px-6"><div className="mx-auto flex max-w-[1500px] items-center justify-between gap-3"><div className="flex items-center gap-2 md:hidden"><div className="flex h-9 w-9 items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-900 dark:border-stone-700 dark:bg-stone-900 dark:text-white"><Wallet size={19} /></div><span className="font-semibold">O-Wallet</span></div><div className="hidden min-w-0 truncate text-xs text-stone-500 md:block">{googleConnectionState === 'connected' && googleSession && t('nav.driveConnected', { email: googleSession.user.email })}{googleConnectionState === 'reconnecting' && t('nav.driveReconnecting')}{googleConnectionState === 'attention' && t('nav.driveReconnectNeeded')}{googleConnectionState === 'disconnected' && t('nav.driveDisconnected')}</div><div className="ml-auto flex items-center gap-2">{googleConnectionState === 'connected' && googleSession && <Button variant="secondary" className="px-3" onClick={() => void syncNow()} disabled={syncBusy}><RefreshCw size={16} className={syncBusy ? 'animate-spin' : ''} /><span className="hidden sm:inline">{syncBusy ? syncMessage || t('common.syncing') : t('nav.sync')}</span></Button>}{googleConnectionState === 'reconnecting' && googleRememberedUser && <Button variant="secondary" className="px-3" disabled><RefreshCw size={16} className="animate-spin" /><span className="hidden sm:inline">{t('common.reconnecting')}</span></Button>}{googleConnectionState === 'attention' && googleRememberedUser && <Button variant="secondary" className="px-3" onClick={() => void retryGoogleConnection()}><RefreshCw size={16} /><span className="hidden sm:inline">{t('settings.reconnectGoogle')}</span></Button>}</div></div></header>
         <main className="mx-auto w-full max-w-[1500px] flex-1 px-3 pb-8 pt-4 sm:px-5 sm:pt-5 lg:px-6"><Main page={page} /></main>
-        <footer className="mx-auto w-full max-w-[1500px] shrink-0 px-3 pb-28 sm:px-5 md:pb-8 lg:px-6"><div className="flex items-center justify-center border-t border-stone-200/70 pt-5 text-xs text-stone-500 dark:border-stone-800"><a href="https://oppai1442.github.io/all/" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 transition hover:bg-stone-100 hover:text-stone-800 dark:hover:bg-stone-900 dark:hover:text-stone-200"><span className="font-semibold">{t('footer.projectHub')}</span><span>·</span><span>{t('footer.moreProjects')}</span><ExternalLink size={13} /></a><span className="ml-2 text-[10px] text-stone-400">v0.17.1</span></div></footer>
+        <footer className="mx-auto w-full max-w-[1500px] shrink-0 px-3 pb-28 sm:px-5 md:pb-8 lg:px-6"><div className="flex items-center justify-center border-t border-stone-200/70 pt-5 text-xs text-stone-500 dark:border-stone-800"><a href="https://oppai1442.github.io/all/" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 transition hover:bg-stone-100 hover:text-stone-800 dark:hover:bg-stone-900 dark:hover:text-stone-200"><span className="font-semibold">{t('footer.projectHub')}</span><span>·</span><span>{t('footer.moreProjects')}</span><ExternalLink size={13} /></a><span className="ml-2 text-[10px] text-stone-400">v0.17.2</span></div></footer>
       </div></div>
 
-      {mobileMenuOpen && <><button aria-label="Close navigation" className="fixed inset-0 z-30 bg-black/20 md:hidden" onClick={() => setMobileMenuOpen(false)} /><div className="safe-bottom fixed inset-x-2 bottom-[4.8rem] z-40 mx-auto max-w-xl rounded-2xl border border-stone-200 bg-white/98 p-3 shadow-2xl backdrop-blur-xl dark:border-stone-800 dark:bg-stone-950/98 md:hidden"><div className="mx-auto mb-3 h-1 w-10 rounded-full bg-stone-300 dark:bg-stone-700" /><div className="grid grid-cols-3 gap-2">{nav.slice(2).map((item) => <button key={item.id} onClick={() => navigatePage(item.id)} className={`flex min-w-0 flex-col items-center gap-1.5 rounded-xl px-2 py-3 text-xs font-semibold ${page === item.id ? 'bg-stone-100 text-blue-600 dark:bg-stone-900 dark:text-blue-400' : 'text-stone-600 dark:text-stone-300'}`}><item.icon size={20}/><span className="max-w-full truncate">{item.label}</span></button>)}</div><div className="mt-2 border-t border-stone-200 pt-2 dark:border-stone-800"><button onClick={() => { setMobileMenuOpen(false); lock() }} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold text-stone-600 dark:text-stone-300"><LockKeyhole size={17}/>{t('nav.lock')}</button></div></div></>}
+      {mobileMenuOpen && <><button aria-label="Close navigation" className="fixed inset-0 z-30 bg-black/20 md:hidden" onClick={() => setMobileMenuOpen(false)} /><div className="safe-bottom fixed inset-x-2 bottom-[4.9rem] z-40 mx-auto max-w-xl rounded-2xl border border-stone-200 bg-white/98 p-3 shadow-2xl backdrop-blur-xl dark:border-stone-800 dark:bg-stone-950/98 md:hidden"><div className="mx-auto mb-3 h-1 w-10 rounded-full bg-stone-300 dark:bg-stone-700" /><div className="grid grid-cols-3 gap-2">{nav.slice(2).map((item) => <button key={item.id} onClick={() => navigatePage(item.id)} className={`flex min-w-0 flex-col items-center gap-1.5 rounded-xl px-2 py-3 text-xs font-semibold ${page === item.id ? 'bg-stone-100 text-blue-600 dark:bg-stone-900 dark:text-blue-400' : 'text-stone-600 dark:text-stone-300'}`}><item.icon size={20}/><span className="max-w-full truncate">{item.label}</span></button>)}</div><div className="mt-2 border-t border-stone-200 pt-2 dark:border-stone-800"><button onClick={() => { setMobileMenuOpen(false); lock() }} className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold text-stone-600 dark:text-stone-300"><LockKeyhole size={17}/>{t('nav.lock')}</button></div></div></>}
 
-      <nav onTouchStart={onMobileTouchStart} onTouchEnd={onMobileTouchEnd} className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-stone-200 bg-white/95 px-2 pt-2 backdrop-blur-xl dark:border-stone-800 dark:bg-stone-950/95 md:hidden">
-        <div className="relative mx-auto grid max-w-xl grid-cols-4 gap-1"><MobileNav active={page === 'home'} href={pageHref('home')} icon={<Home size={19}/>} label={t('nav.home')} onClick={() => navigatePage('home')} /><MobileNav active={page === 'transactions'} href={pageHref('transactions')} icon={<ReceiptText size={19}/>} label={t('nav.transactions')} onClick={() => navigatePage('transactions')} /><div aria-hidden="true" /><button aria-label="Expand navigation" aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen((current) => !current)} className={`flex min-w-0 items-center justify-center rounded-xl px-1 py-1.5 ${mobileMenuOpen || page === 'shared' || page === 'analytics' || page === 'settings' ? 'text-blue-600 dark:text-blue-400' : 'text-stone-500'}`}><ChevronUp size={22} className={`transition-transform duration-200 ${mobileMenuOpen ? 'rotate-180' : ''}`}/></button></div>
-        <button aria-label={fabVoiceArmed ? t('voice.entryButton') : t('nav.addTransaction')} disabled={sharedProfileActive} onPointerDown={startFabHold} onPointerUp={finishFabHold} onPointerCancel={cancelFabHold} onContextMenu={(event) => event.preventDefault()} className={`absolute left-1/2 top-0 flex h-14 w-14 -translate-x-1/2 -translate-y-[34%] touch-none select-none items-center justify-center rounded-2xl shadow-lg transition-all duration-200 ${sharedProfileActive ? 'bg-stone-300 text-stone-500 dark:bg-stone-800 dark:text-stone-500' : fabVoiceArmed ? 'scale-110 bg-blue-600 text-white shadow-blue-600/30' : fabHolding ? 'scale-105 bg-stone-800 text-white dark:bg-stone-100 dark:text-stone-900' : 'bg-stone-950 text-white shadow-stone-950/20 dark:bg-white dark:text-stone-950'}`}><span className={`absolute inset-0 rounded-2xl border-2 border-current opacity-0 ${fabHolding && !fabVoiceArmed ? 'animate-ping opacity-20' : ''}`} /><span className={`transition-all duration-200 ${fabVoiceArmed ? 'scale-110' : ''}`}>{fabVoiceArmed ? <Mic size={24}/> : <Plus size={25}/>}</span></button>
+      <nav onTouchStart={onMobileTouchStart} onTouchEnd={onMobileTouchEnd} className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-stone-200 bg-white/95 px-3 pt-2 backdrop-blur-xl dark:border-stone-800 dark:bg-stone-950/95 md:hidden">
+        <div className="relative mx-auto grid max-w-xl grid-cols-[1fr_84px_1fr] items-end gap-1">
+          <MobileNav active={page === 'home'} href={pageHref('home')} icon={<Home size={20}/>} label={t('nav.home')} onClick={() => navigatePage('home')} />
+          <div aria-hidden="true" className="h-12" />
+          <MobileNav active={page === 'transactions'} href={pageHref('transactions')} icon={<ReceiptText size={20}/>} label={t('nav.transactions')} onClick={() => navigatePage('transactions')} />
+
+          <button aria-label="Expand navigation" aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen((current) => !current)} className={`absolute right-1 top-0 flex h-7 w-10 -translate-y-[72%] items-center justify-center rounded-full border border-stone-200 bg-white shadow-sm transition dark:border-stone-800 dark:bg-stone-950 ${mobileMenuOpen || moreActive ? 'text-blue-600 dark:text-blue-400' : 'text-stone-400'}`}><ChevronUp size={17} className={`transition-transform duration-200 ${mobileMenuOpen ? 'rotate-180' : ''}`}/></button>
+
+          {fabHolding && <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-[150%] whitespace-nowrap rounded-full bg-stone-950 px-3 py-1.5 text-[11px] font-semibold text-white shadow-lg dark:bg-white dark:text-stone-950"><span className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-red-400" />{holdHint}</div>}
+
+          <button aria-label={t('nav.addTransaction')} disabled={sharedProfileActive} onPointerDown={startFabHold} onPointerUp={finishFabHold} onPointerCancel={cancelFabHold} onContextMenu={(event) => event.preventDefault()} className={`absolute left-1/2 top-0 flex h-14 w-14 -translate-x-1/2 -translate-y-[32%] touch-none select-none items-center justify-center rounded-full border-4 border-white shadow-xl transition-all duration-150 dark:border-stone-950 ${sharedProfileActive ? 'bg-stone-300 text-stone-500 dark:bg-stone-800 dark:text-stone-500' : fabHolding ? 'scale-110 bg-blue-600 text-white shadow-blue-600/30' : 'bg-stone-950 text-white shadow-stone-950/25 dark:bg-white dark:text-stone-950'}`}>
+            {fabHolding && <span className="absolute -inset-2 animate-pulse rounded-full border-2 border-blue-400/60" />}
+            {fabHolding ? <Mic size={23}/> : <Plus size={25}/>} 
+          </button>
+        </div>
       </nav>
 
       <Suspense fallback={null}>{showAdd && !sharedProfileActive && <TransactionModal onClose={closeAdd} initialVoice={voiceOnOpen} />}</Suspense>
