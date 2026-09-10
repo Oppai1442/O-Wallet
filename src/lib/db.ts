@@ -128,7 +128,7 @@ export async function getDeviceId() {
 }
 
 const DEFAULT_DEVICE_PREFERENCES: DeviceSessionPreferences = {
-  googleRemember: 'tab',
+  googleRemember: '30d',
   vaultRemember: 'off',
 }
 
