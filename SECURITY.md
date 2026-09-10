@@ -1,38 +1,108 @@
 # O-Wallet security model
 
-## Goals
+This document describes the security model of the current O-Wallet reference implementation, **v0.19.1**.
 
-1. O-Wallet's developer does not run a central transaction/image backend.
+O-Wallet is browser software. Its primary confidentiality goal is to keep stored financial content encrypted at rest while avoiding an O-Project-owned transaction backend. It is **not** a substitute for endpoint security, browser integrity or an independent cryptographic audit.
+
+---
+
+## Security goals
+
+1. O-Project does not operate a central transaction/image database for O-Wallet.
 2. Each user owns the Google Drive files created by O-Wallet.
-3. Transaction content and image content are encrypted before Drive upload.
-4. The encryption password and unwrapped DEK are never intentionally uploaded.
-5. Google OAuth access tokens are never sent to an O-Wallet backend. Active bearer tokens are persisted only in `sessionStorage` to survive reloads in the current tab; longer remember windows persist account/reconnect metadata only.
+3. Transaction records and screenshot contents are encrypted before Drive upload.
+4. The user password, recovery key and unwrapped DEK are not intentionally uploaded to Google Drive or an O-Project backend.
+5. Google OAuth access tokens are not sent to an O-Wallet backend.
+6. The default OAuth scope remains the narrow `drive.file` scope rather than unrestricted Drive access.
+7. Device-only secrets such as OpenRouter API keys and Personal Cloud pairing tokens are encrypted locally with the current vault key and are not synced to Drive.
+
+---
+
+## Trust boundaries
+
+O-Wallet has several distinct execution/data boundaries:
+
+```text
+O-Project / GitHub Pages
+    -> serves static application code
+
+User browser/device
+    -> holds plaintext while unlocked
+    -> performs encryption/decryption
+    -> runs OCR/parsing/analytics/sync
+    -> stores encrypted records/images in IndexedDB
+
+Google
+    -> identity provider
+    -> Drive storage for encrypted O-Wallet files
+
+Optional browser speech provider
+    -> may process voice input depending on browser implementation
+
+Optional OpenRouter/model provider
+    -> processes only images explicitly submitted through AI reading
+
+Optional Personal Cloud Worker
+    -> deployed in the user's own Cloudflare account
+    -> v1 handles pairing/capability/heartbeat metadata only
+```
+
+The **unlocked browser tab is a trusted runtime**. If that runtime is compromised, at-rest encryption cannot protect plaintext currently being used by the application.
+
+---
 
 ## Key hierarchy
 
-O-Wallet generates a random 256-bit Data Encryption Key (DEK). The DEK encrypts wallet records and image containers with AES-256-GCM.
+O-Wallet generates a random 256-bit Data Encryption Key (DEK). The DEK encrypts wallet records, images and device-local encrypted secrets using AES-256-GCM.
 
-The password does not directly encrypt each record. Instead:
-
-```text
-password -> PBKDF2-SHA256 (600,000 iterations + random salt) -> KEK
-KEK -> AES-GCM wraps DEK
-```
-
-Recovery uses a separate randomly generated recovery key:
+### Password wrapping
 
 ```text
-192-bit random recovery key -> domain-separated SHA-256 -> recovery KEK
-recovery KEK -> AES-GCM wraps the same DEK
+password
+  -> PBKDF2-HMAC-SHA256
+     600,000 iterations + random salt
+  -> password KEK
+  -> AES-GCM wraps DEK
 ```
 
-That separation means a future password-change flow can re-wrap the DEK without re-encrypting all records/images.
+The UI currently enforces only a minimum password length of 8 characters. Longer passphrases are recommended because a stolen `vault.json` permits offline password guessing against the wrapped DEK.
 
-## Security questions
+### Recovery wrapping
 
-Security questions have low entropy and are **not** treated as encryption keys. Their normalized answers are salted and hashed, and the recovery UI requires them before attempting recovery-key unwrap. The random recovery key remains the cryptographic recovery secret.
+```text
+random 192-bit recovery key
+  -> domain-separated SHA-256
+  -> recovery KEK
+  -> AES-GCM wraps the same DEK
+```
 
-This is deliberately stricter than treating a memorable answer like "first pet" as key material.
+The recovery key is the cryptographic recovery secret.
+
+### Security questions
+
+Security-question answers are **not encryption keys**. Their normalized answers are independently salted/verified and the recovery flow requires them before attempting recovery-key unwrap.
+
+This does not make low-entropy questions equivalent to strong cryptographic secrets; they are only an additional verification layer.
+
+---
+
+## Ciphertext format and identity binding
+
+New record/image payloads use AES-GCM format v2 with authenticated additional data (AAD).
+
+AAD is tied to the expected entity identity:
+
+```text
+record:<kind>:<id>
+image:<id>
+local-secret:<name>
+```
+
+A valid ciphertext blob copied to a different record/image/local-secret identity therefore fails authentication.
+
+Version-1 ciphertext remains readable for migration compatibility and is naturally upgraded when rewritten.
+
+---
 
 ## Local database
 
@@ -40,160 +110,461 @@ IndexedDB contains:
 
 - encrypted record payloads;
 - encrypted image payloads;
-- non-secret sync metadata (UUID, version, updated time, device ID, tombstone flag, record kind);
-- vault key-wrapping metadata (salt, KDF parameters, wrapped DEK, recovery answer hashes).
+- non-secret sync metadata such as UUID/version/timestamp/device ID/tombstone/kind;
+- vault wrapping metadata;
+- local Drive layout/cursor/sync-queue metadata;
+- optional non-extractable `CryptoKey` objects used by remembered unlock or Quick Unlock compatibility mode;
+- encrypted device-local secrets.
 
-The local database does not intentionally store plaintext transaction JSON or plaintext image bytes after a save completes. Synced preferences, OCR region templates and budget configuration live inside the encrypted `settings` record rather than plaintext browser configuration. If the user explicitly enables remembered vault unlock, IndexedDB also stores a non-extractable DEK `CryptoKey` and an expiry timestamp on that device. The default is disabled.
+The repository encrypts local secrets using the active DEK and AAD `local-secret:<name>`. Current uses include the OpenRouter API key and Personal Cloud pairing token.
 
-## Cloud storage
+O-Wallet does not intentionally retain plaintext transaction JSON or plaintext screenshot bytes in IndexedDB after save completes.
 
-The user's visible `O-Wallet/` Drive folder contains:
+Clearing site/browser data can remove the local database and device-only secrets. Google Drive data is unaffected unless separately deleted from Drive.
+
+---
+
+## Google Drive storage
+
+The user's visible Drive folder contains:
 
 ```text
 O-Wallet/
-├── vault.json          # key-wrapping metadata; no plaintext transaction data
+├── vault.json
 ├── records/
-│   └── <uuid>.owr      # AES-GCM binary ciphertext
+│   └── <uuid>.owr
 └── images/
-    └── <uuid>.owi      # AES-GCM binary ciphertext
+    └── <uuid>.owi
 ```
 
-Image plaintext is packed as metadata + raw bytes, then encrypted. It is not converted to base64 before encryption or upload.
+`vault.json` contains salts, KDF parameters, answer-verification metadata and wrapped DEKs. It does not contain plaintext transaction contents.
 
-Drive still sees unavoidable synchronization metadata such as file sizes, modification times, opaque UUIDs and appProperties used for merge/versioning.
+Image plaintext is packed as metadata + raw image bytes and then encrypted. Images are not converted to base64 before storage encryption/upload.
+
+Google can still observe unavoidable metadata such as:
+
+- file sizes;
+- modification timestamps;
+- opaque IDs;
+- Drive permissions;
+- appProperties used for synchronization;
+- access/account metadata.
+
+Client-side encryption does not hide those metadata classes.
+
+---
+
+## Google OAuth and session persistence
+
+O-Wallet requests:
+
+```text
+openid
+email
+profile
+https://www.googleapis.com/auth/drive.file
+```
+
+The active bearer token is stored only in `sessionStorage` so F5/reload in the current tab can continue without immediately losing authorization.
+
+Longer Google remember windows store only account/reconnect metadata in `localStorage`; they do **not** store the bearer token.
+
+The current default Google remember duration is **30 days**. When valid remembered metadata exists, O-Wallet attempts silent reconnect on startup using Google Identity Services. Silent reconnect is best-effort: browser/Google policy may still require explicit user interaction.
+
+O-Wallet also performs reconnect attempts around expiry/focus/online transitions where appropriate. It does not possess a backend refresh-token service.
+
+### Account switching
+
+`Switch Google account on this device` clears the local O-Wallet browser state for the current account, including vault config/device-bound unlock state/local secrets, but does not delete that user's Drive folder.
+
+---
+
+## Vault remembered unlock
+
+Vault remembered unlock is a separate convenience feature from Google account remembering.
+
+Current default:
+
+```text
+vaultRemember = off
+```
+
+If enabled, O-Wallet stores a non-extractable DEK `CryptoKey` in IndexedDB with an expiry timestamp.
+
+This improves convenience but weakens protection against someone with access to the same browser profile/device. It is not intended for shared or untrusted devices.
+
+Explicit `Lock vault` clears remembered DEK state.
+
+---
+
+## Quick Unlock / WebAuthn
+
+Quick Unlock is a **per-device convenience layer** configured in Settings. It does not replace the password/recovery model.
+
+The feature first verifies the current password, then creates a platform WebAuthn credential tied to the current origin/vault.
+
+There are two modes.
+
+### PRF mode
+
+On platforms/authenticators that expose WebAuthn PRF:
+
+```text
+platform authenticator + user verification
+    -> PRF output
+    -> SHA-256 domain-separated derivation
+    -> AES-GCM wrapping key
+    -> unwrap local DEK copy
+```
+
+This binds the local Quick Unlock wrapping key to authenticator output.
+
+### Platform-UV compatibility mode
+
+Windows currently uses a compatibility path because Windows Hello/browser PRF behavior is inconsistent.
+
+In this mode:
+
+- Windows Hello/platform authenticator performs user verification;
+- a separate non-extractable AES `CryptoKey` is stored locally in IndexedDB;
+- the verified WebAuthn assertion acts as an application gate before that key is used to unwrap the DEK.
+
+This mode is **not cryptographically equivalent to PRF mode**. A malicious script executing with O-Wallet's origin/browser privileges could potentially bypass application-level gating and use locally accessible key material. Treat it as protection against casual local access, not as a hardened hardware-bound vault.
+
+Quick Unlock does not protect against:
+
+- compromised frontend JavaScript;
+- malicious browser extensions;
+- device malware;
+- an attacker controlling the same browser profile/runtime.
+
+If Quick Unlock fails, the canonical password remains the fallback.
+
+Quick Unlock configuration is device-local and not synced to Drive.
+
+---
+
+## OCR boundary
+
+Normal OCR uses Tesseract.js in the browser.
+
+O-Wallet does not intentionally send OCR screenshots to an O-Wallet backend. Teaching mode, region editing, inline-label cleanup, transaction parsing, rule matching and duplicate detection execute in the browser.
+
+User-selected screenshots are validated and bounded before processing. Controls include limits for:
+
+- file bytes;
+- decoded image pixels;
+- OCR text length;
+- OCR box count.
+
+Accepted images are encrypted locally before normal persistence/sync.
+
+The service worker does not maintain a persistent third-party executable OCR runtime cache. Browser HTTP caches may still behave according to normal browser policy.
+
+---
+
+## Voice entry boundary
+
+Voice Entry invokes the browser Speech Recognition API.
+
+O-Wallet itself:
+
+- does not store microphone audio;
+- stores recognized text only as needed for the active workflow;
+- may store user-approved accent correction pairs in encrypted settings;
+- may provide field-specific vocabulary/context hints where supported.
+
+Recognition processing location depends on the browser/device. Some browser implementations may send audio to the browser vendor's speech service. Therefore Voice Entry is **not guaranteed to be fully local**.
+
+On hosts supporting `public/_headers`, microphone permission is restricted to the O-Wallet origin. GitHub Pages does not consume `_headers`, so browser permission prompts plus the application's CSP/frame protections remain the effective boundary there.
+
+---
+
+## Optional AI provider boundary
+
+AI image reading is disabled by default.
+
+When the user explicitly invokes AI reading:
+
+- the selected image is held in memory and submitted directly from the browser to OpenRouter;
+- OpenRouter may route it to the selected model provider;
+- O-Wallet requests provider data collection denial where supported;
+- the response is treated as untrusted input and passed through bounded parsing/normalization.
+
+The OpenRouter API key is encrypted with the current DEK and stored as a **device-local secret**. It is not synced to Drive or included in ordinary export records.
+
+The reference build allowlists only OpenRouter rather than arbitrary custom AI endpoints.
+
+Client-side Drive encryption obviously cannot protect a screenshot while the user intentionally sends it to an external AI service.
+
+---
+
+## Third-party import boundary
+
+Supported backup import is local-only by design.
+
+The user-selected backup:
+
+- is read through the browser File API;
+- is transferred to a dedicated Web Worker;
+- is parsed with `sql.js`/WASM;
+- is not written as an original backup blob to O-Wallet IndexedDB;
+- is not uploaded to Google Drive or an O-Wallet backend.
+
+Only normalized entities the user confirms are passed into the regular encrypted O-Wallet repository.
+
+Backup files are treated as untrusted input. The importer uses fixed queries/adapters, table/row validation, byte/row/string limits and worker timeouts.
+
+A Web Worker isolates expensive parsing from the UI thread but is **not** a formal security sandbox against vulnerabilities in the browser/WASM/parser dependency.
+
+---
+
+## Shared Wallet security model
+
+Shared Wallets keep the backend-free architecture while adding cross-account encrypted Drive sharing.
+
+### Member feeds
+
+Each member owns an encrypted member feed in their own Drive. Other participants do not receive write access to another participant's feed.
+
+Shared transactions contain immutable creator attribution, and ordinary edit/delete operations are limited to the creator's own feed.
+
+### Owner control and removal
+
+The owner maintains encrypted membership/control data.
+
+Before removing an active member, O-Wallet archives that member's current feed into owner-owned encrypted storage and then rotates the group key. Remaining members receive new key material through encrypted envelopes.
+
+Key rotation does **not** erase plaintext, old ciphertext or keys a former member legitimately obtained while authorized.
+
+### Invitations
+
+Invite URLs contain a high-entropy **transport secret**, not the group key ring.
+
+The initial group key ring is protected inside a registration file shared only to the invited Google account. The invitation Drive permission uses the invitation expiry time.
+
+The join flow checks the signed-in Google identity and uses Google Picker to explicitly authorize/select the registration file, allowing O-Wallet to retain the narrow `drive.file` scope.
+
+A forwarded invitation link alone is therefore insufficient to recover the initial group keys.
+
+### Public ciphertext
+
+Some shared control/feed files are readable by link as **ciphertext** to permit narrow cross-account reads without broader Drive OAuth access.
+
+File IDs/public-read ciphertext are therefore not treated as authentication secrets. Confidentiality depends on the relevant group keys.
+
+### Safety snapshots and nicknames
+
+Each member keeps an encrypted personal safety snapshot of merged shared-wallet state. It is a recovery/read-only aid, not an immutable audit log or consensus layer.
+
+Personal member nicknames live only in that user's encrypted personal settings and are not shared group state.
+
+---
+
+## Personal Cloud security model — experimental
+
+Personal Cloud is optional. The companion Worker runs in the **user's own Cloudflare account**, not an O-Project Cloudflare account.
+
+The current v1 Worker implements:
+
+```text
+GET /health
+GET /v1/capabilities
+KV-backed cron heartbeat
+```
+
+`/v1/capabilities` requires a bearer `PAIRING_TOKEN` configured as a Worker secret.
+
+### Device-side storage
+
+O-Wallet stores:
+
+- Worker URL and capability/heartbeat metadata as local non-secret configuration;
+- pairing token as a DEK-encrypted local secret.
+
+The pairing token is not intentionally synced to Drive.
+
+### Current Worker data boundary
+
+Personal Cloud v1 does **not** send the following to the Worker:
+
+- transaction records;
+- balances;
+- password;
+- recovery key;
+- DEK;
+- security answers;
+- bank screenshots;
+- Google bearer token.
+
+The Worker currently sees only request metadata, its bearer token, capability requests and heartbeat/KV state.
+
+Future Automation Inbox/push/scheduled-action features must be reviewed against this boundary before being enabled.
+
+### CORS and pairing
+
+The reference Worker allowlists the O-Wallet GitHub Pages origin. Self-hosted deployments must update `ALLOWED_ORIGIN` accordingly.
+
+The current pairing token is a bearer secret. Anyone who steals it and can reach the Worker can call authenticated Worker endpoints. It must therefore be random, unique and kept private.
+
+### Hosted deploy importer
+
+Deploy-to-Cloudflare is an external convenience service, not part of O-Wallet's cryptographic trust model. The repository currently treats that hosted importer as experimental because provider-side repository import/provisioning can fail independently of O-Wallet.
+
+Manual Wrangler deployment remains the deterministic fallback.
+
+---
+
+## Browser security policy
+
+The production application injects a restrictive Content Security Policy.
+
+Current policy restricts executable/resource origins to those required for:
+
+- bundled O-Wallet assets;
+- Google Identity/Drive/Picker;
+- Tesseract runtime/language resources;
+- optional OpenRouter requests.
+
+Additional controls include:
+
+- `script-src-attr 'none'`;
+- `object-src 'none'`;
+- `base-uri 'none'`;
+- `upgrade-insecure-requests`;
+- `Referrer-Policy: no-referrer`;
+- runtime refusal to render inside another frame;
+- no production source maps.
+
+GitHub Pages cannot apply arbitrary custom response headers from this repository. O-Wallet therefore uses meta CSP + runtime frame checks there.
+
+`public/_headers` contains stronger headers for compatible hosts such as Cloudflare Pages, including `frame-ancestors`, `nosniff`, COOP and Permissions-Policy controls.
+
+---
+
+## Hostile-input and resource limits
+
+O-Wallet treats browser-selected and remote data as untrusted input.
+
+Current safeguards include validation/limits for:
+
+- vault config structure and KDF parameters;
+- remote Drive payload bytes;
+- image file signatures;
+- image byte size;
+- decoded image pixels;
+- OCR output length/box count;
+- SQLite backup size;
+- SQLite rows/strings;
+- importer execution time;
+- AI response shape/size;
+- export filenames and spreadsheet formula prefixes.
+
+These controls reduce parser and denial-of-service exposure but do not turn browser/WASM/third-party libraries into formally verified sandboxes.
+
+---
+
+## Supply-chain and CI controls
+
+Source checks reject or flag high-risk conditions including:
+
+- `dangerouslySetInnerHTML`;
+- direct `innerHTML` / `outerHTML` writes;
+- `eval`;
+- `new Function`;
+- `document.write`;
+- broad unrestricted Google Drive OAuth scope;
+- obvious client-secret/private-key material;
+- unprotected `_blank` links;
+- missing AAD/vault/resource-limit invariants.
+
+Dependencies and devDependencies are exact-version pinned in `package.json`.
+
+CI also performs:
+
+- AES-GCM/AAD tamper smoke tests;
+- vulnerability audit gate;
+- TypeScript/Vite build;
+- built-artifact secret/CSP/source-map checks;
+- CodeQL workflow;
+- Dependabot configuration.
+
+The repository currently does **not** commit `package-lock.json` because of a previous Vite/Rolldown optional-dependency lock issue. CI resolves a lock for each run. This reduces reproducibility compared with a reviewed committed lockfile and should be revisited.
+
+Automated checks are defensive invariants, not an independent security audit.
+
+---
 
 ## Threats this design helps against
 
-- accidental public exposure of Drive files;
-- compromise of an O-Wallet static hosting origin **after** previously uploaded ciphertext has already been stored (historical Drive blobs remain encrypted);
-- developer database breach, because there is no central O-Wallet database in this architecture;
-- casual inspection/copying of IndexedDB while the vault is locked **and remembered unlock is disabled**.
+- Accidental exposure of encrypted Drive files.
+- Casual inspection/copying of locked-vault IndexedDB when remembered-unlock/Quick-Unlock convenience paths are disabled.
+- Central O-Project database breach for transaction content, because no such production transaction database exists in the reference architecture.
+- Ciphertext substitution between different v2 records/images/local-secret identities.
+- Some malformed/unbounded-input denial-of-service cases.
+
+---
 
 ## Threats this design does not solve
 
-- malicious JavaScript served by a compromised GitHub Pages deployment while a user unlocks the vault (the page can observe plaintext/key material at runtime);
-- malware/browser extensions with access to the page or device;
-- weak user passwords being offline-guessed against `vault.json`;
-- a user losing both password and recovery key;
-- Google/account metadata leakage such as access times and ciphertext sizes;
-- screenshots copied elsewhere by Android/iOS before O-Wallet receives them.
+- Malicious JavaScript served by a compromised O-Wallet deployment while a vault is unlocked.
+- A malicious dependency included in the final application bundle.
+- Browser extensions with page privileges.
+- Device malware/keyloggers/screen capture.
+- Compromise of the user's Google account/browser profile/device.
+- Weak password offline guessing against stolen vault metadata.
+- Loss of both password and recovery key.
+- Metadata leakage through Drive/file/network activity.
+- Screenshots copied/backed up elsewhere by the OS before O-Wallet receives them.
+- External speech-provider processing when the browser uses cloud speech recognition.
+- External AI-provider access to screenshots the user deliberately submits.
+- Social/operational compromise of a Shared Wallet member.
+- Personal Cloud bearer-token theft.
 
-For a public release, protect the GitHub account/repository with strong MFA, branch protection, dependency review, and reproducible deployments.
+Encryption at rest cannot protect plaintext while the legitimate application runtime is actively using it.
 
-## Password guidance
+---
 
-The UI only enforces 8 characters for V1 usability. A public release should add a strength estimator and encourage long passphrases. Because `vault.json` contains a password-wrapped DEK, an attacker who steals that file can attempt password guesses offline.
+## Operational recommendations
 
-## Session persistence trade-offs
+For the reference deployment and forks:
 
-Google authorization and vault unlocking are separate:
+- use passkeys/strong MFA for GitHub and Google maintainer accounts;
+- protect `main` with branch protection/rulesets where practical;
+- require CI/security checks before merge;
+- tightly restrict who can modify workflows/deployment configuration;
+- review dependency upgrades;
+- keep CodeQL/Dependabot/security alerts enabled;
+- use long user passphrases;
+- keep recovery codes offline/private;
+- avoid remembered unlock on shared devices;
+- restrict `VITE_GOOGLE_API_KEY` by HTTP referrer and required Google APIs;
+- never add a Google OAuth `client_secret` to this browser project;
+- use a unique high-entropy Personal Cloud pairing token;
+- update `ALLOWED_ORIGIN` when self-hosting Personal Cloud.
 
-- Google connection defaults to the current tab session. The access token is kept in `sessionStorage`, so F5/reload does not immediately disconnect the app. Long remember windows store only account/reconnect metadata in `localStorage`. O-Wallet performs pre-expiry silent renewal, a short retry burst after expiry/reload, and later focus/online retries. Google can still require explicit user interaction because the app has no backend refresh-token service.
-- Vault remembered unlock is disabled by default. If the user enables it, O-Wallet stores the non-extractable DEK `CryptoKey` in IndexedDB until the selected expiry. This improves convenience but reduces protection against someone who can use the same browser profile. The preferred remember duration may be synced as an encrypted setting, but the actual DEK never follows that preference into Drive.
-- Explicit **Lock vault** clears the remembered DEK immediately.
-- **Switch Google account on this device** clears local ciphertext, vault config, account binding and remembered DEK, but does not delete Drive data.
+---
 
-Do not enable remembered unlock on shared/untrusted devices.
+## Manual testing still required
 
+Current automated CI does not fully validate browser/provider-specific flows.
 
-## OCR teaching and batch import
+Manual smoke testing is still required for:
 
-OCR teaching, region editing, inline-label cleanup, date parsing and semantic duplicate detection all execute in the browser. Raw screenshots are not sent to an O-Wallet backend. During multi-image OCR, each accepted source image is encrypted locally before it is written to IndexedDB/Drive.
+- new-account onboarding with an empty Drive;
+- existing-vault restore/unlock;
+- Google silent reconnect vs explicit reconnect;
+- WebAuthn PRF on supported mobile platforms;
+- Windows Hello platform-UV Quick Unlock;
+- browser microphone permission and speech recognition;
+- Google Picker/shared-wallet cross-account invitations;
+- PWA install/update/offline shell behavior;
+- Personal Cloud Worker provisioning/pairing on Cloudflare.
 
-Semantic duplicate warnings are advisory. Exact-looking matches are deselected by default in the batch review UI, but the user can explicitly choose to save them. This mechanism is not a cryptographic or synchronization conflict check and does not delete existing records.
+---
 
+## Security status
 
-## Google token migration in v0.6.2
+O-Wallet has received iterative defensive hardening in the source and CI pipeline, but **no independent cryptographic or application-security audit has been completed**.
 
-Older O-Wallet builds could keep the current bearer token inside the long-duration local session object. v0.6.2 migrates that format: a still-valid token is moved to `sessionStorage`, and the long-lived `localStorage` record is rewritten without `accessToken` / `expiresAt`. Expired tokens are discarded. This reduces the lifetime of bearer credentials in persistent browser storage, but XSS on an active O-Wallet origin can still access the current session token and remains a threat.
-
-## Importing third-party backup files
-
-The external-data importer is local-only by design:
-
-- the user-selected backup is read with the browser File API;
-- its `ArrayBuffer` is transferred to a dedicated Web Worker;
-- SQLite parsing runs with `sql.js` / WebAssembly inside that worker;
-- the original backup bytes are not written to O-Wallet IndexedDB and are not uploaded to Google Drive or an O-Wallet backend;
-- only the normalized entities the user confirms are passed to the normal O-Wallet repository, encrypted, and synchronized.
-
-Backup files are untrusted input. Adapters use fixed SQL statements rather than source-controlled SQL strings, validate required tables before parsing, reject malformed rows, and close the in-memory database when parsing ends. Parsing in a worker also isolates expensive SQLite work from the main UI thread, although it is not a security sandbox against browser/runtime vulnerabilities in the SQLite/WASM dependency. Keep `sql.js` updated as part of dependency maintenance.
-
-Source-specific semantics that are not reliable enough to infer are surfaced for explicit user choice instead of being silently converted. Attachment metadata does not imply that the original image bytes are present; O-Wallet does not attempt to follow filesystem paths embedded in a backup.
-
-
-## v0.8.0 metadata additions
-
-Account group names, category hierarchy metadata and OCR automation rules are encrypted inside normal O-Wallet records/settings before Drive sync. Rule text can contain recipient names or spending patterns, so it is intentionally not kept as plaintext application metadata.
-
-
-## Sync metadata in v0.9.0
-
-Incremental synchronization stores non-secret operational metadata in IndexedDB: Drive file IDs, entity IDs, version/timestamp/device stamps, a Drive Changes API cursor and pending sync IDs. Encrypted transaction/image payloads remain unchanged. Remote image bytes are downloaded only when viewed on a secondary device. OAuth access tokens are still handled by the existing Google session layer and are not added to the sync metadata tables.
-
-
-## v0.10.0 browser and supply-chain hardening
-
-O-Wallet has no application backend, but the browser is a privileged execution environment while a vault is unlocked. v0.10.0 therefore treats frontend integrity as a primary security boundary.
-
-### Browser policy
-
-Production builds inject a restrictive CSP that allows only the resource origins needed by the bundled app, Google Identity/Drive, and Tesseract runtime assets. The production page uses `no-referrer`; Google/Drive requests use `cache: no-store` and `referrerPolicy: no-referrer`. O-Wallet also refuses to render when embedded in a parent frame. Compatible hosts can additionally serve the headers in `public/_headers`, including `frame-ancestors 'none'`, `nosniff`, COOP and Permissions-Policy. GitHub Pages does not consume `_headers`, so its deployment relies on meta CSP plus the runtime frame guard.
-
-### Ciphertext binding
-
-New record/image payloads use AES-GCM format v2 with authenticated additional data (AAD). The AAD identifies the expected entity (`record:<kind>:<id>` or `image:<id>`). An encrypted blob copied to another record, kind or image ID will fail authentication. Version-1 ciphertext remains decryptable for migration compatibility and is upgraded naturally when the entity is next written.
-
-### Hostile input/resource limits
-
-User-selected images and SQLite backups are treated as untrusted input. O-Wallet validates file signatures and bounded sizes before processing, limits image decoded pixels, caps OCR text/box output, limits SQLite source rows/strings and enforces a worker timeout. Remote Drive payloads are also size-bounded before they enter decrypt/parse paths. These controls primarily reduce denial-of-service and parser-risk exposure; they do not turn browser/WASM parsers into formal sandboxes.
-
-### Password/recovery validation
-
-New password wrapping uses PBKDF2-HMAC-SHA256 with 600,000 iterations. Vault parameters are validated before KDF/decrypt work so a modified `vault.json` cannot request arbitrarily expensive iteration counts. Security-question answers have independent salted PBKDF2 verifiers, but the questions are not cryptographic recovery secrets: recovery still requires the random recovery key.
-
-### Frontend/supply chain
-
-CI rejects common high-risk source primitives (`dangerouslySetInnerHTML`, direct `innerHTML`, `eval`, `new Function`, `document.write`), broad Drive OAuth scope, accidental secrets and unprotected `_blank` links. Runtime dependencies are exact-version pinned in `package.json`; production source maps are forbidden; lifecycle scripts are disabled during CI install; high-severity `npm audit`, CodeQL, Dependabot and post-build secret/CSP checks are configured.
-
-For fully reproducible dependency resolution, maintainers should also generate, review and commit `package-lock.json` from a trusted machine.
-
-### What these measures do not solve
-
-Encryption at rest cannot protect plaintext while a legitimate O-Wallet tab is unlocked if the browser/device or the deployed frontend itself is compromised. A malicious browser extension, device malware, compromised GitHub maintainer/deployment, or malicious dependency that reaches the final bundle can act with the same privileges as O-Wallet. Protect maintainer Google/GitHub accounts with passkeys/2FA, protect the main branch and review dependency/workflow changes. Independent review is recommended before describing O-Wallet as high-assurance financial software.
-
-
-
-## v0.13.0 speech-recognition boundary
-
-Voice entry does not add an O-Wallet speech backend. O-Wallet invokes the browser's Speech Recognition API, keeps only recognized text and user-approved accent correction pairs, and never stores microphone audio in IndexedDB or Google Drive. Depending on the browser/platform, recognition may be performed locally or by the browser vendor's speech service; users should treat that provider as an external processing boundary.
-
-The calibration profile is not an acoustic model. It is a bounded set of transcript substitutions plus field-specific vocabulary hints. This keeps synced data small and avoids retaining biometric-style voice recordings. Contextual phrase biasing is feature-detected and ignored when unsupported.
-
-On hosts that honor `public/_headers`, microphone permission is restricted to the O-Wallet origin (`microphone=(self)`). GitHub Pages does not consume that file, so browser permission prompts and the existing frame/CSP protections remain the effective boundary there.
-
-## v0.11.0 optional AI provider boundary
-
-AI changes the privacy boundary only when the user explicitly invokes it. Normal OCR remains on-device. When **Read with AI** is used, the selected image is converted to a data URL in memory and sent directly from the browser to OpenRouter's Chat Completions endpoint; OpenRouter may route the request to the selected model provider. The request asks OpenRouter to deny provider data collection where supported.
-
-The API key is a device-local secret. O-Wallet encrypts it with the current vault DEK and stores only ciphertext in IndexedDB. It is not part of `AppSettings`, Drive records, export files, or sync queues. Switching/restoring a vault clears device-local secret rows so a key encrypted under an old DEK is not retained. Endpoint/model configuration may sync because it is not secret.
-
-AI output is untrusted input: response size is capped, only a small JSON schema is accepted, strings/numbers/dates are normalized, and unsupported fields are ignored. API/network errors are mapped to user-safe messages rather than exposing response bodies. The production CSP adds only `https://openrouter.ai` to `connect-src`; arbitrary custom endpoints are deliberately rejected in the reference build.
-
-A third-party AI provider can see images the user chooses to send. Client-side Drive encryption does not protect an image while it is being intentionally submitted to that provider. Users should not enable/use AI for screenshots they do not want processed by the selected external service.
-
-
-## Shared-wallet security model
-
-v0.12.0 adds a distributed shared-wallet model while keeping the O-Wallet backend-free architecture.
-
-- No participant receives write access to another participant's member feed or personal shared-wallet folder.
-- Shared transactions include an immutable creator member ID, and normal editing/deletion is restricted to that member's own feed.
-- The owner controls membership and group-key rotation through the encrypted control file. Before an active member is removed, O-Wallet copies that member's current feed into an owner-owned encrypted archive so the former member cannot rewrite historical group records through their own Drive file. Removal then rotates the group key. It prevents access to future control/feed rewrites encrypted under the new key, but it cannot erase plaintext or old ciphertext/keys a former member legitimately obtained while authorized.
-- Per-user nicknames are private aliases in personal encrypted settings and never enter the group control/feed files.
-- Invitation URLs contain a high-entropy **transport secret**, but they do not contain the group key ring. The initial group key ring is encrypted inside a tiny owner-created registration file that is shared only to the invited Google account. A forwarded invite link alone is therefore insufficient to recover shared-wallet keys.
-- The registration-file Drive permission uses the invitation expiry time. The join flow also checks the signed-in Google email and explicitly selects/authorizes that exact file through Google Picker so `drive.file` can remain the only Drive OAuth scope.
-- Pending invitees do not receive key-ring envelopes through the public control file. Once their registration is completed and the owner observes the join, they become active and can receive future rotations.
-- Cross-account shared control/feed reads use public-by-link Drive files containing ciphertext only. File IDs and ciphertext are therefore not treated as authentication secrets; confidentiality depends on the group keys.
-- Owner-only transport secrets used to wrap future group-key rings are stored only in the owner's personal encrypted AppSettings.
-- Every member saves an encrypted personal safety snapshot of the current merged ledger. Snapshots are recovery aids, not consensus or immutable audit logs.
+Do not describe the project as audited, formally verified, zero-knowledge, tamper-proof or high-assurance financial software.
