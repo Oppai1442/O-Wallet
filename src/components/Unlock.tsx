@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Fingerprint, KeyRound, LockKeyhole, ShieldCheck, Wallet } from 'lucide-react'
+import { Fingerprint, KeyRound, LockKeyhole, Wallet } from 'lucide-react'
 import { questionLabel, useI18n } from '../i18n'
 import {
   clearQuickUnlockConfig,
-  enableQuickUnlock,
   handOffQuickUnlockToWallet,
   hasQuickUnlockForVault,
   isQuickUnlockCancellation,
-  quickUnlockPlatformAvailable,
   unlockWithQuickUnlock,
 } from '../lib/quickUnlock'
 import { reportDiagnostic } from '../lib/security'
@@ -20,19 +18,15 @@ const COPY = {
     quickUnlock: 'Mở nhanh bằng sinh trắc học',
     quickUnlockHint: 'Dùng vân tay, Face ID hoặc Windows Hello của thiết bị này. Password vẫn là phương án dự phòng.',
     quickUnlockBusy: 'Đang xác thực…',
-    enableQuick: 'Bật Quick Unlock trên thiết bị này sau khi mở khóa',
-    enableHint: 'O-Wallet ưu tiên WebAuthn PRF; trên một số Windows Hello sẽ dùng platform verification tương thích hơn. Credential chỉ nằm trên thiết bị này.',
-    unsupported: 'Thiết bị hoặc trình duyệt này chưa hỗ trợ platform authenticator cho Quick Unlock.',
-    failed: 'Quick Unlock cũ không dùng được trên thiết bị này. Cấu hình local đã được gỡ; hãy nhập password và bật lại Quick Unlock một lần.',
+    unsupported: 'Quick Unlock trên thiết bị này không còn khả dụng.',
+    failed: 'Quick Unlock không dùng được trên thiết bị này. Cấu hình local đã được gỡ; hãy mở bằng password rồi thiết lập lại trong Settings.',
   },
   en: {
     quickUnlock: 'Quick unlock with biometrics',
     quickUnlockHint: 'Use this device’s fingerprint, Face ID, or Windows Hello. Your password remains the fallback.',
     quickUnlockBusy: 'Authenticating…',
-    enableQuick: 'Enable Quick Unlock on this device after unlocking',
-    enableHint: 'O-Wallet prefers WebAuthn PRF and uses a more compatible platform-verification path for some Windows Hello providers. The credential stays on this device.',
-    unsupported: 'This device or browser does not expose a platform authenticator for Quick Unlock.',
-    failed: 'The existing Quick Unlock credential cannot be used on this device. Its local setup was removed; enter your password and enable Quick Unlock once again.',
+    unsupported: 'Quick Unlock is no longer available on this device.',
+    failed: 'Quick Unlock cannot be used on this device. Its local setup was removed; unlock with your password and set it up again in Settings.',
   },
 } as const
 
@@ -54,20 +48,13 @@ export function Unlock() {
   const [busy, setBusy] = useState(false)
   const [quickBusy, setQuickBusy] = useState(false)
   const [quickAvailable, setQuickAvailable] = useState(false)
-  const [platformAvailable, setPlatformAvailable] = useState(false)
-  const [enableQuick, setEnableQuick] = useState(false)
   const [quickError, setQuickError] = useState('')
 
   useEffect(() => {
     let cancelled = false
-    void Promise.all([
-      quickUnlockPlatformAvailable(),
-      hasQuickUnlockForVault(vaultConfig),
-    ]).then(([platform, configured]) => {
-      if (cancelled) return
-      setPlatformAvailable(platform)
-      setQuickAvailable(configured)
-    }).catch((checkError) => reportDiagnostic('quick-unlock-ui-check', checkError))
+    void hasQuickUnlockForVault(vaultConfig)
+      .then((configured) => { if (!cancelled) setQuickAvailable(configured) })
+      .catch((checkError) => reportDiagnostic('quick-unlock-ui-check', checkError))
     return () => { cancelled = true }
   }, [vaultConfig])
 
@@ -76,16 +63,6 @@ export function Unlock() {
     setBusy(true)
     setQuickError('')
     try {
-      if (enableQuick && platformAvailable && !quickAvailable) {
-        try {
-          await enableQuickUnlock(vaultConfig, password)
-        } catch (quickSetupError) {
-          if (!isQuickUnlockCancellation(quickSetupError)) {
-            reportDiagnostic('quick-unlock-enable', quickSetupError)
-            setQuickError(quickSetupError instanceof Error && quickSetupError.message === 'error.quickUnlockUnsupported' ? L.unsupported : L.failed)
-          }
-        }
-      }
       await unlockWithPassword(password)
     } finally {
       setBusy(false)
@@ -104,7 +81,6 @@ export function Unlock() {
         reportDiagnostic('quick-unlock-open', quickUnlockError)
         await clearQuickUnlockConfig().catch((clearError) => reportDiagnostic('quick-unlock-clear-stale', clearError))
         setQuickAvailable(false)
-        setEnableQuick(false)
         setQuickError(quickUnlockError instanceof Error && quickUnlockError.message === 'error.quickUnlockUnsupported' ? L.unsupported : L.failed)
       }
     } finally {
@@ -151,23 +127,6 @@ export function Unlock() {
           <div className={quickAvailable ? 'mt-5' : 'mt-6'}>
             <Label>{t('onboarding.password')}</Label>
             <Input autoFocus={!quickAvailable} type="password" maxLength={256} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void submitPassword() }} />
-
-            {!quickAvailable && platformAvailable && (
-              <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-stone-200 p-3 text-sm dark:border-stone-800">
-                <input type="checkbox" className="mt-0.5 h-4 w-4 rounded" checked={enableQuick} onChange={(e) => setEnableQuick(e.target.checked)} />
-                <span>
-                  <span className="flex items-center gap-1.5 font-semibold"><Fingerprint size={15} />{L.enableQuick}</span>
-                  <span className="mt-1 block text-xs leading-5 text-stone-500">{L.enableHint}</span>
-                </span>
-              </label>
-            )}
-
-            {!quickAvailable && !platformAvailable && (
-              <div className="mt-3 flex items-start gap-2 rounded-xl bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-500 dark:bg-stone-900/60">
-                <ShieldCheck size={15} className="mt-0.5 shrink-0" />{L.unsupported}
-              </div>
-            )}
-
             <Button className="mt-4 w-full" onClick={submitPassword} disabled={!password || busy || quickBusy}><LockKeyhole size={17} /> {busy ? t('unlock.unlocking') : t('unlock.button')}</Button>
             <button className="mt-4 w-full text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400" onClick={() => setMode('recovery')}>{t('unlock.forgot')}</button>
           </div>
