@@ -31,9 +31,10 @@ import { RuleManager } from './RuleManager'
 import { CategoryPicker } from './CategoryPicker'
 import { AccountSelect } from './AccountSelect'
 import { QuickUnlockSettings } from './QuickUnlockSettings'
+import { PersonalCloudSettings } from './PersonalCloudSettings'
 import { Badge, Button, Card, Input, Label, Select } from './ui'
 
-type SettingsSection = 'general' | 'wallet' | 'input' | 'sync' | 'data'
+type SettingsSection = 'general' | 'wallet' | 'input' | 'sync' | 'cloud' | 'data'
 type WalletSection = 'defaults' | 'accounts' | 'categories' | 'budgets' | 'rules'
 type InputSection = 'voice' | 'ocr' | 'ai' | 'import'
 
@@ -43,6 +44,7 @@ const COPY = {
     wallet: 'Ví cá nhân', walletHint: 'Mặc định, tài khoản và danh mục',
     input: 'Nhập liệu & AI', inputHint: 'Voice, OCR, AI và import',
     sync: 'Sync & bảo mật', syncHint: 'Google Drive, Quick Unlock và khóa ví',
+    cloud: 'Personal Cloud', cloudHint: 'Cloudflare Worker của riêng bạn',
     data: 'Dữ liệu & ứng dụng', dataHint: 'Storage, export và thông tin app',
     defaults: 'Mặc định', accounts: 'Tài khoản', categories: 'Danh mục', budgets: 'Ngân sách', rules: 'Rules',
     voice: 'Giọng nói', ocr: 'OCR', ai: 'AI', import: 'Import',
@@ -57,6 +59,7 @@ const COPY = {
     wallet: 'Personal wallet', walletHint: 'Defaults, accounts and categories',
     input: 'Input & AI', inputHint: 'Voice, OCR, AI and import',
     sync: 'Sync & security', syncHint: 'Google Drive, Quick Unlock and locking',
+    cloud: 'Personal Cloud', cloudHint: 'Your own Cloudflare Worker',
     data: 'Data & app', dataHint: 'Storage, export and app info',
     defaults: 'Defaults', accounts: 'Accounts', categories: 'Categories', budgets: 'Budgets', rules: 'Rules',
     voice: 'Voice', ocr: 'OCR', ai: 'AI', import: 'Import',
@@ -157,6 +160,7 @@ export function Settings() {
     { id: 'wallet' as const, label: L.wallet, hint: L.walletHint, icon: WalletCards },
     { id: 'input' as const, label: L.input, hint: L.inputHint, icon: Sparkles },
     { id: 'sync' as const, label: L.sync, hint: L.syncHint, icon: ShieldCheck },
+    { id: 'cloud' as const, label: L.cloud, hint: L.cloudHint, icon: Cloud },
     { id: 'data' as const, label: L.data, hint: L.dataHint, icon: Database },
   ]
 
@@ -172,6 +176,8 @@ export function Settings() {
         {section === 'input' && <div className="space-y-5"><SectionHeading title={L.inputTitle} text={L.inputText}/><SubNav value={inputSection} onChange={(value) => setInputSection(value as InputSection)} items={[[ 'voice', L.voice ], [ 'ocr', L.ocr ], [ 'ai', L.ai ], [ 'import', L.import ]]}/>{inputSection === 'voice' && <VoiceSettings settings={settings} onSaveSettings={updateSettings}/>} {inputSection === 'ocr' && <Card className="p-4 sm:p-5"><h2 className="font-bold">{t('settings.ocrTemplates')}</h2><p className="mt-1 text-sm text-stone-500">{t('settings.ocrTemplatesHint')}</p><div className="mt-4 space-y-2">{templates.length === 0 ? <div className="rounded-xl bg-stone-50 p-3 text-sm text-stone-500 dark:bg-stone-950">{t('settings.noOcrTemplates')}</div> : templates.map((template) => <div key={template.id} className="flex items-center gap-3 rounded-xl border border-stone-200 p-3 dark:border-stone-800"><div className="min-w-0 flex-1"><div className="truncate font-bold">{template.name}</div><div className="text-xs text-stone-500">{t('settings.regionCount', { count: template.regions.length })}</div></div><Button variant="ghost" className="px-2 text-rose-500" onClick={() => void updateSettings({ ocrTemplates: templates.filter((item) => item.id !== template.id) })}><Trash2 size={16}/></Button></div>)}</div></Card>} {inputSection === 'ai' && <AiSettings settings={settings} repository={repository} onSaveSettings={updateSettings}/>} {inputSection === 'import' && <ExternalImport/>}</div>}
 
         {section === 'sync' && <div className="space-y-5"><SectionHeading title={L.syncTitle} text={L.syncText}/><DriveCard/><QuickUnlockSettings/><Card className="p-4 sm:p-5"><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"><div><Label>{t('settings.autoSync')}</Label><Select value={settings?.autoSync ? 'on' : 'off'} onChange={(e) => void updateSettings({ autoSync: e.target.value === 'on' })}><option value="on">{t('common.on')}</option><option value="off">{t('common.off')}</option></Select></div><div><Label>{t('settings.googleRemember')}</Label><RememberSelect value={devicePreferences.googleRemember} onChange={(value) => void changeRemember('google', value as RememberDuration)} google/></div><div><Label>{t('settings.vaultRemember')}</Label><RememberSelect value={devicePreferences.vaultRemember} onChange={(value) => void changeRemember('vault', value as VaultRememberDuration)}/></div></div></Card><Card className="p-4 sm:p-5"><h2 className="font-bold">{t('settings.security')}</h2><p className="mt-1 text-sm text-stone-500">{t('settings.securityHint')}</p><div className="mt-4 flex flex-wrap gap-2"><Button variant="secondary" onClick={lock}><LockKeyhole size={17}/>{t('settings.lockVault')}</Button><Button variant="danger" onClick={() => void confirmSwitchAccount()}>{t('settings.switchAccount')}</Button></div><div className="mt-4 rounded-xl bg-stone-50 p-3 text-xs leading-5 text-stone-500 dark:bg-stone-950">{t('settings.securityQuestionsHint')}</div><div className="mt-3 rounded-xl bg-rose-50 p-3 text-xs leading-5 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{t('settings.switchAccountHint')}</div></Card></div>}
+
+        {section === 'cloud' && <PersonalCloudSettings/>}
 
         {section === 'data' && <div className="space-y-5"><SectionHeading title={L.dataTitle} text={L.dataText}/><Card className="p-4 sm:p-5"><h2 className="font-bold">{t('settings.localStorage')}</h2><div className="mt-4 grid grid-cols-3 gap-3"><Metric label={t('settings.records')} value={String(storage.recordCount)}/><Metric label={t('settings.images')} value={String(storage.imageCount)}/><Metric label={t('settings.encryptedImageBytes')} value={bytesToHuman(storage.imageBytes)}/></div><div className="mt-4"><h3 className="text-sm font-bold">{t('settings.export')}</h3><p className="mt-1 text-xs text-stone-500">{t('settings.exportHint')}</p><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={exportJson}><Download size={16}/>JSON</Button><Button variant="secondary" onClick={exportCsv}><Download size={16}/>CSV</Button></div></div></Card><Card className="p-4 text-xs text-stone-500 sm:p-5"><div className="flex items-center gap-2 font-bold text-stone-700 dark:text-stone-200"><ExternalLink size={15}/>{t('settings.deploymentNote')}</div><p className="mt-2">{t('settings.deploymentText')}</p><div className="mt-3 flex flex-wrap gap-3"><a className="font-semibold text-blue-600 hover:underline dark:text-blue-400" href="./privacy.html" target="_blank" rel="noreferrer">{t('settings.privacy')}</a><a className="font-semibold text-blue-600 hover:underline dark:text-blue-400" href="./terms.html" target="_blank" rel="noreferrer">{t('settings.terms')}</a></div></Card></div>}
       </div>
