@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Archive, Copy, FolderOpen, Home, Mic, Pencil, Plus, RefreshCw, RotateCcw, Trash2, UserPlus, Users, WalletCards } from 'lucide-react'
+import { Archive, Copy, FolderOpen, Mic, Pencil, Plus, RefreshCw, RotateCcw, Trash2, UserPlus, Users, WalletCards } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { useI18n } from '../i18n'
 import { formatDateTime, formatMoney } from '../lib/format'
@@ -40,7 +40,7 @@ type Tab = 'overview' | 'transactions' | 'analytics' | 'members' | 'settings'
 
 const COPY = {
   vi: {
-    profiles: 'Wallet profiles', personal: 'Personal Wallet', personalHint: 'Ví cá nhân chính', sharedHint: 'Shared profile',
+    profiles: 'Shared profiles', sharedHint: 'Shared profile',
     overview: 'Tổng quan', transactions: 'Giao dịch', analytics: 'Phân tích', members: 'Thành viên', settings: 'Cài đặt',
     history: 'Shared history', archived: 'Đã lưu trữ', archiveReadOnly: 'Bản lưu chỉ đọc, tách hoàn toàn khỏi Personal Wallet.',
     reopen: 'Mở lại thành profile mới', deleteArchive: 'Xóa vĩnh viễn bản lưu này?', balance: 'Số dư', recent: 'Giao dịch gần đây',
@@ -48,10 +48,10 @@ const COPY = {
     danger: 'Vùng nguy hiểm', deleteHint: 'Profile chuyển read-only ngay. Sau 90 ngày, mỗi thành viên sẽ nhận archive riêng trong personal vault khi họ mở O-Wallet.',
     scheduleDelete: 'Lên lịch xóa sau 90 ngày', scheduleConfirm: 'Chuyển profile sang read-only và bắt đầu thời gian chờ 90 ngày?',
     analyticsTitle: 'Shared profile analytics', analyticsSubtitle: 'Chỉ phân tích dữ liệu của profile này, không cộng vào Personal Wallet.',
-    switchPersonal: 'Mở Personal Wallet', createProfile: 'Tạo shared profile', profileName: 'Tên profile', noProfiles: 'Chưa có shared profile.',
+    createProfile: 'Tạo shared profile', profileName: 'Tên profile', noProfiles: 'Chưa có shared profile.',
   },
   en: {
-    profiles: 'Wallet profiles', personal: 'Personal Wallet', personalHint: 'Primary personal wallet', sharedHint: 'Shared profile',
+    profiles: 'Shared profiles', sharedHint: 'Shared profile',
     overview: 'Overview', transactions: 'Transactions', analytics: 'Analytics', members: 'Members', settings: 'Settings',
     history: 'Shared history', archived: 'Archived', archiveReadOnly: 'This read-only archive is completely isolated from Personal Wallet.',
     reopen: 'Reopen as new profile', deleteArchive: 'Permanently delete this archive?', balance: 'Balance', recent: 'Recent transactions',
@@ -59,7 +59,7 @@ const COPY = {
     danger: 'Danger zone', deleteHint: 'The profile becomes read-only immediately. After 90 days, each member receives an independent archive in their personal vault the next time they open O-Wallet.',
     scheduleDelete: 'Schedule deletion in 90 days', scheduleConfirm: 'Make this profile read-only and start the 90-day deletion window?',
     analyticsTitle: 'Shared profile analytics', analyticsSubtitle: 'Only this profile is analyzed; nothing is added to Personal Wallet.',
-    switchPersonal: 'Open Personal Wallet', createProfile: 'Create shared profile', profileName: 'Profile name', noProfiles: 'No shared profiles yet.',
+    createProfile: 'Create shared profile', profileName: 'Profile name', noProfiles: 'No shared profiles yet.',
   },
 } as const
 
@@ -75,13 +75,6 @@ function setGroupUrl(groupId: string) {
   url.searchParams.delete('action')
   url.hash = ''
   window.history.replaceState({}, '', `${url.pathname}${url.search}`)
-}
-function openPersonal() {
-  const url = new URL(window.location.href)
-  url.searchParams.set('page', 'home')
-  url.searchParams.delete('group')
-  url.searchParams.delete('action')
-  window.location.assign(`${url.pathname}${url.search}`)
 }
 function membershipsEqual(a: SharedWalletMembership, b: SharedWalletMembership) { return JSON.stringify(a) === JSON.stringify(b) }
 function sharedUiError(error: unknown, fallback: string) { return error instanceof Error && error.message.startsWith('error.') ? error.message : fallback }
@@ -137,8 +130,13 @@ export function SharedWalletProfiles() {
     setBusy(true); setError('')
     try {
       const result = await loadSharedWallet(googleSession.accessToken, target, ownerSecretsOverride ?? settings?.sharedWalletOwnerSecrets?.[target.groupId] ?? {})
-      setLoaded(result); setEditName(result.control.name)
-      if (!result.fromSnapshot && !membershipsEqual(result.membership, target)) await saveMembership({ ...result.membership, name: result.control.name })
+      const cachedMembership: SharedWalletMembership = {
+        ...result.membership,
+        name: result.control.name,
+        lifecycleCache: result.control.lifecycle ?? { state: 'active' },
+      }
+      setLoaded({ ...result, membership: cachedMembership }); setEditName(result.control.name)
+      if (!result.fromSnapshot && !membershipsEqual(cachedMembership, target)) await saveMembership(cachedMembership)
     } catch (loadError) { setError(sharedUiError(loadError, 'error.sharedLoadFailed')) }
     finally { setBusy(false) }
   }
@@ -155,7 +153,7 @@ export function SharedWalletProfiles() {
   const currency = ledger?.defaultCurrency ?? settings?.defaultCurrency ?? 'VND'
   const totals = sharedTotals(loaded?.transactions ?? [])
   const balances = ledger ? sharedAccountBalances(ledger, loaded?.transactions ?? []) : new Map<string, number>()
-  const lifecycle = loaded?.control.lifecycle ?? { state: 'active' as const }
+  const lifecycle = loaded?.control.lifecycle ?? membership?.lifecycleCache ?? { state: 'active' as const }
   const readOnly = membership?.role === 'viewer' || Boolean(loaded?.fromSnapshot) || lifecycle.state !== 'active'
   const due = lifecycle.state === 'closing' && Boolean(lifecycle.purgeAfter) && Date.parse(lifecycle.purgeAfter!) <= Date.now()
 
@@ -164,9 +162,10 @@ export function SharedWalletProfiles() {
     setBusy(true); setError('')
     try {
       const created = await createSharedWallet(googleSession.accessToken, googleSession.user, createName)
-      await saveEntity({ ...settings, sharedWallets: [...memberships, created.membership], sharedWalletOwnerSecrets: { ...(settings.sharedWalletOwnerSecrets ?? {}), [created.membership.groupId]: created.ownerSecrets }, updatedAt: new Date().toISOString() })
+      const createdMembership = { ...created.membership, lifecycleCache: created.control.lifecycle ?? { state: 'active' as const } }
+      await saveEntity({ ...settings, sharedWallets: [...memberships, createdMembership], sharedWalletOwnerSecrets: { ...(settings.sharedWalletOwnerSecrets ?? {}), [created.membership.groupId]: created.ownerSecrets }, updatedAt: new Date().toISOString() })
       setCreateName(''); setSelectedId(created.membership.groupId); setGroupUrl(created.membership.groupId)
-      setLoaded({ control: created.control, transactions: [], profiles: {}, snapshotCount: 0, membership: created.membership })
+      setLoaded({ control: created.control, transactions: [], profiles: {}, snapshotCount: 0, membership: createdMembership })
     } catch (createError) { setError(sharedUiError(createError, 'error.sharedCreateFailed')) }
     finally { setBusy(false) }
   }
@@ -196,7 +195,8 @@ export function SharedWalletProfiles() {
     setBusy(true); setError('')
     try {
       const result = await removeSharedWalletMember(googleSession.accessToken, membership, settings.sharedWalletOwnerSecrets?.[membership.groupId] ?? {}, id)
-      await saveMembership(result.membership, result.ownerSecrets); await refresh(result.membership, result.ownerSecrets)
+      const nextMembership = { ...result.membership, lifecycleCache: loaded?.control.lifecycle ?? membership.lifecycleCache }
+      await saveMembership(nextMembership, result.ownerSecrets); await refresh(nextMembership, result.ownerSecrets)
     } catch (removeError) { setError(sharedUiError(removeError, 'error.sharedRemoveFailed')) }
     finally { setBusy(false) }
   }
@@ -218,26 +218,33 @@ export function SharedWalletProfiles() {
   async function rename() {
     if (!membership || !googleSession || !settings || membership.role !== 'owner' || readOnly) return
     const result = await renameSharedWallet(googleSession.accessToken, membership, settings.sharedWalletOwnerSecrets?.[membership.groupId] ?? {}, editName)
-    await saveMembership(result.membership)
-    setLoaded((current) => current ? { ...current, control: result.control, membership: result.membership } : current)
+    const nextMembership = { ...result.membership, lifecycleCache: result.control.lifecycle ?? { state: 'active' as const } }
+    await saveMembership(nextMembership)
+    setLoaded((current) => current ? { ...current, control: result.control, membership: nextMembership } : current)
   }
 
   async function saveLedger(next: SharedWalletLedger) {
     if (!membership || !googleSession || !settings || membership.role !== 'owner' || readOnly) return
     const result = await updateSharedWalletLedger(googleSession.accessToken, membership, settings.sharedWalletOwnerSecrets?.[membership.groupId] ?? {}, next)
-    setLoaded((current) => current ? { ...current, control: result.control, membership: result.membership } : current)
+    const nextMembership = { ...result.membership, lifecycleCache: result.control.lifecycle ?? { state: 'active' as const } }
+    await saveMembership(nextMembership)
+    setLoaded((current) => current ? { ...current, control: result.control, membership: nextMembership } : current)
   }
 
   async function scheduleDelete() {
     if (!membership || !loaded || !googleSession || !settings || membership.role !== 'owner' || !confirm(L.scheduleConfirm)) return
     const result = await scheduleSharedWalletDeletion(googleSession.accessToken, membership, settings.sharedWalletOwnerSecrets?.[membership.groupId] ?? {}, loaded.transactions)
-    setLoaded({ ...loaded, control: result.control, membership: result.membership })
+    const nextMembership = { ...result.membership, lifecycleCache: result.control.lifecycle }
+    setLoaded({ ...loaded, control: result.control, membership: nextMembership })
+    await saveMembership(nextMembership)
   }
 
   async function cancelDelete() {
     if (!membership || !loaded || !googleSession || !settings || membership.role !== 'owner') return
     const result = await cancelSharedWalletDeletion(googleSession.accessToken, membership, settings.sharedWalletOwnerSecrets?.[membership.groupId] ?? {})
-    setLoaded({ ...loaded, control: result.control, membership: result.membership })
+    const nextMembership = { ...result.membership, lifecycleCache: result.control.lifecycle ?? { state: 'active' as const } }
+    setLoaded({ ...loaded, control: result.control, membership: nextMembership })
+    await saveMembership(nextMembership)
   }
 
   async function archiveAndFinalize() {
@@ -263,9 +270,10 @@ export function SharedWalletProfiles() {
   async function reopenArchive(archive: SharedWalletArchive) {
     if (!settings || !googleSession) return
     const created = await reopenSharedWalletFromArchive(googleSession.accessToken, googleSession.user, archive)
-    await saveEntity({ ...settings, sharedWallets: [...memberships, created.membership], sharedWalletOwnerSecrets: { ...(settings.sharedWalletOwnerSecrets ?? {}), [created.membership.groupId]: created.ownerSecrets }, updatedAt: new Date().toISOString() })
+    const createdMembership = { ...created.membership, lifecycleCache: created.control.lifecycle ?? { state: 'active' as const } }
+    await saveEntity({ ...settings, sharedWallets: [...memberships, createdMembership], sharedWalletOwnerSecrets: { ...(settings.sharedWalletOwnerSecrets ?? {}), [created.membership.groupId]: created.ownerSecrets }, updatedAt: new Date().toISOString() })
     setArchiveView(undefined); setSelectedId(created.membership.groupId); setGroupUrl(created.membership.groupId)
-    setLoaded({ control: created.control, transactions: created.transactions, profiles: {}, snapshotCount: created.transactions.length, membership: created.membership })
+    setLoaded({ control: created.control, transactions: created.transactions, profiles: {}, snapshotCount: created.transactions.length, membership: createdMembership })
   }
 
   if (archiveView) return <ArchiveProfile archive={archiveView} onBack={() => setArchiveView(undefined)} onDelete={() => void deleteArchive(archiveView)} onReopen={() => void reopenArchive(archiveView)} />
@@ -284,9 +292,7 @@ export function SharedWalletProfiles() {
       <aside className="space-y-4">
         <Card className="p-3">
           <div className="mb-2 flex items-center gap-2 px-1 text-sm font-semibold"><WalletCards size={16}/>{L.profiles}</div>
-          <button className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-stone-50 dark:hover:bg-stone-900" onClick={openPersonal}><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300"><Home size={16}/></span><span className="min-w-0"><span className="block truncate text-sm font-semibold">{L.personal}</span><span className="block text-[11px] text-stone-400">{L.personalHint}</span></span></button>
-          <div className="my-2 border-t border-stone-100 dark:border-stone-800"/>
-          {memberships.map((item) => <button key={item.groupId} className={`w-full rounded-xl px-3 py-2.5 text-left ${item.groupId === selectedId ? 'bg-stone-100 dark:bg-stone-900' : 'hover:bg-stone-50 dark:hover:bg-stone-900/60'}`} onClick={() => { setSelectedId(item.groupId); setGroupUrl(item.groupId) }}><div className="truncate text-sm font-semibold">{item.name}</div><div className="mt-0.5 text-[11px] text-stone-400">{L.sharedHint} · {t(`shared.role.${item.role}`)}</div></button>)}
+          {memberships.map((item) => <button key={item.groupId} className={`w-full rounded-xl px-3 py-2.5 text-left ${item.groupId === selectedId ? 'bg-stone-100 dark:bg-stone-900' : 'hover:bg-stone-50 dark:hover:bg-stone-900/60'}`} onClick={() => { setSelectedId(item.groupId); setGroupUrl(item.groupId) }}><div className="flex items-center justify-between gap-2"><div className="truncate text-sm font-semibold">{item.name}</div>{item.lifecycleCache?.state === 'closing' && <Badge tone="amber">Read-only</Badge>}</div><div className="mt-0.5 text-[11px] text-stone-400">{L.sharedHint} · {t(`shared.role.${item.role}`)}</div></button>)}
           {memberships.length === 0 && <div className="px-3 py-3 text-xs text-stone-500">{L.noProfiles}</div>}
         </Card>
         <Card className="p-4"><Label>{L.profileName}</Label><Input value={createName} onChange={(event) => setCreateName(event.target.value)} maxLength={120}/><Button className="mt-3 w-full" onClick={() => void createGroup()} disabled={busy || !createName.trim()}><Plus size={16}/>{L.createProfile}</Button></Card>
@@ -294,7 +300,7 @@ export function SharedWalletProfiles() {
       </aside>
 
       {!membership ? <EmptyState title={t('shared.emptyTitle')} text={t('shared.emptyText')} /> : <main className="min-w-0 space-y-5">
-        {lifecycle.state === 'closing' && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-500/10 dark:text-amber-300"><div className="font-semibold">{L.closing}</div><div className="mt-1">{L.eligible} {new Date(lifecycle.purgeAfter!).toLocaleString(locale)}</div>{membership.role === 'owner' && <Button variant="ghost" className="mt-2" onClick={() => void cancelDelete()}><RotateCcw size={14}/>{L.cancelDelete}</Button>}</div>}
+        {lifecycle.state === 'closing' && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-500/10 dark:text-amber-300"><div className="font-semibold">{L.closing}</div>{lifecycle.purgeAfter && <div className="mt-1">{L.eligible} {new Date(lifecycle.purgeAfter).toLocaleString(locale)}</div>}{membership.role === 'owner' && <Button variant="ghost" className="mt-2" onClick={() => void cancelDelete()}><RotateCcw size={14}/>{L.cancelDelete}</Button>}</div>}
         <ProfileHeader loaded={loaded} membership={membership} balances={balances} totals={totals} currency={currency} readOnly={readOnly}/>
         <div className="flex gap-1 overflow-x-auto rounded-xl border border-stone-200 p-1 dark:border-stone-800">{(['overview','transactions','analytics','members','settings'] as Tab[]).map((id) => <button key={id} className={`shrink-0 rounded-lg px-3 py-2 text-sm ${tab === id ? 'bg-stone-950 text-white dark:bg-white dark:text-stone-950' : 'text-stone-500'}`} onClick={() => setTab(id)}>{L[id]}</button>)}</div>
         {tab === 'overview' && <Overview ledger={ledger} balances={balances} transactions={loaded?.transactions ?? []} currency={currency}/>} 
