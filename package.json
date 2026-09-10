@@ -1,15 +1,26 @@
 {
   "name": "o-wallet",
   "private": true,
-  "version": "0.19.0",
+  "version": "0.19.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "deploy": "npx wrangler@4.45.0 deploy",
     "security:check": "node scripts/security-check.mjs && node scripts/crypto-smoke.mjs",
     "security:dist": "node scripts/dist-security-check.mjs",
     "check": "npm run security:check && npm run build && npm run security:dist"
+  },
+  "cloudflare": {
+    "bindings": {
+      "PAIRING_TOKEN": {
+        "description": "Generate a unique random secret with at least 32 characters. Paste the same value into O-Wallet Settings → Personal Cloud after deployment."
+      },
+      "STATE": {
+        "description": "Private KV state used for Personal Cloud heartbeat and future background automation metadata."
+      }
+    }
   },
   "dependencies": {
     "dexie": "4.4.5",
