@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Archive, Copy, FolderOpen, Mic, Pencil, Plus, RefreshCw, RotateCcw, Trash2, UserPlus, Users, WalletCards } from 'lucide-react'
+import { Archive, Copy, FolderOpen, LoaderCircle, Mic, Pencil, Plus, RefreshCw, RotateCcw, Trash2, UserPlus, Users, WalletCards } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { useI18n } from '../i18n'
 import { formatDateTime, formatMoney } from '../lib/format'
@@ -37,6 +37,7 @@ import { SharedProfileSettings } from './SharedProfileSettings'
 import { SharedProfileTransactionModal } from './SharedProfileTransactionModal'
 
 type Tab = 'overview' | 'transactions' | 'analytics' | 'members' | 'settings'
+type BusyAction = 'create' | 'join' | 'invite' | 'remove'
 
 const COPY = {
   vi: {
@@ -49,6 +50,7 @@ const COPY = {
     scheduleDelete: 'Lên lịch xóa sau 90 ngày', scheduleConfirm: 'Chuyển profile sang read-only và bắt đầu thời gian chờ 90 ngày?',
     analyticsTitle: 'Shared profile analytics', analyticsSubtitle: 'Chỉ phân tích dữ liệu của profile này, không cộng vào Personal Wallet.',
     createProfile: 'Tạo shared profile', profileName: 'Tên profile', noProfiles: 'Chưa có shared profile.',
+    creating: 'Đang tạo…', joining: 'Đang tham gia…', sendingInvite: 'Đang gửi lời mời…',
   },
   en: {
     profiles: 'Shared profiles', sharedHint: 'Shared profile',
@@ -60,6 +62,7 @@ const COPY = {
     scheduleDelete: 'Schedule deletion in 90 days', scheduleConfirm: 'Make this profile read-only and start the 90-day deletion window?',
     analyticsTitle: 'Shared profile analytics', analyticsSubtitle: 'Only this profile is analyzed; nothing is added to Personal Wallet.',
     createProfile: 'Create shared profile', profileName: 'Profile name', noProfiles: 'No shared profiles yet.',
+    creating: 'Creating…', joining: 'Joining…', sendingInvite: 'Sending invite…',
   },
 } as const
 
@@ -88,7 +91,8 @@ export function SharedWalletProfiles() {
   const [selectedId, setSelectedId] = useState(() => groupFromUrl() || memberships[0]?.groupId || '')
   const membership = memberships.find((item) => item.groupId === selectedId)
   const [loaded, setLoaded] = useState<SharedWalletLoaded>()
-  const [busy, setBusy] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [busyAction, setBusyAction] = useState<BusyAction>()
   const [error, setError] = useState('')
   const [tab, setTab] = useState<Tab>('overview')
   const [createName, setCreateName] = useState('')
@@ -126,8 +130,8 @@ export function SharedWalletProfiles() {
   }
 
   async function refresh(target = membership, ownerSecretsOverride?: Record<string, string>) {
-    if (!target || !googleSession) return
-    setBusy(true); setError('')
+    if (!target || !googleSession || refreshing) return
+    setRefreshing(true); setError('')
     try {
       const result = await loadSharedWallet(googleSession.accessToken, target, ownerSecretsOverride ?? settings?.sharedWalletOwnerSecrets?.[target.groupId] ?? {})
       const cachedMembership: SharedWalletMembership = {
@@ -138,11 +142,12 @@ export function SharedWalletProfiles() {
       setLoaded({ ...result, membership: cachedMembership }); setEditName(result.control.name)
       if (!result.fromSnapshot && !membershipsEqual(cachedMembership, target)) await saveMembership(cachedMembership)
     } catch (loadError) { setError(sharedUiError(loadError, 'error.sharedLoadFailed')) }
-    finally { setBusy(false) }
+    finally { setRefreshing(false) }
   }
 
   useEffect(() => {
-    setLoaded(undefined); setTab('overview')
+    setTab('overview')
+    setLoaded((current) => current?.membership.groupId === membership?.groupId ? current : undefined)
     if (membership && googleSession && googleApiKeyConfigured()) void refresh(membership)
   }, [membership?.groupId, googleSession?.accessToken])
 
@@ -156,10 +161,11 @@ export function SharedWalletProfiles() {
   const lifecycle = loaded?.control.lifecycle ?? membership?.lifecycleCache ?? { state: 'active' as const }
   const readOnly = membership?.role === 'viewer' || Boolean(loaded?.fromSnapshot) || lifecycle.state !== 'active'
   const due = lifecycle.state === 'closing' && Boolean(lifecycle.purgeAfter) && Date.parse(lifecycle.purgeAfter!) <= Date.now()
+  const busy = Boolean(busyAction)
 
   async function createGroup() {
-    if (!googleSession || !settings || !createName.trim()) return
-    setBusy(true); setError('')
+    if (!googleSession || !settings || !createName.trim() || busy) return
+    setBusyAction('create'); setError('')
     try {
       const created = await createSharedWallet(googleSession.accessToken, googleSession.user, createName)
       const createdMembership = { ...created.membership, lifecycleCache: created.control.lifecycle ?? { state: 'active' as const } }
@@ -167,38 +173,38 @@ export function SharedWalletProfiles() {
       setCreateName(''); setSelectedId(created.membership.groupId); setGroupUrl(created.membership.groupId)
       setLoaded({ control: created.control, transactions: [], profiles: {}, snapshotCount: 0, membership: createdMembership })
     } catch (createError) { setError(sharedUiError(createError, 'error.sharedCreateFailed')) }
-    finally { setBusy(false) }
+    finally { setBusyAction(undefined) }
   }
 
   async function joinInvite() {
-    if (!pendingInvite || !googleSession) return
-    setBusy(true); setError('')
+    if (!pendingInvite || !googleSession || busy) return
+    setBusyAction('join'); setError('')
     try {
       const joined = await joinSharedWalletInvite(googleSession.accessToken, googleSession.user, pendingInvite)
       await saveMembership(joined); setPendingInvite(undefined); setSelectedId(joined.groupId); setGroupUrl(joined.groupId); await refresh(joined)
     } catch (joinError) { setError(sharedUiError(joinError, 'error.sharedJoinFailed')) }
-    finally { setBusy(false) }
+    finally { setBusyAction(undefined) }
   }
 
   async function invite() {
-    if (!membership || !googleSession || !settings || !inviteEmail.trim() || readOnly) return
-    setBusy(true); setError(''); setLastInvite('')
+    if (!membership || !googleSession || !settings || !inviteEmail.trim() || readOnly || busy) return
+    setBusyAction('invite'); setError(''); setLastInvite('')
     try {
       const result = await inviteSharedWalletMember(googleSession.accessToken, membership, settings.sharedWalletOwnerSecrets?.[membership.groupId] ?? {}, inviteEmail, inviteRole)
       await saveMembership(membership, result.ownerSecrets); setLastInvite(result.inviteUrl); setInviteEmail(''); await refresh(membership, result.ownerSecrets)
     } catch (inviteError) { setError(sharedUiError(inviteError, 'error.sharedInviteFailed')) }
-    finally { setBusy(false) }
+    finally { setBusyAction(undefined) }
   }
 
   async function removeMember(id: string) {
-    if (!membership || !googleSession || !settings || readOnly || !confirm(t('shared.removeConfirm'))) return
-    setBusy(true); setError('')
+    if (!membership || !googleSession || !settings || readOnly || busy || !confirm(t('shared.removeConfirm'))) return
+    setBusyAction('remove'); setError('')
     try {
       const result = await removeSharedWalletMember(googleSession.accessToken, membership, settings.sharedWalletOwnerSecrets?.[membership.groupId] ?? {}, id)
       const nextMembership = { ...result.membership, lifecycleCache: loaded?.control.lifecycle ?? membership.lifecycleCache }
       await saveMembership(nextMembership, result.ownerSecrets); await refresh(nextMembership, result.ownerSecrets)
     } catch (removeError) { setError(sharedUiError(removeError, 'error.sharedRemoveFailed')) }
-    finally { setBusy(false) }
+    finally { setBusyAction(undefined) }
   }
 
   async function saveAlias(id: string, value: string) {
@@ -260,7 +266,7 @@ export function SharedWalletProfiles() {
     setLoaded(undefined); setSelectedId(''); setGroupUrl(''); setArchiveView(archive)
   }
 
-  useEffect(() => { if (due && !busy) void archiveAndFinalize() }, [due, membership?.groupId])
+  useEffect(() => { if (due && !busy && !refreshing) void archiveAndFinalize() }, [due, membership?.groupId])
 
   async function deleteArchive(archive: SharedWalletArchive) {
     if (!settings || !confirm(L.deleteArchive)) return
@@ -281,10 +287,10 @@ export function SharedWalletProfiles() {
   return <div className="space-y-5">
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div><div className="text-xs font-semibold uppercase tracking-[.14em] text-stone-400">{L.profiles}</div><h1 className="mt-1 text-2xl font-semibold tracking-tight">{membership ? loaded?.control.name ?? membership.name : t('shared.title')}</h1><p className="mt-1 text-sm text-stone-500">{membership ? L.sharedHint : t('shared.subtitle')}</p></div>
-      {membership && googleSession && <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => void refresh()} disabled={busy}><RefreshCw size={16} className={busy ? 'animate-spin' : ''}/>{t('shared.refresh')}</Button><Button variant="secondary" onClick={() => { setVoiceOnOpen(true); setShowAdd(true) }} disabled={readOnly}><Mic size={16}/>{t('voice.entryButton')}</Button><Button onClick={() => { setVoiceOnOpen(false); setShowAdd(true) }} disabled={readOnly}><Plus size={16}/>{t('common.add')}</Button></div>}
+      {membership && googleSession && <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => void refresh()} disabled={refreshing}><RefreshCw size={16} className={refreshing ? 'animate-spin' : ''}/>{t('shared.refresh')}</Button><Button variant="secondary" onClick={() => { setVoiceOnOpen(true); setShowAdd(true) }} disabled={readOnly}><Mic size={16}/>{t('voice.entryButton')}</Button><Button onClick={() => { setVoiceOnOpen(false); setShowAdd(true) }} disabled={readOnly}><Plus size={16}/>{t('common.add')}</Button></div>}
     </div>
 
-    {pendingInvite && <Card className="flex flex-wrap items-center justify-between gap-3 p-4"><div><div className="font-semibold">{pendingInvite.groupName}</div><div className="text-xs text-stone-500">{t('shared.inviteFor', { email: pendingInvite.invitedEmail })}</div></div><Button onClick={() => void joinInvite()} disabled={busy}><Users size={16}/>{t('shared.join')}</Button></Card>}
+    {pendingInvite && <Card className="flex flex-wrap items-center justify-between gap-3 p-4"><div><div className="font-semibold">{pendingInvite.groupName}</div><div className="text-xs text-stone-500">{t('shared.inviteFor', { email: pendingInvite.invitedEmail })}</div></div><Button onClick={() => void joinInvite()} disabled={busy}><>{busyAction === 'join' ? <LoaderCircle size={16} className="animate-spin"/> : <Users size={16}/>}</>{busyAction === 'join' ? L.joining : t('shared.join')}</Button></Card>}
     {!googleApiKeyConfigured() && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{t('shared.apiKeyMissingText')}</div>}
     {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-500/10 dark:text-rose-300">{t(error)}</div>}
 
@@ -295,7 +301,7 @@ export function SharedWalletProfiles() {
           {memberships.map((item) => <button key={item.groupId} className={`w-full rounded-xl px-3 py-2.5 text-left ${item.groupId === selectedId ? 'bg-stone-100 dark:bg-stone-900' : 'hover:bg-stone-50 dark:hover:bg-stone-900/60'}`} onClick={() => { setSelectedId(item.groupId); setGroupUrl(item.groupId) }}><div className="flex items-center justify-between gap-2"><div className="truncate text-sm font-semibold">{item.name}</div>{item.lifecycleCache?.state === 'closing' && <Badge tone="amber">Read-only</Badge>}</div><div className="mt-0.5 text-[11px] text-stone-400">{L.sharedHint} · {t(`shared.role.${item.role}`)}</div></button>)}
           {memberships.length === 0 && <div className="px-3 py-3 text-xs text-stone-500">{L.noProfiles}</div>}
         </Card>
-        <Card className="p-4"><Label>{L.profileName}</Label><Input value={createName} onChange={(event) => setCreateName(event.target.value)} maxLength={120}/><Button className="mt-3 w-full" onClick={() => void createGroup()} disabled={busy || !createName.trim()}><Plus size={16}/>{L.createProfile}</Button></Card>
+        <Card className="p-4"><Label>{L.profileName}</Label><Input value={createName} onChange={(event) => setCreateName(event.target.value)} maxLength={120}/><Button className="mt-3 w-full" onClick={() => void createGroup()} disabled={busy || !createName.trim()}>{busyAction === 'create' ? <LoaderCircle size={16} className="animate-spin"/> : <Plus size={16}/>} {busyAction === 'create' ? L.creating : L.createProfile}</Button></Card>
         {archives.length > 0 && <Card className="p-3"><div className="mb-2 flex items-center gap-2 px-1 text-sm font-semibold"><Archive size={16}/>{L.history}</div>{archives.map((archive) => <button key={archive.id} className="w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-stone-50 dark:hover:bg-stone-900" onClick={() => setArchiveView(archive)}><div className="truncate font-medium">{archive.name}</div><div className="text-[11px] text-stone-400">{new Date(archive.closedAt).toLocaleDateString(locale)}</div></button>)}</Card>}
       </aside>
 
@@ -306,7 +312,7 @@ export function SharedWalletProfiles() {
         {tab === 'overview' && <Overview ledger={ledger} balances={balances} transactions={loaded?.transactions ?? []} currency={currency}/>} 
         {tab === 'transactions' && <TransactionList loaded={loaded} membership={membership} ledger={ledger} readOnly={readOnly} memberName={memberName} onEdit={setEditTx} onDelete={(id) => void removeTransaction(id)}/>} 
         {tab === 'analytics' && ledger && <LedgerAnalytics transactions={sharedTransactionsAsPersonalShape(loaded?.transactions ?? [])} categories={ledger.categories} currency={currency} title={L.analyticsTitle} subtitle={L.analyticsSubtitle}/>} 
-        {tab === 'members' && <Members loaded={loaded} membership={membership} aliases={aliases} readOnly={readOnly} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviteRole={inviteRole} setInviteRole={setInviteRole} lastInvite={lastInvite} onInvite={() => void invite()} onAlias={(id, value) => void saveAlias(id, value)} onRemove={(id) => void removeMember(id)}/>} 
+        {tab === 'members' && <Members loaded={loaded} membership={membership} aliases={aliases} readOnly={readOnly} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviteRole={inviteRole} setInviteRole={setInviteRole} lastInvite={lastInvite} inviteBusy={busyAction === 'invite'} actionsBusy={busy} onInvite={() => void invite()} onAlias={(id, value) => void saveAlias(id, value)} onRemove={(id) => void removeMember(id)}/>} 
         {tab === 'settings' && ledger && <div className="space-y-5"><Card className="p-4 sm:p-5"><div className="flex flex-wrap items-end gap-2"><div className="min-w-0 flex-1"><Label>{L.profileName}</Label><Input value={editName} onChange={(event) => setEditName(event.target.value)} disabled={membership.role !== 'owner' || readOnly}/></div><Button onClick={() => void rename()} disabled={membership.role !== 'owner' || readOnly || !editName.trim()}>{t('common.save')}</Button></div></Card><SharedProfileSettings ledger={ledger} transactions={loaded?.transactions ?? []} editable={membership.role === 'owner' && !readOnly} onSaveLedger={saveLedger}/>{membership.role === 'owner' && !readOnly && <Card className="border-rose-200 p-4 dark:border-rose-900"><div className="font-semibold text-rose-600">{L.danger}</div><p className="mt-1 text-sm text-stone-500">{L.deleteHint}</p><Button variant="secondary" className="mt-3 text-rose-600" onClick={() => void scheduleDelete()}><Trash2 size={15}/>{L.scheduleDelete}</Button></Card>}</div>}
       </main>}
     </div>}
@@ -330,9 +336,9 @@ function TransactionList({ loaded, membership, ledger, readOnly, memberName, onE
   if (!loaded?.transactions.length) return <Card className="p-4"><EmptyState title={t('shared.noTransactions')} text={t('shared.noTransactionsText')}/></Card>
   return <Card className="overflow-hidden"><div className="divide-y divide-stone-100 dark:divide-stone-800">{loaded.transactions.map((tx) => { const own = tx.createdByMemberId === membership.memberId; return <div key={`${tx.createdByMemberId}:${tx.id}`} className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_160px_auto] sm:items-center"><div className="min-w-0"><div className="flex flex-wrap gap-2"><span className="truncate font-semibold">{tx.merchant || tx.description || t('transaction.noDescription')}</span><Badge tone={tx.type === 'income' ? 'green' : tx.type === 'expense' ? 'red' : 'slate'}>{t(`transaction.${tx.type}`)}</Badge></div><div className="mt-1 flex flex-wrap gap-x-2 text-xs text-stone-500"><span>{formatDateTime(tx.occurredAt,locale)}</span><span>{categoryLabel(tx.categoryId,ledger?.categories??[]) || tx.category || t('categories.uncategorized')}</span><span>{accountLabel(tx.accountId,ledger?.accounts??[])}</span><span>{tx.sourceCreatedByName || memberName(tx.createdByMemberId)}</span></div></div><div className={`font-semibold ${tx.type === 'income' ? 'text-emerald-600' : tx.type === 'expense' ? 'text-rose-600' : ''}`}>{tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : ''}{formatMoney(tx.amount,tx.currency,locale)}</div><div className="flex justify-end gap-1">{own && !readOnly && <><Button variant="ghost" className="px-2" onClick={() => onEdit(tx)}><Pencil size={15}/></Button><Button variant="ghost" className="px-2 text-rose-500" onClick={() => onDelete(tx.id)}><Trash2 size={15}/></Button></>}</div></div> })}</div></Card>
 }
-function Members({ loaded, membership, aliases, readOnly, inviteEmail, setInviteEmail, inviteRole, setInviteRole, lastInvite, onInvite, onAlias, onRemove }: { loaded?:SharedWalletLoaded; membership:SharedWalletMembership; aliases:Record<string,string>; readOnly:boolean; inviteEmail:string; setInviteEmail:(value:string)=>void; inviteRole:Exclude<SharedWalletRole,'owner'>; setInviteRole:(value:Exclude<SharedWalletRole,'owner'>)=>void; lastInvite:string; onInvite:()=>void; onAlias:(id:string,value:string)=>void; onRemove:(id:string)=>void }) {
-  const { t } = useI18n()
-  return <Card className="p-4"><div className="grid gap-3 lg:grid-cols-2">{loaded?.control.members.map((member) => <div key={member.id} className="rounded-xl border border-stone-200 p-3 dark:border-stone-800"><div className="flex justify-between gap-2"><div className="min-w-0"><div className="truncate text-sm font-semibold">{aliases[member.id] || member.canonicalName || member.email}</div><div className="truncate text-[11px] text-stone-400">{member.email}</div></div><Badge>{t(`shared.role.${member.role}`)}</Badge></div><Input className="mt-2" defaultValue={aliases[member.id] ?? ''} onBlur={(event) => onAlias(member.id,event.target.value)}/>{membership.role === 'owner' && member.id !== loaded.control.ownerMemberId && !readOnly && <Button variant="ghost" className="mt-2 text-rose-500" onClick={() => onRemove(member.id)}><Trash2 size={14}/>{t('shared.removeMember')}</Button>}</div>)}</div>{membership.role === 'owner' && !readOnly && <div className="mt-5 border-t border-stone-200 pt-4 dark:border-stone-800"><div className="grid gap-2 sm:grid-cols-[1fr_140px_auto]"><Input type="email" value={inviteEmail} onChange={(event)=>setInviteEmail(event.target.value)} placeholder="name@gmail.com"/><Select value={inviteRole} onChange={(event)=>setInviteRole(event.target.value as Exclude<SharedWalletRole,'owner'>)}><option value="member">{t('shared.role.member')}</option><option value="viewer">{t('shared.role.viewer')}</option></Select><Button onClick={onInvite}><UserPlus size={15}/>{t('shared.sendInvite')}</Button></div>{lastInvite && <Button variant="ghost" className="mt-2" onClick={() => void navigator.clipboard.writeText(lastInvite)}><Copy size={14}/>{t('common.copy')}</Button>}</div>}</Card>
+function Members({ loaded, membership, aliases, readOnly, inviteEmail, setInviteEmail, inviteRole, setInviteRole, lastInvite, inviteBusy, actionsBusy, onInvite, onAlias, onRemove }: { loaded?:SharedWalletLoaded; membership:SharedWalletMembership; aliases:Record<string,string>; readOnly:boolean; inviteEmail:string; setInviteEmail:(value:string)=>void; inviteRole:Exclude<SharedWalletRole,'owner'>; setInviteRole:(value:Exclude<SharedWalletRole,'owner'>)=>void; lastInvite:string; inviteBusy:boolean; actionsBusy:boolean; onInvite:()=>void; onAlias:(id:string,value:string)=>void; onRemove:(id:string)=>void }) {
+  const { t, locale } = useI18n(); const L = copyForLocale(locale)
+  return <Card className="p-4"><div className="grid gap-3 lg:grid-cols-2">{loaded?.control.members.map((member) => <div key={member.id} className="rounded-xl border border-stone-200 p-3 dark:border-stone-800"><div className="flex justify-between gap-2"><div className="min-w-0"><div className="truncate text-sm font-semibold">{aliases[member.id] || member.canonicalName || member.email}</div><div className="truncate text-[11px] text-stone-400">{member.email}</div></div><Badge>{t(`shared.role.${member.role}`)}</Badge></div><Input className="mt-2" defaultValue={aliases[member.id] ?? ''} onBlur={(event) => onAlias(member.id,event.target.value)}/>{membership.role === 'owner' && member.id !== loaded.control.ownerMemberId && !readOnly && <Button variant="ghost" className="mt-2 text-rose-500" disabled={actionsBusy} onClick={() => onRemove(member.id)}><Trash2 size={14}/>{t('shared.removeMember')}</Button>}</div>)}</div>{membership.role === 'owner' && !readOnly && <div className="mt-5 border-t border-stone-200 pt-4 dark:border-stone-800"><div className="grid gap-2 sm:grid-cols-[1fr_140px_auto]"><Input type="email" value={inviteEmail} disabled={actionsBusy} onChange={(event)=>setInviteEmail(event.target.value)} placeholder="name@gmail.com"/><Select value={inviteRole} disabled={actionsBusy} onChange={(event)=>setInviteRole(event.target.value as Exclude<SharedWalletRole,'owner'>)}><option value="member">{t('shared.role.member')}</option><option value="viewer">{t('shared.role.viewer')}</option></Select><Button onClick={onInvite} disabled={actionsBusy || !inviteEmail.trim()}>{inviteBusy ? <LoaderCircle size={15} className="animate-spin"/> : <UserPlus size={15}/>} {inviteBusy ? L.sendingInvite : t('shared.sendInvite')}</Button></div>{lastInvite && <Button variant="ghost" className="mt-2" onClick={() => void navigator.clipboard.writeText(lastInvite)}><Copy size={14}/>{t('common.copy')}</Button>}</div>}</Card>
 }
 function ArchiveProfile({ archive, onBack, onDelete, onReopen }: { archive:SharedWalletArchive; onBack:()=>void; onDelete:()=>void; onReopen:()=>void }) {
   const { t, locale } = useI18n(); const L = copyForLocale(locale); const [tab,setTab] = useState<'overview'|'transactions'|'analytics'>('overview')
