@@ -208,7 +208,7 @@ export function Shell() {
                 <span>·</span>
                 <span>{t('footer.moreProjects')}</span>
                 <ExternalLink size={13} />
-              </a><span className="ml-2 text-[10px] text-stone-400">v0.16.0</span>
+              </a><span className="ml-2 text-[10px] text-stone-400">v0.17.0</span>
             </div>
           </footer>
         </div>
