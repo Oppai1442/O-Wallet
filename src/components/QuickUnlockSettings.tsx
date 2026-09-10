@@ -25,6 +25,7 @@ const COPY = {
     enableTitle: 'Bật Quick Unlock?',
     enableConfirm: 'Nhập password hiện tại để xác nhận. Sau đó hệ điều hành sẽ yêu cầu thiết lập hoặc xác thực vân tay, Face ID hay Windows Hello.',
     password: 'Password hiện tại',
+    wrongPassword: 'Password không đúng.',
     setup: 'Xác nhận & thiết lập',
     disableTitle: 'Tắt Quick Unlock?',
     disableConfirm: 'O-Wallet sẽ xóa cấu hình Quick Unlock local trên thiết bị này. Password và dữ liệu ví không bị thay đổi.',
@@ -48,6 +49,7 @@ const COPY = {
     enableTitle: 'Enable Quick Unlock?',
     enableConfirm: 'Enter your current password to confirm. Your operating system will then ask you to set up or verify fingerprint, Face ID, or Windows Hello.',
     password: 'Current password',
+    wrongPassword: 'Incorrect password.',
     setup: 'Confirm & set up',
     disableTitle: 'Disable Quick Unlock?',
     disableConfirm: 'O-Wallet will remove the local Quick Unlock configuration from this device. Your password and wallet data are unchanged.',
@@ -122,7 +124,7 @@ export function QuickUnlockSettings() {
     } catch (setupError) {
       if (!isQuickUnlockCancellation(setupError)) {
         reportDiagnostic('quick-unlock-settings-enable', setupError)
-        setError(setupError instanceof Error && setupError.message === 'error.wrongPassword' ? 'Incorrect password.' : L.setupFailed)
+        setError(setupError instanceof Error && setupError.message === 'error.wrongPassword' ? L.wrongPassword : L.setupFailed)
       }
     } finally {
       setBusy(false)
@@ -172,19 +174,21 @@ export function QuickUnlockSettings() {
       </Card>
 
       {dialog && <div className="fixed inset-0 z-[150] flex items-end justify-center bg-stone-950/55 p-0 sm:items-center sm:p-4" onClick={() => !busy && setDialog(undefined)}>
-        <Card className="w-full max-w-md rounded-b-none p-5 shadow-2xl sm:rounded-2xl" onClick={(event) => event.stopPropagation()}>
-          <div className="flex items-start justify-between gap-3">
-            <div><h3 className="text-lg font-semibold text-stone-950 dark:text-white">{dialog === 'enable' ? L.enableTitle : L.disableTitle}</h3><p className="mt-1 text-sm leading-6 text-stone-500">{dialog === 'enable' ? L.enableConfirm : L.disableConfirm}</p></div>
-            <button type="button" className="rounded-lg p-2 text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-900" onClick={() => !busy && setDialog(undefined)}><X size={18} /></button>
-          </div>
+        <div className="w-full max-w-md" onClick={(event) => event.stopPropagation()}>
+          <Card className="rounded-b-none p-5 shadow-2xl sm:rounded-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div><h3 className="text-lg font-semibold text-stone-950 dark:text-white">{dialog === 'enable' ? L.enableTitle : L.disableTitle}</h3><p className="mt-1 text-sm leading-6 text-stone-500">{dialog === 'enable' ? L.enableConfirm : L.disableConfirm}</p></div>
+              <button type="button" className="rounded-lg p-2 text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-900" onClick={() => !busy && setDialog(undefined)}><X size={18} /></button>
+            </div>
 
-          {dialog === 'enable' && <div className="mt-4"><Label>{L.password}</Label><Input autoFocus type="password" maxLength={256} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void confirmEnable() }} /></div>}
+            {dialog === 'enable' && <div className="mt-4"><Label>{L.password}</Label><Input autoFocus type="password" maxLength={256} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void confirmEnable() }} /></div>}
 
-          <div className="mt-5 flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setDialog(undefined)} disabled={busy}>{L.cancel}</Button>
-            {dialog === 'enable' ? <Button onClick={() => void confirmEnable()} disabled={!password || busy}>{busy && <LoaderCircle size={16} className="animate-spin" />}{busy ? L.enabling : L.setup}</Button> : <Button variant="danger" onClick={() => void confirmDisable()} disabled={busy}>{busy && <LoaderCircle size={16} className="animate-spin" />}{busy ? L.disabling : L.disableAction}</Button>}
-          </div>
-        </Card>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setDialog(undefined)} disabled={busy}>{L.cancel}</Button>
+              {dialog === 'enable' ? <Button onClick={() => void confirmEnable()} disabled={!password || busy}>{busy && <LoaderCircle size={16} className="animate-spin" />}{busy ? L.enabling : L.setup}</Button> : <Button variant="danger" onClick={() => void confirmDisable()} disabled={busy}>{busy && <LoaderCircle size={16} className="animate-spin" />}{busy ? L.disabling : L.disableAction}</Button>}
+            </div>
+          </Card>
+        </div>
       </div>}
     </>
   )
