@@ -30,7 +30,7 @@ import {
   sharedTotals,
   sharedTransactionsAsPersonalShape,
 } from '../lib/sharedLedger'
-import type { AppSettings, SharedTransaction, SharedWalletArchive, SharedWalletLedger, SharedWalletMembership, SharedWalletRole } from '../types'
+import type { SharedTransaction, SharedWalletArchive, SharedWalletLedger, SharedWalletMembership, SharedWalletRole } from '../types'
 import { Badge, Button, Card, EmptyState, Input, Label, Select } from './ui'
 import { LedgerAnalytics } from './LedgerAnalytics'
 import { SharedProfileSettings } from './SharedProfileSettings'
@@ -63,6 +63,9 @@ const COPY = {
   },
 } as const
 
+function copyForLocale(locale: string) {
+  return locale.toLocaleLowerCase('en-US').startsWith('vi') ? COPY.vi : COPY.en
+}
 function groupFromUrl() { return new URL(window.location.href).searchParams.get('group') ?? '' }
 function setGroupUrl(groupId: string) {
   const url = new URL(window.location.href)
@@ -86,7 +89,7 @@ function sharedUiError(error: unknown, fallback: string) { return error instance
 export function SharedWalletProfiles() {
   const { settings, saveEntity, googleSession } = useWallet()
   const { t, locale } = useI18n()
-  const L = COPY[locale as 'vi' | 'en']
+  const L = copyForLocale(locale)
   const memberships = settings?.sharedWallets ?? []
   const archives = settings?.sharedWalletArchives ?? []
   const [selectedId, setSelectedId] = useState(() => groupFromUrl() || memberships[0]?.groupId || '')
@@ -147,7 +150,7 @@ export function SharedWalletProfiles() {
 
   const aliases = membership ? settings?.sharedWalletAliases?.[membership.groupId] ?? {} : {}
   const memberMap = useMemo(() => new Map((loaded?.control.members ?? []).map((member) => [member.id, member])), [loaded])
-  const memberName = (id: string) => aliases[id] || loaded?.profiles[id]?.name || memberMap.get(id)?.canonicalName || memberMap.get(id)?.email || t('shared.unknownMember')
+  const memberName = (id: string) => aliases[id] || loaded?.profiles?.[id]?.name || memberMap.get(id)?.canonicalName || memberMap.get(id)?.email || t('shared.unknownMember')
   const ledger = loaded ? sharedLedgerOf(loaded.control, settings?.defaultCurrency ?? 'VND') : undefined
   const currency = ledger?.defaultCurrency ?? settings?.defaultCurrency ?? 'VND'
   const totals = sharedTotals(loaded?.transactions ?? [])
@@ -307,12 +310,12 @@ export function SharedWalletProfiles() {
 }
 
 function ProfileHeader({ loaded, membership, balances, totals, currency, readOnly }: { loaded?: SharedWalletLoaded; membership: SharedWalletMembership; balances: Map<string, number>; totals: { income: number; expense: number; net: number }; currency: string; readOnly: boolean }) {
-  const { t, locale } = useI18n(); const L = COPY[locale as 'vi' | 'en']
+  const { t, locale } = useI18n(); const L = copyForLocale(locale)
   return <Card className="p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-semibold">{loaded?.control.name ?? membership.name}</h2><Badge>{t(`shared.role.${membership.role}`)}</Badge>{readOnly && <Badge tone="amber">Read-only</Badge>}</div><p className="mt-1 text-xs text-stone-500">{t('shared.distributedStorage')}</p></div><Button variant="ghost" onClick={() => openTrustedExternalUrl(openDriveFolderUrl(membership.localRootId))}><FolderOpen size={15}/>{t('shared.openMyFolder')}</Button></div><div className="mt-4 grid gap-3 sm:grid-cols-4"><Stat label={t('shared.income')} value={formatMoney(totals.income,currency,locale)} tone="green"/><Stat label={t('shared.expense')} value={formatMoney(totals.expense,currency,locale)} tone="red"/><Stat label={t('shared.net')} value={formatMoney(totals.net,currency,locale)}/><Stat label={L.balance} value={formatMoney([...balances.values()].reduce((sum,value)=>sum+value,0),currency,locale)}/></div></Card>
 }
 function Stat({label,value,tone}:{label:string;value:string;tone?:'green'|'red'}) { return <div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-900"><div className="text-xs text-stone-500">{label}</div><div className={`mt-1 font-semibold ${tone === 'green' ? 'text-emerald-600' : tone === 'red' ? 'text-rose-600' : ''}`}>{value}</div></div> }
 function Overview({ ledger, balances, transactions, currency }: { ledger?: SharedWalletLedger; balances: Map<string, number>; transactions: SharedTransaction[]; currency: string }) {
-  const { t, locale } = useI18n(); const L = COPY[locale as 'vi' | 'en']
+  const { t, locale } = useI18n(); const L = copyForLocale(locale)
   const activeAccounts = ledger?.accounts.filter((item) => !item.deleted && !item.archived) ?? []
   return <div className="grid gap-5 lg:grid-cols-2"><Card className="p-4"><div className="font-semibold">{t('settings.accounts')}</div><div className="mt-3 space-y-2">{activeAccounts.map((account) => <div key={account.id} className="flex justify-between gap-3 text-sm"><span className="truncate">{account.name}</span><span>{formatMoney(balances.get(account.id) ?? account.openingBalance, account.currency || currency, locale)}</span></div>)}{activeAccounts.length === 0 && <div className="text-sm text-stone-500">{t('accounts.empty')}</div>}</div></Card><Card className="p-4"><div className="font-semibold">{L.recent}</div><div className="mt-3 space-y-2">{transactions.slice(0,8).map((tx) => <div key={`${tx.createdByMemberId}:${tx.id}`} className="flex justify-between gap-3 text-sm"><span className="truncate">{tx.merchant || tx.description || t('transaction.noDescription')}</span><span>{formatMoney(tx.amount,tx.currency,locale)}</span></div>)}</div></Card></div>
 }
@@ -326,6 +329,6 @@ function Members({ loaded, membership, aliases, readOnly, inviteEmail, setInvite
   return <Card className="p-4"><div className="grid gap-3 lg:grid-cols-2">{loaded?.control.members.map((member) => <div key={member.id} className="rounded-xl border border-stone-200 p-3 dark:border-stone-800"><div className="flex justify-between gap-2"><div className="min-w-0"><div className="truncate text-sm font-semibold">{aliases[member.id] || member.canonicalName || member.email}</div><div className="truncate text-[11px] text-stone-400">{member.email}</div></div><Badge>{t(`shared.role.${member.role}`)}</Badge></div><Input className="mt-2" defaultValue={aliases[member.id] ?? ''} onBlur={(event) => onAlias(member.id,event.target.value)}/>{membership.role === 'owner' && member.id !== loaded.control.ownerMemberId && !readOnly && <Button variant="ghost" className="mt-2 text-rose-500" onClick={() => onRemove(member.id)}><Trash2 size={14}/>{t('shared.removeMember')}</Button>}</div>)}</div>{membership.role === 'owner' && !readOnly && <div className="mt-5 border-t border-stone-200 pt-4 dark:border-stone-800"><div className="grid gap-2 sm:grid-cols-[1fr_140px_auto]"><Input type="email" value={inviteEmail} onChange={(event)=>setInviteEmail(event.target.value)} placeholder="name@gmail.com"/><Select value={inviteRole} onChange={(event)=>setInviteRole(event.target.value as Exclude<SharedWalletRole,'owner'>)}><option value="member">{t('shared.role.member')}</option><option value="viewer">{t('shared.role.viewer')}</option></Select><Button onClick={onInvite}><UserPlus size={15}/>{t('shared.sendInvite')}</Button></div>{lastInvite && <Button variant="ghost" className="mt-2" onClick={() => void navigator.clipboard.writeText(lastInvite)}><Copy size={14}/>{t('common.copy')}</Button>}</div>}</Card>
 }
 function ArchiveProfile({ archive, onBack, onDelete, onReopen }: { archive:SharedWalletArchive; onBack:()=>void; onDelete:()=>void; onReopen:()=>void }) {
-  const { t, locale } = useI18n(); const L = COPY[locale as 'vi'|'en']; const [tab,setTab] = useState<'overview'|'transactions'|'analytics'>('overview')
+  const { t, locale } = useI18n(); const L = copyForLocale(locale); const [tab,setTab] = useState<'overview'|'transactions'|'analytics'>('overview')
   return <div className="space-y-5"><div className="flex flex-wrap justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><Archive size={20}/><h1 className="text-2xl font-semibold">{archive.name}</h1><Badge>{L.archived}</Badge></div><p className="mt-1 text-sm text-stone-500">{L.archiveReadOnly}</p></div><div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={onBack}>{t('common.back')}</Button><Button variant="secondary" onClick={onReopen}><RotateCcw size={15}/>{L.reopen}</Button><Button variant="ghost" className="text-rose-600" onClick={onDelete}><Trash2 size={15}/>{t('common.delete')}</Button></div></div><div className="flex gap-1 rounded-xl border border-stone-200 p-1 dark:border-stone-800">{(['overview','transactions','analytics'] as const).map((id) => <button key={id} className={`rounded-lg px-3 py-2 text-sm ${tab === id ? 'bg-stone-950 text-white dark:bg-white dark:text-stone-950' : ''}`} onClick={() => setTab(id)}>{L[id]}</button>)}</div>{tab === 'overview' && <Overview ledger={archive.ledger} balances={new Map(Object.entries(archive.finalBalances))} transactions={archive.transactions} currency={archive.ledger.defaultCurrency}/>} {tab === 'transactions' && <Card className="overflow-hidden"><div className="divide-y divide-stone-100 dark:divide-stone-800">{archive.transactions.map((tx) => <div key={`${tx.createdByMemberId}:${tx.id}`} className="flex justify-between gap-3 p-3 text-sm"><span className="min-w-0 truncate">{tx.merchant || tx.description || t('transaction.noDescription')} · {archive.memberNames[tx.createdByMemberId]}</span><span>{formatMoney(tx.amount,tx.currency,locale)}</span></div>)}</div></Card>} {tab === 'analytics' && <LedgerAnalytics transactions={sharedTransactionsAsPersonalShape(archive.transactions)} categories={archive.ledger.categories} currency={archive.ledger.defaultCurrency} title={L.analyticsTitle} subtitle={L.archiveReadOnly}/>}</div>
 }
