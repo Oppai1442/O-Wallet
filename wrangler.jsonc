@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "o-wallet-personal-cloud",
+  "main": "cloudflare/personal-worker/src/index.ts",
+  "compatibility_date": "2026-09-10",
+  "workers_dev": true,
+  "kv_namespaces": [
+    {
+      "binding": "STATE"
+    }
+  ],
+  "vars": {
+    "ALLOWED_ORIGIN": "https://oppai1442.github.io"
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  }
+}
