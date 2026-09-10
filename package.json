@@ -1,39 +1,16 @@
 {
-  "name": "o-wallet",
+  "name": "o-wallet-personal-cloud-worker",
   "private": true,
-  "version": "0.19.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview",
-    "security:check": "node scripts/security-check.mjs && node scripts/crypto-smoke.mjs",
-    "security:dist": "node scripts/dist-security-check.mjs",
-    "check": "npm run security:check && npm run build && npm run security:dist"
-  },
-  "dependencies": {
-    "dexie": "4.4.5",
-    "lucide-react": "1.42.0",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "recharts": "3.10.1",
-    "sql.js": "1.14.2",
-    "tesseract.js": "7.0.0"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "4.3.3",
-    "@types/node": "22.20.1",
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.7",
-    "@types/sql.js": "1.4.11",
-    "@vitejs/plugin-react": "6.1.1",
-    "tailwindcss": "4.3.3",
+    "@cloudflare/workers-types": "4.20260910.0",
     "typescript": "6.0.3",
-    "vite": "8.2.2",
-    "vite-plugin-pwa": "1.3.0",
-    "workbox-window": "7.4.1"
-  },
-  "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "wrangler": "4.36.0"
   }
 }
