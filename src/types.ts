@@ -156,6 +156,8 @@ export interface SharedWalletMembership {
   controlFileId: string
   memberId: string
   role: SharedWalletRole
+  /** Last live lifecycle observed from control. Stored inside the encrypted personal settings record and used only for instant local UI state. */
+  lifecycleCache?: SharedWalletLifecycle
   /** Current group key and its version. */
   groupKey: string
   keyVersion: number
