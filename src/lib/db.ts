@@ -192,6 +192,7 @@ export async function clearLocalVaultForAccountSwitch() {
     await db.kv.bulkDelete([
       'vault-config',
       'remembered-vault-unlock',
+      'quick-unlock-config-v1',
       'google-account-binding',
       'sync-v2-state',
     ])
