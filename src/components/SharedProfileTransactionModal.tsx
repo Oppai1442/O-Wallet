@@ -440,6 +440,7 @@ export function SharedProfileTransactionModal({
   const transientHint = locale === 'vi'
     ? 'Ảnh trong Shared Profile hiện chỉ được dùng tạm để OCR/AI trên lần nhập này; ảnh gốc chưa được lưu vào shared Drive.'
     : 'Shared Profile images are currently transient for OCR/AI during this entry; the original image is not stored in shared Drive yet.'
+  const imagesTitle = locale === 'vi' ? 'Ảnh chụp / hóa đơn' : 'Images / receipts'
 
   return <div className="fixed inset-0 z-[90] flex items-end justify-center bg-stone-950/55 sm:items-center sm:p-4" onClick={onClose}>
     <div className="flex max-h-[100dvh] w-full max-w-6xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-stone-900 sm:max-h-[94dvh] sm:rounded-3xl" onClick={(event) => event.stopPropagation()}>
@@ -476,10 +477,10 @@ export function SharedProfileTransactionModal({
 
           <div className="space-y-3">
             <div className="rounded-2xl border border-stone-200 p-4 dark:border-stone-800">
-              <div className="flex items-center gap-2 font-semibold"><Images size={17} />{t('modal.images')}</div>
+              <div className="flex items-center gap-2 font-semibold"><Images size={17} />{imagesTitle}</div>
               <p className="mt-1 text-xs leading-5 text-stone-500">{transientHint}</p>
               <Input className="mt-3" type="file" accept="image/*" multiple disabled={editing} onChange={(event) => void chooseImages(Array.from(event.target.files ?? []))} />
-              {previewUrls.length > 0 && <div className="mt-3 grid grid-cols-3 gap-2">{previewUrls.slice(0, 6).map((url, index) => <img key={url} src={url} alt="" className="h-24 w-full rounded-xl object-cover" />)}</div>}
+              {previewUrls.length > 0 && <div className="mt-3 grid grid-cols-3 gap-2">{previewUrls.slice(0, 6).map((url) => <img key={url} src={url} alt="" className="h-24 w-full rounded-xl object-cover" />)}</div>}
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button variant="secondary" disabled={!files[0] || ocrBusy} onClick={() => void runOcr()}><ScanText size={16}/>{ocrBusy ? `${Math.round(ocrProgress * 100)}%` : 'OCR'}</Button>
                 <Button variant="secondary" disabled={!files[0] || aiBusy || !ledger.aiVision?.endpoint || !ledger.aiVision?.model} onClick={() => void runAi()}><Sparkles size={16}/>{aiBusy ? t('ai.analyzing') : 'AI'}</Button>
