@@ -69,9 +69,10 @@ export function Onboarding({ autoConnecting = false }: { autoConnecting?: boolea
   const valid = useMemo(() => password.length >= 8 && password === confirm && a1.trim() && a2.trim() && q1 !== q2 && savedRecovery, [password, confirm, a1, a2, q1, q2, savedRecovery])
 
   useEffect(() => {
-    if (!googleSession || step === 'create' || checkedSession.current === googleSession.accessToken) return
+    const accessToken = googleSession?.accessToken
+    if (!accessToken || checkedSession.current === accessToken) return
     let cancelled = false
-    checkedSession.current = googleSession.accessToken
+    checkedSession.current = accessToken
     setStep('checking')
     setAction('checking-drive')
     clearError()
@@ -91,7 +92,10 @@ export function Onboarding({ autoConnecting = false }: { autoConnecting?: boolea
       })
 
     return () => { cancelled = true }
-  }, [clearError, googleSession, restoreVaultConfigFromDrive, step])
+    // Deliberately key this effect to the Google access token only. Depending on
+    // `step` caused setStep('checking') to immediately run the cleanup and mark the
+    // in-flight Drive lookup as cancelled, leaving brand-new accounts stuck forever.
+  }, [clearError, googleSession?.accessToken, restoreVaultConfigFromDrive])
 
   async function signIn() {
     if (!googleConfigured || action !== 'idle' || autoConnecting) return
