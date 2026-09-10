@@ -167,9 +167,7 @@ export class WalletRepository {
 
   async getImageBlob(id: string) {
     let row = await db.images.get(id)
-    if (!row && this.remoteImageLoader) {
-      row = await this.remoteImageLoader(id)
-    }
+    if (!row && this.remoteImageLoader) row = await this.remoteImageLoader(id)
     if (!row || row.deleted) return undefined
     const clear = await decryptBytes(this.key, row.payload, `image:${id}`)
     if (clear.byteLength < 4) throw new Error('error.corruptImage')
@@ -205,8 +203,6 @@ export class WalletRepository {
   }
 
   async ensureDefaults() {
-    // v0.8: categories start empty. Remove untouched legacy built-ins from older vaults,
-    // but never remove a category that is already referenced by transaction history.
     const legacyDefaultIds = new Set(['food', 'shopping', 'transport', 'bills', 'entertainment', 'health', 'salary', 'other'])
     const [existingCategories, existingTransactions, existingSettings] = await Promise.all([
       this.getAll<Category>('category'),
@@ -231,7 +227,7 @@ export class WalletRepository {
         imageRetention: { mode: 'forever', days: 90 },
         defaultCurrency: 'VND',
         autoSync: true,
-        rememberDefaults: { googleRemember: 'tab', vaultRemember: 'off' },
+        rememberDefaults: { googleRemember: '30d', vaultRemember: 'off' },
         ocrTemplates: [],
         budgets: [],
         accountCatalogues: [],
