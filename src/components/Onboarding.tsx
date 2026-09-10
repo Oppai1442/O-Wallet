@@ -55,7 +55,7 @@ export function Onboarding({ autoConnecting = false }: { autoConnecting?: boolea
   const L = COPY[language]
   const [step, setStep] = useState<OnboardingStep>(() => googleSession ? 'checking' : 'login')
   const [action, setAction] = useState<ActionState>('idle')
-  const checkedSession = useRef<string>()
+  const checkedSession = useRef<string | undefined>(undefined)
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [recoveryKey] = useState(() => generateRecoveryKey())
@@ -99,8 +99,6 @@ export function Onboarding({ autoConnecting = false }: { autoConnecting?: boolea
     clearError()
     try {
       await connectGoogle()
-      // The effect above performs the Drive check after the session has been committed
-      // to context. Keeping the two steps separate avoids a second OAuth request.
     } catch {
       setStep('login')
     } finally {
