@@ -57,6 +57,11 @@ function rpId() {
   return window.location.hostname
 }
 
+function isWindows() {
+  const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData
+  return (uaData?.platform ?? navigator.userAgent).toLocaleLowerCase('en-US').includes('win')
+}
+
 function prfExtensions(salt: Uint8Array) {
   return {
     prf: { eval: { first: toArrayBuffer(salt) } },
@@ -71,6 +76,12 @@ function readPrfResult(credential: PublicKeyCredential) {
 
 function isOperationError(error: unknown) {
   return typeof error === 'object' && error !== null && 'name' in error && (error as { name?: unknown }).name === 'OperationError'
+}
+
+export function quickUnlockErrorSummary(error: unknown) {
+  if (error instanceof DOMException) return `${error.name}: ${error.message || 'WebAuthn operation failed'}`
+  if (error instanceof Error) return `${error.name}: ${error.message}`
+  return String(error ?? 'Unknown Quick Unlock error')
 }
 
 export function isQuickUnlockCancellation(error: unknown) {
@@ -154,18 +165,27 @@ function quickAad(vaultCreatedAt: string) {
   return encoder.encode(`O-Wallet quick unlock DEK v1:${vaultCreatedAt}`)
 }
 
-async function getPlatformAssertion(credentialId: Uint8Array, extensions?: AuthenticationExtensionsClientInputs) {
+function bytesEqual(left: Uint8Array, right: Uint8Array) {
+  if (left.length !== right.length) return false
+  let diff = 0
+  for (let i = 0; i < left.length; i += 1) diff |= left[i] ^ right[i]
+  return diff === 0
+}
+
+async function getPlatformAssertion(credentialId: Uint8Array, extensions?: AuthenticationExtensionsClientInputs, discoverable = false) {
   const assertion = await navigator.credentials.get({
     publicKey: {
       challenge: toArrayBuffer(randomBytes(32)),
       rpId: rpId(),
-      allowCredentials: [{ id: toArrayBuffer(credentialId), type: 'public-key' }],
+      ...(discoverable ? {} : { allowCredentials: [{ id: toArrayBuffer(credentialId), type: 'public-key' as const }] }),
       userVerification: 'required',
       timeout: 60_000,
       ...(extensions ? { extensions } : {}),
     },
   }) as PublicKeyCredential | null
   if (!assertion) throw new Error('error.quickUnlockFailed')
+  const actualId = new Uint8Array(assertion.rawId)
+  if (!bytesEqual(actualId, credentialId)) throw new Error('error.quickUnlockFailed')
   return assertion
 }
 
@@ -176,11 +196,7 @@ async function evaluatePrf(credentialId: Uint8Array, salt: Uint8Array) {
   return result
 }
 
-async function verifyPlatformCredential(credentialId: Uint8Array) {
-  await getPlatformAssertion(credentialId)
-}
-
-async function registerCredential(salt: Uint8Array) {
+async function registerCredential({ salt, windowsMode }: { salt?: Uint8Array; windowsMode: boolean }) {
   const credential = await navigator.credentials.create({
     publicKey: {
       rp: { name: 'O-Wallet', id: rpId() },
@@ -196,12 +212,12 @@ async function registerCredential(salt: Uint8Array) {
       ],
       authenticatorSelection: {
         authenticatorAttachment: 'platform',
-        residentKey: 'discouraged',
+        residentKey: windowsMode ? 'required' : 'preferred',
         userVerification: 'required',
       },
       attestation: 'none',
       timeout: 60_000,
-      extensions: prfExtensions(salt),
+      ...(salt ? { extensions: prfExtensions(salt) } : {}),
     },
   }) as PublicKeyCredential | null
   if (!credential) throw new Error('error.quickUnlockFailed')
@@ -223,36 +239,50 @@ export async function enableQuickUnlock(config: VaultConfig, password: string) {
 
   await unlockVaultWithPassword(config, password)
   const rawDek = await rawDekFromPassword(config, password)
-  const prfSalt = randomBytes(32)
-  const { credentialId, createPrfOutput } = await registerCredential(prfSalt)
 
-  // Some Windows Hello/passkey providers advertise PRF during create but fail when
-  // that extension is requested again during get(). Prove the real unlock path now.
-  // If PRF is unstable but ordinary platform user verification works, fall back to a
-  // non-extractable local AES wrapping key gated by the same Windows Hello assertion.
-  try {
-    const prfOutput = createPrfOutput ? await evaluatePrf(credentialId, prfSalt) : undefined
-    if (prfOutput) {
-      const wrappingKey = await quickAesKey(prfOutput, config.createdAt)
-      const stored: QuickUnlockConfig = {
-        schemaVersion: 2,
-        mode: 'prf',
-        vaultCreatedAt: config.createdAt,
-        rpId: rpId(),
-        credentialId: bytesToBase64Url(credentialId),
-        prfSalt: bytesToBase64Url(prfSalt),
-        wrappedDek: await wrapRawDek(wrappingKey, rawDek, config.createdAt),
-        createdAt: new Date().toISOString(),
-      }
-      await setKv(QUICK_UNLOCK_KEY, stored)
-      return stored
+  // Windows Hello supports WebAuthn/FIDO2 well, but PRF support is inconsistent.
+  // Use one resident platform credential prompt on Windows instead of create -> PRF
+  // probe -> fallback verification (which could show three Windows Security dialogs).
+  if (isWindows()) {
+    const { credentialId } = await registerCredential({ windowsMode: true })
+    const localWrappingKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
+    const stored: QuickUnlockConfig = {
+      schemaVersion: 2,
+      mode: 'platform-uv',
+      vaultCreatedAt: config.createdAt,
+      rpId: rpId(),
+      credentialId: bytesToBase64Url(credentialId),
+      localWrappingKey,
+      wrappedDek: await wrapRawDek(localWrappingKey, rawDek, config.createdAt),
+      createdAt: new Date().toISOString(),
     }
+    await setKv(QUICK_UNLOCK_KEY, stored)
+    return stored
+  }
+
+  const prfSalt = randomBytes(32)
+  const { credentialId, createPrfOutput } = await registerCredential({ salt: prfSalt, windowsMode: false })
+  try {
+    const prfOutput = createPrfOutput ?? await evaluatePrf(credentialId, prfSalt)
+    const wrappingKey = await quickAesKey(prfOutput, config.createdAt)
+    const stored: QuickUnlockConfig = {
+      schemaVersion: 2,
+      mode: 'prf',
+      vaultCreatedAt: config.createdAt,
+      rpId: rpId(),
+      credentialId: bytesToBase64Url(credentialId),
+      prfSalt: bytesToBase64Url(prfSalt),
+      wrappedDek: await wrapRawDek(wrappingKey, rawDek, config.createdAt),
+      createdAt: new Date().toISOString(),
+    }
+    await setKv(QUICK_UNLOCK_KEY, stored)
+    return stored
   } catch (prfError) {
     if (isQuickUnlockCancellation(prfError)) throw prfError
     reportDiagnostic('quick-unlock-prf-probe', prfError)
   }
 
-  await verifyPlatformCredential(credentialId)
+  // Non-Windows fallback for authenticators that support UV but not PRF.
   const localWrappingKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
   const stored: QuickUnlockConfig = {
     schemaVersion: 2,
@@ -276,7 +306,8 @@ async function unwrapDek(stored: StoredQuickUnlockConfig, config: VaultConfig) {
     wrappingKey = await quickAesKey(prfOutput, config.createdAt)
   } else {
     if (stored.schemaVersion !== 2 || !stored.localWrappingKey) throw new Error('error.quickUnlockUnavailable')
-    await verifyPlatformCredential(base64UrlToBytes(stored.credentialId))
+    const credentialId = base64UrlToBytes(stored.credentialId)
+    await getPlatformAssertion(credentialId, undefined, isWindows())
     wrappingKey = stored.localWrappingKey
   }
 
@@ -304,12 +335,6 @@ export async function unlockWithQuickUnlock(config: VaultConfig) {
   return dek
 }
 
-/**
- * WalletContext owns the in-memory DEK and intentionally exposes no "inject key"
- * escape hatch. Quick Unlock hands the verified non-extractable key to the existing
- * bootstrap path through the same IndexedDB CryptoKey mechanism used by Vault Remember,
- * with a very short expiry. A reload then consumes it and resumes the normal app flow.
- */
 export async function handOffQuickUnlockToWallet(config: VaultConfig, dek: CryptoKey) {
   await setRememberedVaultUnlock({ vaultCreatedAt: config.createdAt, expiresAt: Date.now() + BRIDGE_TTL_MS, dek })
   window.location.reload()
