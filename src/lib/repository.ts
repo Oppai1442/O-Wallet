@@ -281,6 +281,30 @@ export class WalletRepository {
         updatedAt: now,
         deleted: false,
       })
+      return
+    }
+
+    const activeCategoryIds = new Set(existingCategories.filter((category) => !category.archived).map((category) => category.id))
+    const repairedBudgets = (existingSettings.budgets ?? []).filter((budget) => activeCategoryIds.has(budget.categoryId))
+    const repairedRules = (existingSettings.transactionRules ?? [])
+      .map((rule) => rule.categoryId && !activeCategoryIds.has(rule.categoryId) ? { ...rule, categoryId: undefined } : rule)
+      .filter((rule) => Boolean(rule.categoryId || rule.accountId))
+    const defaultCategoryId = existingSettings.transactionDefaults?.categoryId
+    const repairedDefaults = defaultCategoryId && !activeCategoryIds.has(defaultCategoryId)
+      ? { ...existingSettings.transactionDefaults, categoryId: undefined }
+      : existingSettings.transactionDefaults
+    const needsRepair = repairedBudgets.length !== (existingSettings.budgets ?? []).length
+      || repairedRules.length !== (existingSettings.transactionRules ?? []).length
+      || repairedRules.some((rule, index) => rule.categoryId !== (existingSettings.transactionRules ?? [])[index]?.categoryId)
+      || repairedDefaults?.categoryId !== existingSettings.transactionDefaults?.categoryId
+    if (needsRepair) {
+      await this.put<AppSettings>({
+        ...existingSettings,
+        budgets: repairedBudgets,
+        transactionRules: repairedRules,
+        transactionDefaults: repairedDefaults,
+        updatedAt: new Date().toISOString(),
+      })
     }
   }
 
