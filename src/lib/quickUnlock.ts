@@ -3,7 +3,8 @@ import { base64UrlToBytes, bytesToBase64Url, randomBytes, unlockVaultWithPasswor
 import { deleteKv, getKv, setKv, setRememberedVaultUnlock } from './db'
 import { reportDiagnostic } from './security'
 
-const QUICK_UNLOCK_KEY = 'quick-unlock-config-v1'
+const LEGACY_QUICK_UNLOCK_KEY = 'quick-unlock-config-v1'
+const QUICK_UNLOCK_KEY_PREFIX = 'quick-unlock-config-v2:'
 const BRIDGE_TTL_MS = 20_000
 const encoder = new TextEncoder()
 
@@ -57,6 +58,10 @@ function rpId() {
   return window.location.hostname
 }
 
+function quickUnlockKey(vaultCreatedAt: string) {
+  return `${QUICK_UNLOCK_KEY_PREFIX}${encodeURIComponent(vaultCreatedAt)}`
+}
+
 function isWindows() {
   const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData
   return (uaData?.platform ?? navigator.userAgent).toLocaleLowerCase('en-US').includes('win')
@@ -101,12 +106,28 @@ export async function quickUnlockPlatformAvailable() {
   }
 }
 
-export async function getQuickUnlockConfig() {
-  return getKv<StoredQuickUnlockConfig>(QUICK_UNLOCK_KEY)
+async function migrateLegacyQuickUnlock(config: VaultConfig) {
+  const currentKey = quickUnlockKey(config.createdAt)
+  const existing = await getKv<StoredQuickUnlockConfig>(currentKey)
+  if (existing) return existing
+
+  const legacy = await getKv<StoredQuickUnlockConfig>(LEGACY_QUICK_UNLOCK_KEY)
+  if (!legacy || legacy.vaultCreatedAt !== config.createdAt || legacy.rpId !== rpId()) return undefined
+  await setKv(currentKey, legacy)
+  await deleteKv(LEGACY_QUICK_UNLOCK_KEY)
+  return legacy
 }
 
-export async function clearQuickUnlockConfig() {
-  await deleteKv(QUICK_UNLOCK_KEY)
+export async function getQuickUnlockConfig(config?: VaultConfig) {
+  if (!config) return undefined
+  return (await getKv<StoredQuickUnlockConfig>(quickUnlockKey(config.createdAt))) ?? await migrateLegacyQuickUnlock(config)
+}
+
+export async function clearQuickUnlockConfig(config?: VaultConfig) {
+  if (!config) return
+  await deleteKv(quickUnlockKey(config.createdAt))
+  const legacy = await getKv<StoredQuickUnlockConfig>(LEGACY_QUICK_UNLOCK_KEY)
+  if (legacy?.vaultCreatedAt === config.createdAt) await deleteKv(LEGACY_QUICK_UNLOCK_KEY)
 }
 
 function modeOf(stored: StoredQuickUnlockConfig): QuickUnlockMode {
@@ -115,7 +136,7 @@ function modeOf(stored: StoredQuickUnlockConfig): QuickUnlockMode {
 
 export async function hasQuickUnlockForVault(config?: VaultConfig) {
   if (!config) return false
-  const stored = await getQuickUnlockConfig()
+  const stored = await getQuickUnlockConfig(config)
   if (!stored) return false
   if ((stored.schemaVersion !== 1 && stored.schemaVersion !== 2) || stored.vaultCreatedAt !== config.createdAt || stored.rpId !== rpId()) return false
   try {
@@ -172,12 +193,12 @@ function bytesEqual(left: Uint8Array, right: Uint8Array) {
   return diff === 0
 }
 
-async function getPlatformAssertion(credentialId: Uint8Array, extensions?: AuthenticationExtensionsClientInputs, discoverable = false) {
+async function getPlatformAssertion(credentialId: Uint8Array, extensions?: AuthenticationExtensionsClientInputs) {
   const assertion = await navigator.credentials.get({
     publicKey: {
       challenge: toArrayBuffer(randomBytes(32)),
       rpId: rpId(),
-      ...(discoverable ? {} : { allowCredentials: [{ id: toArrayBuffer(credentialId), type: 'public-key' as const }] }),
+      allowCredentials: [{ id: toArrayBuffer(credentialId), type: 'public-key' as const }],
       userVerification: 'required',
       timeout: 60_000,
       ...(extensions ? { extensions } : {}),
@@ -196,13 +217,20 @@ async function evaluatePrf(credentialId: Uint8Array, salt: Uint8Array) {
   return result
 }
 
-async function registerCredential({ salt, windowsMode }: { salt?: Uint8Array; windowsMode: boolean }) {
+async function stableCredentialUserId(vaultCreatedAt: string) {
+  const material = encoder.encode(`O-Wallet Quick Unlock user v1:${rpId()}:${vaultCreatedAt}`)
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', toArrayBuffer(material)))
+}
+
+async function registerCredential({ salt, vaultCreatedAt, windowsMode }: { salt?: Uint8Array; vaultCreatedAt: string; windowsMode: boolean }) {
+  const userId = await stableCredentialUserId(vaultCreatedAt)
+  const userName = `o-wallet-${bytesToBase64Url(userId).slice(0, 16)}`
   const credential = await navigator.credentials.create({
     publicKey: {
       rp: { name: 'O-Wallet', id: rpId() },
       user: {
-        id: toArrayBuffer(randomBytes(32)),
-        name: `o-wallet-${crypto.randomUUID()}`,
+        id: toArrayBuffer(userId),
+        name: userName,
         displayName: 'O-Wallet Quick Unlock',
       },
       challenge: toArrayBuffer(randomBytes(32)),
@@ -212,7 +240,10 @@ async function registerCredential({ salt, windowsMode }: { salt?: Uint8Array; wi
       ],
       authenticatorSelection: {
         authenticatorAttachment: 'platform',
-        residentKey: windowsMode ? 'required' : 'preferred',
+        // O-Wallet stores the credential ID locally, so Quick Unlock does not need a
+        // discoverable/resident passkey. This avoids filling Windows passkey storage
+        // with a new resident credential every time the feature is re-enrolled.
+        residentKey: windowsMode ? 'discouraged' : 'preferred',
         userVerification: 'required',
       },
       attestation: 'none',
@@ -240,11 +271,8 @@ export async function enableQuickUnlock(config: VaultConfig, password: string) {
   await unlockVaultWithPassword(config, password)
   const rawDek = await rawDekFromPassword(config, password)
 
-  // Windows Hello supports WebAuthn/FIDO2 well, but PRF support is inconsistent.
-  // Use one resident platform credential prompt on Windows instead of create -> PRF
-  // probe -> fallback verification (which could show three Windows Security dialogs).
   if (isWindows()) {
-    const { credentialId } = await registerCredential({ windowsMode: true })
+    const { credentialId } = await registerCredential({ vaultCreatedAt: config.createdAt, windowsMode: true })
     const localWrappingKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
     const stored: QuickUnlockConfig = {
       schemaVersion: 2,
@@ -256,12 +284,13 @@ export async function enableQuickUnlock(config: VaultConfig, password: string) {
       wrappedDek: await wrapRawDek(localWrappingKey, rawDek, config.createdAt),
       createdAt: new Date().toISOString(),
     }
-    await setKv(QUICK_UNLOCK_KEY, stored)
+    await setKv(quickUnlockKey(config.createdAt), stored)
+    await deleteKv(LEGACY_QUICK_UNLOCK_KEY)
     return stored
   }
 
   const prfSalt = randomBytes(32)
-  const { credentialId, createPrfOutput } = await registerCredential({ salt: prfSalt, windowsMode: false })
+  const { credentialId, createPrfOutput } = await registerCredential({ salt: prfSalt, vaultCreatedAt: config.createdAt, windowsMode: false })
   try {
     const prfOutput = createPrfOutput ?? await evaluatePrf(credentialId, prfSalt)
     const wrappingKey = await quickAesKey(prfOutput, config.createdAt)
@@ -275,14 +304,14 @@ export async function enableQuickUnlock(config: VaultConfig, password: string) {
       wrappedDek: await wrapRawDek(wrappingKey, rawDek, config.createdAt),
       createdAt: new Date().toISOString(),
     }
-    await setKv(QUICK_UNLOCK_KEY, stored)
+    await setKv(quickUnlockKey(config.createdAt), stored)
+    await deleteKv(LEGACY_QUICK_UNLOCK_KEY)
     return stored
   } catch (prfError) {
     if (isQuickUnlockCancellation(prfError)) throw prfError
     reportDiagnostic('quick-unlock-prf-probe', prfError)
   }
 
-  // Non-Windows fallback for authenticators that support UV but not PRF.
   const localWrappingKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
   const stored: QuickUnlockConfig = {
     schemaVersion: 2,
@@ -294,7 +323,8 @@ export async function enableQuickUnlock(config: VaultConfig, password: string) {
     wrappedDek: await wrapRawDek(localWrappingKey, rawDek, config.createdAt),
     createdAt: new Date().toISOString(),
   }
-  await setKv(QUICK_UNLOCK_KEY, stored)
+  await setKv(quickUnlockKey(config.createdAt), stored)
+  await deleteKv(LEGACY_QUICK_UNLOCK_KEY)
   return stored
 }
 
@@ -307,7 +337,7 @@ async function unwrapDek(stored: StoredQuickUnlockConfig, config: VaultConfig) {
   } else {
     if (stored.schemaVersion !== 2 || !stored.localWrappingKey) throw new Error('error.quickUnlockUnavailable')
     const credentialId = base64UrlToBytes(stored.credentialId)
-    await getPlatformAssertion(credentialId, undefined, isWindows())
+    await getPlatformAssertion(credentialId)
     wrappingKey = stored.localWrappingKey
   }
 
@@ -327,11 +357,11 @@ async function unwrapDek(stored: StoredQuickUnlockConfig, config: VaultConfig) {
 }
 
 export async function unlockWithQuickUnlock(config: VaultConfig) {
-  const stored = await getQuickUnlockConfig()
+  const stored = await getQuickUnlockConfig(config)
   if (!stored || !await hasQuickUnlockForVault(config)) throw new Error('error.quickUnlockUnavailable')
   const rawDek = await unwrapDek(stored, config)
   const dek = await crypto.subtle.importKey('raw', toArrayBuffer(rawDek), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
-  await setKv(QUICK_UNLOCK_KEY, { ...stored, lastUsedAt: new Date().toISOString() })
+  await setKv(quickUnlockKey(config.createdAt), { ...stored, lastUsedAt: new Date().toISOString() })
   return dek
 }
 
