@@ -28,10 +28,32 @@ function DelayedLoader() {
 }
 
 function AppBody() {
-  const { status, googleAutoConnecting } = useWallet()
+  const { status, googleAutoConnecting, refresh } = useWallet()
+  const [localReady, setLocalReady] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    if (status !== 'unlocked') {
+      setLocalReady(false)
+      return () => { cancelled = true }
+    }
+
+    // Local IndexedDB rows are encrypted. Hydrate/decrypt them immediately after
+    // unlocking so Drive availability never gates the first useful render.
+    setLocalReady(false)
+    void refresh()
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setLocalReady(true)
+      })
+
+    return () => { cancelled = true }
+  }, [refresh, status])
+
   if (status === 'loading') return <DelayedLoader />
   if (status === 'new') return <div className="ow-fade-in"><Onboarding autoConnecting={googleAutoConnecting} /></div>
   if (status === 'locked') return <div className="ow-fade-in"><Unlock /></div>
+  if (!localReady) return <DelayedLoader />
   return <div className="ow-fade-in"><Shell /></div>
 }
 
