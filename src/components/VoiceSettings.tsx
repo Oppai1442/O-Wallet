@@ -7,9 +7,8 @@ import {
   deriveCalibrationCorrections,
   getVoiceSettings,
   mergeVoiceCorrections,
-  recognizeSpeech,
-  speechRecognitionSupported,
 } from '../lib/speech'
+import { recognizeSpeech, speechRecognitionSupported, voiceRecognitionErrorText } from '../lib/speechRecognition'
 import { Button, Card, Select } from './ui'
 
 const SAMPLES: Record<VoiceInputLanguage, Array<{ id: string; text: string }>> = {
@@ -33,7 +32,7 @@ export function VoiceSettings({ settings, onSaveSettings }: {
   settings?: AppSettings
   onSaveSettings: (patch: Partial<AppSettings>) => Promise<void>
 }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const initial = getVoiceSettings(settings)
   const [language, setLanguage] = useState<VoiceInputLanguage>(initial.language)
   const [fieldOrder, setFieldOrder] = useState<VoiceInputField[]>(initial.fieldOrder)
@@ -82,7 +81,7 @@ export function VoiceSettings({ settings, onSaveSettings }: {
       if (learned.length) setCorrections((current) => mergeVoiceCorrections(current, learned))
     } catch (error) {
       if (error instanceof Error && error.message === 'error.voiceCancelled') return
-      setMessage(t(error instanceof Error && error.message.startsWith('error.') ? error.message : 'error.voiceRecognition'))
+      setMessage(voiceRecognitionErrorText(error, locale) ?? t(error instanceof Error && error.message.startsWith('error.') ? error.message : 'error.voiceRecognition'))
     } finally {
       setListeningId(undefined)
     }
