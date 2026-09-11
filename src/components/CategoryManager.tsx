@@ -9,7 +9,7 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
   categories: Category[]
   transactions: Transaction[]
   onSave: (category: Category) => Promise<void>
-  onSaveMany: (categories: Category[]) => Promise<void>
+  onSaveMany: (categories: Category[], removedIds?: string[]) => Promise<void>
 }) {
   const { t, locale } = useI18n()
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(categories.filter((item) => !item.archived && isCategoryGroup(item)).map((item) => item.id)))
@@ -82,11 +82,10 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
     if (!confirm(used ? t('categories.deleteUsedConfirm', { count: used }) : t('categories.deleteConfirm'))) return
     const timestamp = new Date().toISOString()
     const targets = active.filter((item) => ids.has(item.id))
-    if (used) {
-      await onSaveMany(targets.map((item) => ({ ...item, archived: true, updatedAt: timestamp })))
-    } else {
-      await onSaveMany(targets.map((item) => ({ ...item, deleted: true, updatedAt: timestamp })))
-    }
+    const nextCategories = used
+      ? targets.map((item) => ({ ...item, archived: true, updatedAt: timestamp }))
+      : targets.map((item) => ({ ...item, deleted: true, updatedAt: timestamp }))
+    await onSaveMany(nextCategories, [...ids])
   }
 
   function row(category: Category) {
@@ -121,21 +120,11 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
       <div>
         <Label>{roleCopy.label}</Label>
         <div className="grid gap-2 sm:grid-cols-2">
-          <button
-            type="button"
-            aria-pressed={nodeType === 'group'}
-            onClick={() => setNodeType('group')}
-            className={`flex min-w-0 items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${nodeType === 'group' ? 'border-stone-500 bg-white shadow-sm dark:border-stone-500 dark:bg-stone-900' : 'border-stone-200 bg-white/50 hover:border-stone-300 dark:border-stone-800 dark:bg-stone-950/30 dark:hover:border-stone-700'}`}
-          >
+          <button type="button" aria-pressed={nodeType === 'group'} onClick={() => setNodeType('group')} className={`flex min-w-0 items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${nodeType === 'group' ? 'border-stone-500 bg-white shadow-sm dark:border-stone-500 dark:bg-stone-900' : 'border-stone-200 bg-white/50 hover:border-stone-300 dark:border-stone-800 dark:bg-stone-950/30 dark:hover:border-stone-700'}`}>
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300"><Folder size={16} /></span>
             <span className="min-w-0"><span className="block text-sm font-semibold text-stone-900 dark:text-stone-100">{roleCopy.group}</span><span className="mt-0.5 block text-xs leading-5 text-stone-500">{roleCopy.groupHint}</span></span>
           </button>
-          <button
-            type="button"
-            aria-pressed={nodeType === 'item'}
-            onClick={() => setNodeType('item')}
-            className={`flex min-w-0 items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${nodeType === 'item' ? 'border-blue-500 bg-blue-50/70 shadow-sm dark:border-blue-500 dark:bg-blue-500/10' : 'border-stone-200 bg-white/50 hover:border-stone-300 dark:border-stone-800 dark:bg-stone-950/30 dark:hover:border-stone-700'}`}
-          >
+          <button type="button" aria-pressed={nodeType === 'item'} onClick={() => setNodeType('item')} className={`flex min-w-0 items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${nodeType === 'item' ? 'border-blue-500 bg-blue-50/70 shadow-sm dark:border-blue-500 dark:bg-blue-500/10' : 'border-stone-200 bg-white/50 hover:border-stone-300 dark:border-stone-800 dark:bg-stone-950/30 dark:hover:border-stone-700'}`}>
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300"><Tag size={16} /></span>
             <span className="min-w-0"><span className="block text-sm font-semibold text-stone-900 dark:text-stone-100">{roleCopy.item}</span><span className="mt-0.5 block text-xs leading-5 text-stone-500">{roleCopy.itemHint}</span></span>
           </button>
