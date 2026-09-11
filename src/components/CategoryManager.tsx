@@ -21,6 +21,20 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
   const [editName, setEditName] = useState('')
   const [editKind, setEditKind] = useState<Category['kind']>('expense')
 
+  const roleCopy = locale.startsWith('vi') ? {
+    label: 'Loại danh mục',
+    group: 'Nhóm danh mục',
+    groupHint: 'Chỉ để gom các danh mục con. Không thể gán trực tiếp cho giao dịch.',
+    item: 'Danh mục giao dịch',
+    itemHint: 'Danh mục thực tế có thể chọn khi thêm giao dịch thu hoặc chi.',
+  } : {
+    label: 'Category role',
+    group: 'Category group',
+    groupHint: 'Organizes child categories. It cannot be assigned directly to a transaction.',
+    item: 'Transaction category',
+    itemHint: 'A real category that can be selected for an income or expense transaction.',
+  }
+
   const active = categories.filter((item) => !item.archived)
   const groups = active.filter(isCategoryGroup).sort((a, b) => categoryPath(a, active).localeCompare(categoryPath(b, active), locale))
   const children = useMemo(() => {
@@ -103,9 +117,33 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
     <div className="mt-5 rounded-2xl border border-stone-200 bg-stone-50/60 p-3 dark:border-stone-800 dark:bg-stone-950/30">
       <div className="mb-3 flex items-center justify-between gap-3"><div className="text-sm font-semibold text-stone-800 dark:text-stone-200">{t('categories.create')}</div>{parentId && <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => setParentId('')}>{t('categories.backToRoot')}</button>}</div>
       {parentId && <div className="mb-3 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">{t('categories.inside', { path: categoryPath(active.find((item) => item.id === parentId)!, active) })}</div>}
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_150px_150px_220px_auto]">
+
+      <div>
+        <Label>{roleCopy.label}</Label>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            aria-pressed={nodeType === 'group'}
+            onClick={() => setNodeType('group')}
+            className={`flex min-w-0 items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${nodeType === 'group' ? 'border-stone-500 bg-white shadow-sm dark:border-stone-500 dark:bg-stone-900' : 'border-stone-200 bg-white/50 hover:border-stone-300 dark:border-stone-800 dark:bg-stone-950/30 dark:hover:border-stone-700'}`}
+          >
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300"><Folder size={16} /></span>
+            <span className="min-w-0"><span className="block text-sm font-semibold text-stone-900 dark:text-stone-100">{roleCopy.group}</span><span className="mt-0.5 block text-xs leading-5 text-stone-500">{roleCopy.groupHint}</span></span>
+          </button>
+          <button
+            type="button"
+            aria-pressed={nodeType === 'item'}
+            onClick={() => setNodeType('item')}
+            className={`flex min-w-0 items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${nodeType === 'item' ? 'border-blue-500 bg-blue-50/70 shadow-sm dark:border-blue-500 dark:bg-blue-500/10' : 'border-stone-200 bg-white/50 hover:border-stone-300 dark:border-stone-800 dark:bg-stone-950/30 dark:hover:border-stone-700'}`}
+          >
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300"><Tag size={16} /></span>
+            <span className="min-w-0"><span className="block text-sm font-semibold text-stone-900 dark:text-stone-100">{roleCopy.item}</span><span className="mt-0.5 block text-xs leading-5 text-stone-500">{roleCopy.itemHint}</span></span>
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_150px_220px_auto]">
         <div><Label>{t('categories.name')}</Label><Input id="category-create-name" value={name} onChange={(e) => setName(e.target.value)} /></div>
-        <div><Label>{t('categories.type')}</Label><Select value={nodeType} onChange={(e) => setNodeType(e.target.value as 'group' | 'item')}><option value="group">{t('categories.group')}</option><option value="item">{t('categories.item')}</option></Select></div>
         <div><Label>{t('categories.kind')}</Label><Select disabled={nodeType === 'group'} value={kind} onChange={(e) => setKind(e.target.value as Category['kind'])}><option value="expense">{t('settings.kindExpense')}</option><option value="income">{t('settings.kindIncome')}</option><option value="both">{t('settings.kindBoth')}</option></Select></div>
         <div><Label>{t('categories.parent')}</Label><Select value={parentId} onChange={(e) => setParentId(e.target.value)}><option value="">{t('categories.root')}</option>{groups.map((group) => <option key={group.id} value={group.id}>{categoryPath(group, active)}</option>)}</Select></div>
         <div className="self-end"><Button className="w-full" onClick={() => void createCategory()}><Plus size={16} />{t('common.add')}</Button></div>
