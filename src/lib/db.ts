@@ -180,7 +180,8 @@ export async function clearLocalWalletData() {
   })
 }
 
-// Removes only account/vault data from this browser. Device preferences and language remain.
+// Removes only account/vault data from this browser. Device preferences, language,
+// and Quick Unlock enrollments for previously used vaults remain local to the device.
 export async function clearLocalVaultForAccountSwitch() {
   await db.transaction('rw', [db.records, db.images, db.syncQueue, db.remoteRecords, db.remoteImages, db.sharedRecords, db.kv], async () => {
     await db.records.clear()
@@ -192,7 +193,6 @@ export async function clearLocalVaultForAccountSwitch() {
     await db.kv.bulkDelete([
       'vault-config',
       'remembered-vault-unlock',
-      'quick-unlock-config-v1',
       'google-account-binding',
       'sync-v2-state',
     ])
