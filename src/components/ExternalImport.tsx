@@ -6,7 +6,7 @@ import { findDuplicateTransaction } from '../lib/duplicates'
 import { parseExternalBackup } from '../lib/importers/client'
 import type { ExternalImportBundle, ExternalImportTransaction, ExternalImportUnsupportedRow } from '../lib/importers/types'
 import type { Account, Category, Transaction, TransactionType, WalletEntity } from '../types'
-import { Badge, Button, Card, Select } from './ui'
+import { Button, Card, Select } from './ui'
 
 type UnknownTypeMapping = 'skip' | 'income' | 'expense'
 
@@ -83,6 +83,9 @@ export function ExternalImport() {
   const invalidRows = bundle?.unsupportedRows.filter((row) => row.reason === 'invalid-row').length ?? 0
   const selectedAmbiguousCount = (type7Mapping === 'skip' ? 0 : unknown7.length) + (type8Mapping === 'skip' ? 0 : unknown8.length)
   const importableTransactionCount = (bundle?.transactions.length ?? 0) + selectedAmbiguousCount
+  const ambiguousBackupHint = locale.startsWith('vi')
+    ? 'Tệp sao lưu có một số giao dịch dùng mã nội bộ mà ý nghĩa thu/chi không đủ chắc chắn để O-Wallet tự đoán. Có thể bỏ qua hoặc tự chọn cách nhập.'
+    : 'This backup contains a few records with internal codes whose income/expense meaning is not reliable enough for O-Wallet to guess. You can skip them or choose how they should be imported.'
 
   const sampleTransactions = useMemo(() => bundle?.transactions.slice(0, 5) ?? [], [bundle])
 
@@ -97,7 +100,7 @@ export function ExternalImport() {
       const parsed = await parseExternalBackup(file)
       setBundle(parsed)
     } catch (readError) {
-      setError(localizeError(readError, t, 'import.readError'))
+      setError(localizeError(readError, t, 'error.importReadFailed'))
     } finally {
       setReading(false)
       if (inputRef.current) inputRef.current.value = ''
@@ -334,7 +337,6 @@ export function ExternalImport() {
           </div>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-stone-500">{t('import.hint')}</p>
         </div>
-        {bundle && <Badge tone="indigo">{bundle.adapterName}</Badge>}
       </div>
 
       <input
@@ -377,7 +379,7 @@ export function ExternalImport() {
           {(unknown7.length > 0 || unknown8.length > 0) && (
             <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-500/20 dark:bg-amber-500/5">
               <div className="flex items-start gap-2 text-sm font-bold text-amber-800 dark:text-amber-200"><AlertTriangle size={17} className="mt-0.5 shrink-0" /> {t('import.balanceAdjustmentTitle')}</div>
-              <p className="mt-1 text-xs leading-5 text-amber-700 dark:text-amber-300">{t('import.balanceAdjustmentHint')}</p>
+              <p className="mt-1 text-xs leading-5 text-amber-700 dark:text-amber-300">{ambiguousBackupHint}</p>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 {unknown7.length > 0 && <div className="min-w-0"><div className="mb-1 text-xs font-semibold text-stone-600 dark:text-stone-300">{t('import.sourceTypeCount', { type: 'A', count: unknown7.length })}</div><Select value={type7Mapping} onChange={(e) => setType7Mapping(e.target.value as UnknownTypeMapping)}><option value="skip">{t('import.mappingSkip')}</option><option value="income">{t('transaction.income')}</option><option value="expense">{t('transaction.expense')}</option></Select><div className="mt-2 text-[11px] font-semibold text-amber-800/80 dark:text-amber-200/80">{t('import.examples')}</div><div className="mt-1 space-y-1">{ambiguousExamples(unknown7)}</div></div>}
                 {unknown8.length > 0 && <div className="min-w-0"><div className="mb-1 text-xs font-semibold text-stone-600 dark:text-stone-300">{t('import.sourceTypeCount', { type: 'B', count: unknown8.length })}</div><Select value={type8Mapping} onChange={(e) => setType8Mapping(e.target.value as UnknownTypeMapping)}><option value="skip">{t('import.mappingSkip')}</option><option value="income">{t('transaction.income')}</option><option value="expense">{t('transaction.expense')}</option></Select><div className="mt-2 text-[11px] font-semibold text-amber-800/80 dark:text-amber-200/80">{t('import.examples')}</div><div className="mt-1 space-y-1">{ambiguousExamples(unknown8)}</div></div>}
