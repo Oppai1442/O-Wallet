@@ -13,7 +13,7 @@ const productionCsp = [
   "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
   "img-src 'self' data: blob: https://*.googleusercontent.com",
   "font-src 'self' data:",
-  "connect-src 'self' https://www.googleapis.com https://content.googleapis.com https://accounts.google.com/gsi/ https://oauth2.googleapis.com https://cdn.jsdelivr.net https://tessdata.projectnaptha.com https://openrouter.ai",
+  "connect-src 'self' https://www.googleapis.com https://content.googleapis.com https://accounts.google.com/gsi/ https://oauth2.googleapis.com https://cdn.jsdelivr.net https://tessdata.projectnaptha.com https://openrouter.ai https://api.frankfurter.dev",
   "frame-src https://accounts.google.com https://docs.google.com https://drive.google.com",
   "worker-src 'self' blob: https://cdn.jsdelivr.net",
   "media-src 'self' blob:",
@@ -27,7 +27,6 @@ function securityMetaPlugin(): Plugin {
     transformIndexHtml: {
       order: 'pre',
       handler(html, context) {
-        // Vite dev needs websocket/HMR permissions. Production receives the strict CSP.
         if (context.server) return html.replace('<!-- OWALLET_SECURITY_META -->', '')
         const meta = `<meta http-equiv="Content-Security-Policy" content="${productionCsp.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}" />`
         return html.replace('<!-- OWALLET_SECURITY_META -->', meta)
@@ -37,7 +36,6 @@ function securityMetaPlugin(): Plugin {
 }
 
 export default defineConfig({
-  // Relative assets work on localhost, GitHub project pages and custom domains.
   base: './',
   build: {
     sourcemap: false,
@@ -68,8 +66,6 @@ export default defineConfig({
         skipWaiting: true,
         clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,wasm}'],
-        // Do not persist third-party executable OCR assets in O-Wallet's service-worker
-        // cache. They remain constrained by CSP and the browser's ordinary HTTP cache.
         runtimeCaching: [],
       },
     }),
