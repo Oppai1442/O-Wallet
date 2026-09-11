@@ -15,13 +15,16 @@ export function LedgerAnalytics({ transactions, categories, currency = 'VND', ti
   const [range, setRange] = useState<RangeKey>('6m')
   const now = useCurrentTime()
   const filtered = useMemo(() => filteredTransactions(transactions, range, now), [transactions, range, now])
-  const trend = useMemo(() => trendData(filtered, range, locale), [filtered, range, locale])
-  const breakdown = useMemo(() => categoryBreakdown(filtered, categories, (category) => categoryPath(category, categories), t('common.other')), [filtered, categories, t])
-  const summary = useMemo(() => summarize(filtered), [filtered])
+  const trend = useMemo(() => trendData(filtered, range, locale, currency), [filtered, range, locale, currency])
+  const breakdown = useMemo(() => categoryBreakdown(filtered, categories, (category) => categoryPath(category, categories), t('common.other'), currency), [filtered, categories, t, currency])
+  const summary = useMemo(() => summarize(filtered, currency), [filtered, currency])
+  const missingFxText = locale.startsWith('vi')
+    ? `${summary.unconverted} giao dịch ngoại tệ chưa có tỷ giá snapshot nên chưa được tính vào tổng.`
+    : `${summary.unconverted} foreign-currency transaction(s) have no FX snapshot and are excluded from totals.`
 
   return <div className="space-y-5">
     <div className="flex flex-wrap items-end justify-between gap-3">
-      <div><h2 className="text-2xl font-semibold tracking-tight text-stone-950 dark:text-white">{title ?? t('analytics.title')}</h2><p className="mt-1 text-sm text-stone-500">{subtitle ?? t('analytics.subtitle')}</p></div>
+      <div><h2 className="text-2xl font-semibold tracking-tight text-stone-950 dark:text-white">{title ?? t('analytics.title')}</h2><p className="mt-1 text-sm text-stone-500">{subtitle ?? t('analytics.subtitle')}</p>{summary.unconverted > 0 && <p className="mt-1 text-xs font-semibold text-amber-600 dark:text-amber-400">{missingFxText}</p>}</div>
       <Select className="w-40" value={range} onChange={(e) => setRange(e.target.value as RangeKey)}><option value="7d">{t('range.7d')}</option><option value="30d">{t('range.30d')}</option><option value="3m">{t('range.3m')}</option><option value="6m">{t('range.6m')}</option><option value="1y">{t('range.1y')}</option><option value="all">{t('range.all')}</option></Select>
     </div>
     <div className="grid gap-3 sm:grid-cols-3">
