@@ -1,5 +1,5 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
-import { Copy, Image as ImageIcon, Mic, Pencil, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { ChevronLeft, ChevronRight, Copy, Image as ImageIcon, Mic, Pencil, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { accountDisplayName, useI18n } from '../i18n'
 import { categoryPath, selectableCategories } from '../lib/categories'
@@ -12,6 +12,7 @@ import { ImageViewer } from './ImageViewer'
 
 const TransactionModal = lazy(() => import('./TransactionModal').then((module) => ({ default: module.TransactionModal })))
 
+const PAGE_SIZE = 100
 type SortKey = 'newest' | 'oldest' | 'amountHigh' | 'amountLow'
 
 export function Transactions() {
@@ -28,6 +29,7 @@ export function Transactions() {
   const [maxAmount, setMaxAmount] = useState('')
   const [imageFilter, setImageFilter] = useState<'all' | 'with' | 'without'>('all')
   const [sort, setSort] = useState<SortKey>('newest')
+  const [page, setPage] = useState(1)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [showVoiceAdd, setShowVoiceAdd] = useState(false)
@@ -68,6 +70,12 @@ export function Transactions() {
     })
   }, [transactions, search, type, accountId, categoryId, fromDate, toDate, minAmount, maxAmount, imageFilter, sort, categoryMap, accountMap, locale])
 
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const visible = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page])
+
+  useEffect(() => { setPage(1) }, [search, type, accountId, categoryId, fromDate, toDate, minAmount, maxAmount, imageFilter, sort])
+  useEffect(() => { if (page > pageCount) setPage(pageCount) }, [page, pageCount])
+
   const advancedActive = accountId !== 'all' || categoryId !== 'all' || fromDate || toDate || minAmount || maxAmount || imageFilter !== 'all' || sort !== 'newest'
 
   function clearAdvanced() {
@@ -80,6 +88,10 @@ export function Transactions() {
     try { await deleteTransaction(id) } finally { setDeleting(undefined) }
   }
 
+  const pageLabel = locale.startsWith('vi')
+    ? `Trang ${page}/${pageCount} · tối đa ${PAGE_SIZE} giao dịch/trang`
+    : `Page ${page}/${pageCount} · up to ${PAGE_SIZE} transactions/page`
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -89,7 +101,7 @@ export function Transactions() {
 
       <Card className="p-3 sm:p-4">
         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto]">
-          <div className="relative"><Search className="absolute left-3 top-1/2 -transtone-y-1/2 text-stone-400" size={17} /><Input className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('transactions.search')} /></div>
+          <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={17} /><Input className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('transactions.search')} /></div>
           <Select value={type} onChange={(e) => setType(e.target.value as 'all' | TransactionType)}><option value="all">{t('transactions.allTypes')}</option><option value="expense">{t('transaction.expense')}</option><option value="income">{t('transaction.income')}</option><option value="transfer">{t('transaction.transfer')}</option></Select>
           <Button variant={advancedActive ? 'secondary' : 'ghost'} onClick={() => setShowAdvanced((value) => !value)}><SlidersHorizontal size={17} /> {t('transactions.filters')}</Button>
         </div>
@@ -107,10 +119,10 @@ export function Transactions() {
         </div>}
       </Card>
 
-      <div className="text-xs font-semibold text-stone-500">{t('transactions.filteredCount', { count: filtered.length })}</div>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-stone-500"><span>{t('transactions.filteredCount', { count: filtered.length })}</span>{filtered.length > PAGE_SIZE && <span>{pageLabel}</span>}</div>
 
       <Card className="overflow-hidden">
-        {filtered.length === 0 ? <div className="p-4"><EmptyState title={t('transactions.emptyTitle')} text={t('transactions.emptyText')} /></div> : <div className="divide-y divide-stone-100 dark:divide-stone-800">{filtered.map((tx) => (
+        {filtered.length === 0 ? <div className="p-4"><EmptyState title={t('transactions.emptyTitle')} text={t('transactions.emptyText')} /></div> : <div className="divide-y divide-stone-100 dark:divide-stone-800">{visible.map((tx) => (
           <div key={tx.id} className="grid gap-3 px-4 py-4 xl:grid-cols-[minmax(0,1.4fr)_190px_190px_auto] xl:items-center">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2"><span className="truncate font-bold text-stone-900 dark:text-white">{tx.merchant || tx.description || t('transaction.noDescription')}</span><Badge tone={tx.type === 'income' ? 'green' : tx.type === 'expense' ? 'red' : 'slate'}>{t(`transaction.${tx.type}`)}</Badge>{isFutureTransaction(tx, now) && <Badge tone="indigo">{t('transactions.scheduled')}</Badge>}</div>
@@ -127,6 +139,8 @@ export function Transactions() {
           </div>
         ))}</div>}
       </Card>
+
+      {filtered.length > PAGE_SIZE && <div className="flex items-center justify-center gap-3"><Button variant="secondary" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft size={17}/>{locale.startsWith('vi') ? 'Trước' : 'Previous'}</Button><span className="text-xs font-semibold text-stone-500">{page}/{pageCount}</span><Button variant="secondary" disabled={page >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>{locale.startsWith('vi') ? 'Sau' : 'Next'}<ChevronRight size={17}/></Button></div>}
 
       <Suspense fallback={null}>
         {showAdd && <TransactionModal onClose={() => setShowAdd(false)} />}
