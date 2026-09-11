@@ -1,13 +1,13 @@
 import { Languages } from 'lucide-react'
 import { useWallet } from '../WalletContext'
-import { UI_LANGUAGES, useI18n, type Language } from '../i18n'
+import { UI_LANGUAGES, useI18n, type UiLanguage } from '../i18n'
 import { Select } from './ui'
 
 export function LanguageSwitcher({ compact = false }: { compact?: boolean }) {
   const { uiLanguage, setLanguage, t } = useI18n()
   const { settings, saveEntity } = useWallet()
 
-  async function changeLanguage(next: Language) {
+  async function changeLanguage(next: UiLanguage) {
     setLanguage(next)
     if (!settings) return
     await saveEntity({
@@ -24,7 +24,7 @@ export function LanguageSwitcher({ compact = false }: { compact?: boolean }) {
         aria-label={t('common.language')}
         className={compact ? 'w-[164px] py-2 text-xs' : 'w-full'}
         value={uiLanguage}
-        onChange={(event) => void changeLanguage(event.target.value as Language)}
+        onChange={(event) => void changeLanguage(event.target.value as UiLanguage)}
       >
         {UI_LANGUAGES.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}
       </Select>
