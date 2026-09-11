@@ -11,7 +11,7 @@ import type {
 } from '../types'
 import { decryptBytes, decryptJson, encryptBytes, encryptJson } from './crypto'
 import { assertJsonPayloadSize, reportDiagnostic, safeDownloadFilename, SECURITY_LIMITS, sniffRasterImageMime, validateImageFile } from './security'
-import { db, deleteKv, getDeviceId, getKv, queueSyncEntities, queueSyncEntity, setKv } from './db'
+import { db, deleteKv, getDeviceId, getKv, setKv, syncQueueKey } from './db'
 import { accountCurrencies } from './accounts'
 
 function recordKind(entity: WalletEntity): RecordKind {
@@ -23,6 +23,15 @@ function recordKind(entity: WalletEntity): RecordKind {
 
 function cleanCurrency(value: string | undefined) {
   return value?.trim().toUpperCase() ?? ''
+}
+
+function syncQueueRow(entityType: 'record' | 'image', entityId: string, queuedAt = new Date().toISOString()) {
+  return {
+    key: syncQueueKey(entityType, entityId),
+    entityType,
+    entityId,
+    queuedAt,
+  }
 }
 
 export class WalletRepository {
@@ -115,8 +124,10 @@ export class WalletRepository {
       deleted: entity.deleted,
       payload,
     }
-    await db.records.put(row)
-    await queueSyncEntity('record', row.id)
+    await db.transaction('rw', [db.records, db.syncQueue], async () => {
+      await db.records.put(row)
+      await db.syncQueue.put(syncQueueRow('record', row.id))
+    })
     return row
   }
 
@@ -147,11 +158,14 @@ export class WalletRepository {
           payload: await encryptJson(this.key, entity, `record:${kind}:${entity.id}`),
         } satisfies EncryptedRecordRow
       }))
-      await db.records.bulkPut(rows)
+      const queuedAt = new Date().toISOString()
+      await db.transaction('rw', [db.records, db.syncQueue], async () => {
+        await db.records.bulkPut(rows)
+        await db.syncQueue.bulkPut(rows.map((row) => syncQueueRow('record', row.id, queuedAt)))
+      })
       allRows.push(...rows)
     }
 
-    await queueSyncEntities('record', allRows.map((row) => row.id))
     return allRows
   }
 
@@ -186,8 +200,10 @@ export class WalletRepository {
       deleted: false,
       payload: await encryptBytes(this.key, clear, `image:${id}`),
     }
-    await db.images.put(row)
-    await queueSyncEntity('image', row.id)
+    await db.transaction('rw', [db.images, db.syncQueue], async () => {
+      await db.images.put(row)
+      await db.syncQueue.put(syncQueueRow('image', row.id))
+    })
     return row
   }
 
@@ -217,15 +233,18 @@ export class WalletRepository {
     const row = await db.images.get(id)
     if (!row || row.deleted) return
     const now = new Date().toISOString()
-    await db.images.put({
+    const next: EncryptedImageRow = {
       ...row,
       version: row.version + 1,
       updatedAt: now,
       deviceId: await getDeviceId(),
       deleted: true,
       payload: await encryptBytes(this.key, new Uint8Array(), `image:${id}`),
+    }
+    await db.transaction('rw', [db.images, db.syncQueue], async () => {
+      await db.images.put(next)
+      await db.syncQueue.put(syncQueueRow('image', id))
     })
-    await queueSyncEntity('image', id)
   }
 
   async ensureDefaults() {
