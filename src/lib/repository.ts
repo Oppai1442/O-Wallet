@@ -12,12 +12,17 @@ import type {
 import { decryptBytes, decryptJson, encryptBytes, encryptJson } from './crypto'
 import { assertJsonPayloadSize, reportDiagnostic, safeDownloadFilename, SECURITY_LIMITS, sniffRasterImageMime, validateImageFile } from './security'
 import { db, deleteKv, getDeviceId, getKv, queueSyncEntities, queueSyncEntity, setKv } from './db'
+import { accountCurrencies } from './accounts'
 
 function recordKind(entity: WalletEntity): RecordKind {
   if ('type' in entity) return 'transaction'
   if ('openingBalance' in entity) return 'account'
   if ('icon' in entity) return 'category'
   return 'settings'
+}
+
+function cleanCurrency(value: string | undefined) {
+  return value?.trim().toUpperCase() ?? ''
 }
 
 export class WalletRepository {
@@ -78,7 +83,23 @@ export class WalletRepository {
     return value
   }
 
+  private async validateTransactionAccounts(tx: Transaction, pendingAccounts?: Map<string, Account>) {
+    if (tx.deleted) return
+    const source = pendingAccounts?.get(tx.accountId) ?? await this.get<Account>(tx.accountId)
+    const sourceCurrency = cleanCurrency(tx.currency)
+    if (source && !accountCurrencies(source).includes(sourceCurrency)) throw new Error('error.transactionCurrencyNotInAccount')
+
+    if (tx.type !== 'transfer' || !tx.destinationAccountId) return
+    const destination = pendingAccounts?.get(tx.destinationAccountId) ?? await this.get<Account>(tx.destinationAccountId)
+    const destinationCurrency = cleanCurrency(tx.destinationCurrency ?? tx.currency)
+    if (destination && !accountCurrencies(destination).includes(destinationCurrency)) throw new Error('error.transactionCurrencyNotInAccount')
+    if (destinationCurrency !== sourceCurrency && !(Number.isFinite(tx.destinationAmount) && Number(tx.destinationAmount) > 0)) {
+      throw new Error('error.transferDestinationAmountRequired')
+    }
+  }
+
   async put<T extends WalletEntity>(entity: T) {
+    if (recordKind(entity) === 'transaction') await this.validateTransactionAccounts(entity as Transaction)
     assertJsonPayloadSize(entity)
     const deviceId = await getDeviceId()
     const existing = await db.records.get(entity.id)
@@ -101,7 +122,12 @@ export class WalletRepository {
 
   async putMany<T extends WalletEntity>(entities: T[]) {
     if (entities.length === 0) return []
-    for (const entity of entities) assertJsonPayloadSize(entity)
+    const pendingAccounts = new Map<string, Account>()
+    for (const entity of entities) if (recordKind(entity) === 'account') pendingAccounts.set(entity.id, entity as Account)
+    for (const entity of entities) {
+      if (recordKind(entity) === 'transaction') await this.validateTransactionAccounts(entity as Transaction, pendingAccounts)
+      assertJsonPayloadSize(entity)
+    }
     const deviceId = await getDeviceId()
     const allRows: EncryptedRecordRow[] = []
     const chunkSize = 250
@@ -218,8 +244,7 @@ export class WalletRepository {
       }
     }
 
-    const settings = existingSettings
-    if (!settings) {
+    if (!existingSettings) {
       const now = new Date().toISOString()
       await this.put<AppSettings>({
         id: 'settings',
