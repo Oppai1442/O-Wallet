@@ -91,7 +91,7 @@ export interface TransactionRule {
 }
 
 export interface FxSnapshot {
-  /** Wallet/reporting currency. `rate` is base-currency units per 1 transaction-currency unit. */
+  /** Reporting/conversion currency. `rate` is target-currency units per 1 transaction-currency unit. */
   baseCurrency: string
   rate: number
   /** Snapshot result at save time. Historical records never reference a shared mutable rate. */
@@ -279,7 +279,7 @@ export interface Transaction {
   type: TransactionType
   amount: number
   currency: string
-  /** Immutable per-record conversion snapshot when currency differs from the wallet base currency. */
+  /** Immutable per-record conversion snapshot. Original amount/currency always remain authoritative. */
   fx?: FxSnapshot
   occurredAt: string
   categoryId: string
@@ -332,8 +332,10 @@ export interface AppSettings {
     mode: ImageRetentionMode
     days: number
   }
-  /** Reporting/base currency. Kept under the legacy field name for backward compatibility. */
+  /** Target used only by converted/reporting views and new FX snapshots. */
   defaultCurrency: string
+  /** Synced seed currency for new transactions. Device-local last-used currency takes precedence. */
+  transactionCurrency?: string
   autoSync: boolean
   rememberDefaults?: DeviceSessionPreferences
   ocrTemplates?: OcrTemplate[]
