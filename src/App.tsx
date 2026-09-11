@@ -27,6 +27,92 @@ function DelayedLoader() {
   )
 }
 
+function TransactionKeyboardAssist() {
+  useEffect(() => {
+    let lastAmount: HTMLInputElement | null = null
+
+    function parts() {
+      const amount = document.querySelector<HTMLInputElement>('input[placeholder="150000"]')
+      if (!amount) return undefined
+      const modal = amount.closest<HTMLElement>('.fixed')
+      if (!modal || !modal.className.includes('z-[70]')) return undefined
+
+      let entryPane: HTMLElement | null = amount.parentElement
+      while (entryPane?.parentElement && !String(entryPane.parentElement.className).includes('lg:grid-cols-[')) {
+        entryPane = entryPane.parentElement
+      }
+      if (!entryPane) return undefined
+
+      const amountRow = amount.parentElement?.parentElement
+      const currency = amountRow?.querySelector<HTMLSelectElement>('select') ?? undefined
+      const temporal = entryPane.querySelector<HTMLInputElement>(
+        'input[type="datetime-local"]:not([disabled]), input[type="time"]:not([disabled]), input[type="date"]:not([disabled])',
+      ) ?? undefined
+      const footers = [...modal.querySelectorAll<HTMLElement>('div.flex.shrink-0.justify-end')]
+      const footer = footers.at(-1)
+      const footerButtons = footer ? [...footer.querySelectorAll<HTMLButtonElement>('button')] : []
+      const saveButton = footerButtons.at(-1)
+      return { amount, modal, entryPane, currency, temporal, saveButton }
+    }
+
+    function focusNewAmount() {
+      const current = parts()?.amount ?? null
+      if (!current) {
+        lastAmount = null
+        return
+      }
+      if (current === lastAmount) return
+      lastAmount = current
+      requestAnimationFrame(() => {
+        if (document.contains(current) && !current.disabled) current.focus()
+      })
+    }
+
+    const observer = new MutationObserver(focusNewAmount)
+    observer.observe(document.body, { childList: true, subtree: true })
+    focusNewAmount()
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const resolved = parts()
+      if (!resolved) return
+      const target = event.target
+      if (!(target instanceof HTMLElement) || !resolved.modal.contains(target)) return
+
+      if (event.key === 'Tab' && !event.shiftKey) {
+        if (target === resolved.amount) {
+          const next = resolved.currency && !resolved.currency.disabled ? resolved.currency : resolved.temporal
+          if (next) {
+            event.preventDefault()
+            next.focus()
+          }
+          return
+        }
+        if (target === resolved.currency && resolved.temporal) {
+          event.preventDefault()
+          resolved.temporal.focus()
+          return
+        }
+      }
+
+      if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.defaultPrevented) return
+      if (!(target instanceof HTMLInputElement) || !resolved.entryPane.contains(target)) return
+      if (target.closest('[data-enter-consumes="true"]')) return
+      if (['file', 'checkbox', 'radio', 'button', 'submit'].includes(target.type)) return
+      if (!resolved.saveButton || resolved.saveButton.disabled) return
+      event.preventDefault()
+      resolved.saveButton.click()
+    }
+
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('keydown', onKeyDown, true)
+    }
+  }, [])
+
+  return null
+}
+
 function AppBody() {
   const { status, googleAutoConnecting, refresh } = useWallet()
   const [localReady, setLocalReady] = useState(false)
@@ -54,7 +140,7 @@ function AppBody() {
   if (status === 'new') return <div className="ow-fade-in"><Onboarding autoConnecting={googleAutoConnecting} /></div>
   if (status === 'locked') return <div className="ow-fade-in"><Unlock /></div>
   if (!localReady) return <DelayedLoader />
-  return <div className="ow-fade-in"><Shell /></div>
+  return <div className="ow-fade-in"><TransactionKeyboardAssist /><Shell /></div>
 }
 
 export default function App() {
