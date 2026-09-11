@@ -5,7 +5,9 @@ import { LanguageProvider as LegacyLanguageProvider, useI18n as useLegacyI18n } 
 import { UI_LANGUAGES, isUiLanguage, languageFromBrowser, languageLocale, type UiLanguage } from './locales'
 import { TRANSLATION_PACKS } from './locales/packs'
 
-export type Language = UiLanguage
+/** Legacy two-language type retained for existing settings code. */
+export type Language = 'vi' | 'en'
+export type { UiLanguage } from './locales'
 export { UI_LANGUAGES }
 
 type Vars = Record<string, string | number>
@@ -14,7 +16,7 @@ const STORAGE_KEY = 'owallet.language'
 
 interface I18nContextValue {
   /** Compatibility language for older vi/en-only component copy. */
-  language: 'vi' | 'en'
+  language: Language
   /** Actual selected UI language. */
   uiLanguage: UiLanguage
   locale: string
@@ -33,7 +35,7 @@ function initialUiLanguage(): UiLanguage {
 function Bridge({ children }: { children: ReactNode }) {
   const legacy = useLegacyI18n()
   const [uiLanguage, setUiLanguage] = useState<UiLanguage>(initialUiLanguage)
-  const compatibilityLanguage: 'vi' | 'en' = uiLanguage === 'vi' ? 'vi' : 'en'
+  const compatibilityLanguage: Language = uiLanguage === 'vi' ? 'vi' : 'en'
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, uiLanguage)
