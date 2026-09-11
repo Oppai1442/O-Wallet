@@ -12,7 +12,7 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
   onSaveMany: (categories: Category[]) => Promise<void>
 }) {
   const { t, locale } = useI18n()
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(categories.filter((item) => !item.archived && isCategoryGroup(item)).map((item) => item.id)))
   const [name, setName] = useState('')
   const [nodeType, setNodeType] = useState<'group' | 'item'>('item')
   const [kind, setKind] = useState<Category['kind']>('expense')
@@ -37,9 +37,15 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
     const value = name.trim()
     if (!value) return
     const timestamp = new Date().toISOString()
-    await onSave({ id: crypto.randomUUID(), name: value, nodeType, parentId: parentId || undefined, icon: nodeType === 'group' ? 'Folder' : 'Tag', kind: nodeType === 'group' ? 'both' : kind, archived: false, createdAt: timestamp, updatedAt: timestamp, deleted: false })
+    const id = crypto.randomUUID()
+    await onSave({ id, name: value, nodeType, parentId: parentId || undefined, icon: nodeType === 'group' ? 'Folder' : 'Tag', kind: nodeType === 'group' ? 'both' : kind, archived: false, createdAt: timestamp, updatedAt: timestamp, deleted: false })
     setName('')
-    if (parentId) setExpanded((current) => new Set(current).add(parentId))
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (parentId) next.add(parentId)
+      if (nodeType === 'group') next.add(id)
+      return next
+    })
   }
 
   function startChild(parent: Category, childType: 'group' | 'item') {
@@ -63,8 +69,6 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
     const timestamp = new Date().toISOString()
     const targets = active.filter((item) => ids.has(item.id))
     if (used) {
-      // Archive instead of erasing names used by history. Archived nodes disappear from pickers/tree,
-      // but existing transactions still retain a readable path.
       await onSaveMany(targets.map((item) => ({ ...item, archived: true, updatedAt: timestamp })))
     } else {
       await onSaveMany(targets.map((item) => ({ ...item, deleted: true, updatedAt: timestamp })))
@@ -95,8 +99,8 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
   const roots = children.get('__root__') ?? []
   return <Card className="p-4 sm:p-5">
     <div><h2 className="text-base font-semibold text-stone-950 dark:text-white">{t('settings.categories')}</h2><p className="mt-1 text-sm text-stone-500">{t('categories.managerHint')}</p></div>
-    <div className="mt-5 rounded-2xl border border-stone-200 p-2 dark:border-stone-800">{roots.length ? roots.map(row) : <div className="px-4 py-10 text-center text-sm text-stone-500">{t('categories.empty')}</div>}</div>
-    <div className="mt-5 border-t border-stone-100 pt-4 dark:border-stone-800">
+
+    <div className="mt-5 rounded-2xl border border-stone-200 bg-stone-50/60 p-3 dark:border-stone-800 dark:bg-stone-950/30">
       <div className="mb-3 flex items-center justify-between gap-3"><div className="text-sm font-semibold text-stone-800 dark:text-stone-200">{t('categories.create')}</div>{parentId && <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => setParentId('')}>{t('categories.backToRoot')}</button>}</div>
       {parentId && <div className="mb-3 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">{t('categories.inside', { path: categoryPath(active.find((item) => item.id === parentId)!, active) })}</div>}
       <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_150px_150px_220px_auto]">
@@ -107,5 +111,7 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
         <div className="self-end"><Button className="w-full" onClick={() => void createCategory()}><Plus size={16} />{t('common.add')}</Button></div>
       </div>
     </div>
+
+    <div className="mt-5 rounded-2xl border border-stone-200 p-2 dark:border-stone-800">{roots.length ? roots.map(row) : <div className="px-4 py-10 text-center text-sm text-stone-500">{t('categories.empty')}</div>}</div>
   </Card>
 }
