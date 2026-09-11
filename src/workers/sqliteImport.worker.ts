@@ -264,9 +264,9 @@ function parseMoneyManager(db: Database, fileName: string): ExternalImportBundle
       consumedTransferRowIds.add(sourceUid)
       consumedTransferRowIds.add(oppositeUid)
 
-      // Money Manager stores one mirrored row per side of a transfer. In the observed
-      // Android schema, DO_TYPE=3 carries the source->destination orientation; when the
-      // current row is the DO_TYPE=4 mirror, invert it before creating the O-Wallet row.
+      // This supported backup schema stores one mirrored row per side of a transfer.
+      // DO_TYPE=3 carries the source->destination orientation; when the current row is
+      // the DO_TYPE=4 mirror, invert it before creating the O-Wallet row.
       const sourceRow = doType === '3' ? row : opposite
       const sourceRowUid = text(sourceRow.uid) || `aid:${text(sourceRow.AID)}`
       const mirrorRowUid = sourceRowUid === sourceUid ? oppositeUid : sourceUid
@@ -288,7 +288,7 @@ function parseMoneyManager(db: Database, fileName: string): ExternalImportBundle
       continue
     }
 
-    // Codes 7/8 appear to be balance reconciliation rows in this backup ("Sự khác biệt"),
+    // Codes 7/8 appear to be balance reconciliation rows in the observed backup,
     // but their sign semantics are not documented reliably enough to import silently.
     if (doType === '7' || doType === '8') balanceAdjustmentRows += 1
     unsupportedRows.push({
@@ -344,8 +344,10 @@ function parseMoneyManager(db: Database, fileName: string): ExternalImportBundle
   if (unsupportedRows.some((item) => item.reason === 'unpaired-transfer')) warnings.push('unpaired-transfers')
 
   return {
+    // Keep the stable adapter ID for deterministic re-import compatibility. It is an
+    // internal storage identifier and must not be used as public UI branding.
     adapterId: 'money-manager-android',
-    adapterName: 'Money Manager',
+    adapterName: 'SQLite / .mmbak backup',
     sourceSchemaVersion,
     sourceFileName: fileName,
     accounts,
