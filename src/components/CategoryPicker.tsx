@@ -37,7 +37,7 @@ export function CategoryPicker({
   }, [open])
 
   return (
-    <div ref={rootRef} className="relative min-w-0">
+    <div ref={rootRef} data-enter-consumes="true" className="relative min-w-0">
       <button
         type="button"
         onClick={() => { setOpen((value) => !value); setQuery('') }}
@@ -49,7 +49,7 @@ export function CategoryPicker({
       {open && (
         <div className="absolute z-[90] mt-2 w-[min(440px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-xl shadow-stone-950/10 dark:border-stone-700 dark:bg-stone-950">
           <div className="border-b border-stone-100 p-2 dark:border-stone-800">
-            <div className="relative"><Search size={16} className="absolute left-3 top-1/2 -transtone-y-1/2 text-stone-400" /><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('categoryPicker.search')} className="w-full rounded-xl bg-stone-50 py-2.5 pl-9 pr-3 text-sm outline-none ring-blue-500/15 focus:ring-4 dark:bg-stone-900" /></div>
+            <div className="relative"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" /><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('categoryPicker.search')} className="w-full rounded-xl bg-stone-50 py-2.5 pl-9 pr-3 text-sm outline-none ring-blue-500/15 focus:ring-4 dark:bg-stone-900" /></div>
           </div>
           <div className="max-h-72 overflow-y-auto p-1.5">
             {results.length === 0 ? <div className="px-3 py-5 text-center text-sm text-stone-500">{t('categoryPicker.empty')}</div> : results.map((category) => {
