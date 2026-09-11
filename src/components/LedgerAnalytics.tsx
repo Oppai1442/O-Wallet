@@ -8,6 +8,7 @@ import { useCurrentTime } from '../lib/useCurrentTime'
 import { useI18n } from '../i18n'
 import { categoryPath } from '../lib/categories'
 import { Button, Card, EmptyState, Select } from './ui'
+import { MonthlyCashflowCalendar } from './MonthlyCashflowCalendar'
 
 const COLORS = ['#6366f1', '#0ea5e9', '#14b8a6', '#84cc16', '#f59e0b', '#f97316', '#f43f5e', '#a855f7']
 type CurrencyViewMode = 'native' | 'converted'
@@ -41,10 +42,7 @@ export function LedgerAnalytics({ transactions, categories, currency = 'VND', ti
 
   const convertedSummary = useMemo(() => summarize(filtered, currency), [filtered, currency])
   const chartCurrency = currencyMode === 'converted' ? currency : nativeCurrency || currency
-  const chartTransactions = useMemo(
-    () => currencyMode === 'converted' ? filtered : transactionsInCurrency(filtered, chartCurrency),
-    [chartCurrency, currencyMode, filtered],
-  )
+  const chartTransactions = useMemo(() => currencyMode === 'converted' ? filtered : transactionsInCurrency(filtered, chartCurrency), [chartCurrency, currencyMode, filtered])
   const trend = useMemo(() => trendData(chartTransactions, '30d', locale, chartCurrency), [chartTransactions, locale, chartCurrency])
   const expenseBreakdown = useMemo(() => categoryBreakdown(chartTransactions, categories, (category) => categoryPath(category, categories), t('common.other'), chartCurrency, 'expense'), [chartTransactions, categories, t, chartCurrency])
   const incomeBreakdown = useMemo(() => categoryBreakdown(chartTransactions, categories, (category) => categoryPath(category, categories), t('common.other'), chartCurrency, 'income'), [chartTransactions, categories, t, chartCurrency])
@@ -90,13 +88,7 @@ export function LedgerAnalytics({ transactions, categories, currency = 'VND', ti
       </div>
     </div>
 
-    <Card className="p-3 sm:p-4">
-      <div className="flex items-center justify-between gap-3">
-        <Button variant="ghost" className="px-3" onClick={() => setSelectedMonth((value) => shiftMonth(value, -1))} title={locale.startsWith('vi') ? 'Tháng trước' : 'Previous month'}><ChevronLeft size={18}/></Button>
-        <div className="min-w-0 text-center"><div className="text-xs font-semibold uppercase tracking-[.14em] text-stone-400">{locale.startsWith('vi') ? 'Phân tích theo tháng' : 'Monthly analysis'}</div><div className="mt-0.5 text-lg font-semibold capitalize text-stone-950 dark:text-white">{monthLabel}</div>{selectedMonth !== currentMonth && <button type="button" className="mt-1 text-xs font-semibold text-blue-600 hover:underline" onClick={() => setSelectedMonth(currentMonth)}>{locale.startsWith('vi') ? 'Về tháng hiện tại' : 'Back to current month'}</button>}</div>
-        <Button variant="ghost" className="px-3" disabled={nextDisabled} onClick={() => setSelectedMonth((value) => shiftMonth(value, 1))} title={locale.startsWith('vi') ? 'Tháng sau' : 'Next month'}><ChevronRight size={18}/></Button>
-      </div>
-    </Card>
+    <Card className="p-3 sm:p-4"><div className="flex items-center justify-between gap-3"><Button variant="ghost" className="px-3" onClick={() => setSelectedMonth((value) => shiftMonth(value, -1))} title={locale.startsWith('vi') ? 'Tháng trước' : 'Previous month'}><ChevronLeft size={18}/></Button><div className="min-w-0 text-center"><div className="text-xs font-semibold uppercase tracking-[.14em] text-stone-400">{locale.startsWith('vi') ? 'Phân tích theo tháng' : 'Monthly analysis'}</div><div className="mt-0.5 text-lg font-semibold capitalize text-stone-950 dark:text-white">{monthLabel}</div>{selectedMonth !== currentMonth && <button type="button" className="mt-1 text-xs font-semibold text-blue-600 hover:underline" onClick={() => setSelectedMonth(currentMonth)}>{locale.startsWith('vi') ? 'Về tháng hiện tại' : 'Back to current month'}</button>}</div><Button variant="ghost" className="px-3" disabled={nextDisabled} onClick={() => setSelectedMonth((value) => shiftMonth(value, 1))} title={locale.startsWith('vi') ? 'Tháng sau' : 'Next month'}><ChevronRight size={18}/></Button></div></Card>
 
     <div className="grid gap-3 sm:grid-cols-3">
       <Card className="p-4"><div className="text-xs font-bold uppercase tracking-wide text-stone-500">{t('analytics.income')}</div><div className="mt-2">{currencyMode === 'native' ? <NativeValues field="income" tone="text-emerald-600"/> : <div className="text-2xl font-semibold text-emerald-600">{formatMoney(activeSummary.income, currency, locale)}</div>}</div></Card>
@@ -104,11 +96,10 @@ export function LedgerAnalytics({ transactions, categories, currency = 'VND', ti
       <Card className="p-4"><div className="text-xs font-bold uppercase tracking-wide text-stone-500">{t('analytics.net')}</div><div className="mt-2">{currencyMode === 'native' ? <NativeValues field="net"/> : <div className={`text-2xl font-semibold ${activeSummary.net >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatMoney(activeSummary.net, currency, locale)}</div>}</div></Card>
     </div>
 
+    <Card className="overflow-hidden p-4 sm:p-5"><h3 className="font-bold text-stone-900 dark:text-white">{locale.startsWith('vi') ? 'Lịch thu chi' : 'Income & expense calendar'}</h3><p className="mb-3 mt-0.5 text-xs text-stone-500">{monthLabel} · {chartCurrency}</p><MonthlyCashflowCalendar transactions={chartTransactions} selectedMonth={selectedMonth} currency={chartCurrency} locale={locale} now={now}/></Card>
+
     <Card className="p-4 sm:p-5"><h3 className="font-bold text-stone-900 dark:text-white">{t('analytics.cashflow')}</h3><p className="text-xs text-stone-500">{locale.startsWith('vi') ? `Theo ngày trong ${monthLabel}` : `Daily detail for ${monthLabel}`} · {chartCurrency}</p>{trend.length ? <div className="mt-4 h-80"><ResponsiveContainer width="100%" height="100%"><BarChart data={trend} margin={{ top:8,right:8,left:-10,bottom:0 }}><CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2}/><XAxis dataKey="label" tick={{fontSize:11}} axisLine={false} tickLine={false}/><YAxis tickFormatter={(value)=>formatCompactMoney(Number(value),locale)} tick={{fontSize:11}} axisLine={false} tickLine={false}/><Tooltip shared={false} cursor={false} formatter={(value)=>formatMoney(Number(value),chartCurrency,locale)}/><Legend/><Bar dataKey="income" name={t('transaction.income')} fill="#10b981" radius={[5,5,0,0]}/><Bar dataKey="expense" name={t('transaction.expense')} fill="#f43f5e" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div> : <div className="mt-4"><EmptyState title={t('analytics.noDataTitle')} text={t('analytics.noDataText')}/></div>}</Card>
 
-    <div className="grid gap-5 xl:grid-cols-2">
-      <PieCard title={locale.startsWith('vi') ? 'Cơ cấu thu nhập' : 'Income mix'} data={incomeBreakdown} emptyTitle={locale.startsWith('vi') ? 'Chưa có thu nhập' : 'No income yet'} emptyText={locale.startsWith('vi') ? 'Tháng này chưa có giao dịch thu nhập trong currency đang xem.' : 'There are no income transactions for the selected currency this month.'}/>
-      <PieCard title={t('analytics.expenseMix')} data={expenseBreakdown} emptyTitle={t('analytics.noExpenseTitle')} emptyText={t('analytics.noExpenseText')}/>
-    </div>
+    <div className="grid gap-5 xl:grid-cols-2"><PieCard title={locale.startsWith('vi') ? 'Cơ cấu thu nhập' : 'Income mix'} data={incomeBreakdown} emptyTitle={locale.startsWith('vi') ? 'Chưa có thu nhập' : 'No income yet'} emptyText={locale.startsWith('vi') ? 'Tháng này chưa có giao dịch thu nhập trong currency đang xem.' : 'There are no income transactions for the selected currency this month.'}/><PieCard title={t('analytics.expenseMix')} data={expenseBreakdown} emptyTitle={t('analytics.noExpenseTitle')} emptyText={t('analytics.noExpenseText')}/></div>
   </div>
 }
