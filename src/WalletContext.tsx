@@ -52,6 +52,7 @@ import {
 import { downloadVaultConfig } from './lib/drive'
 import { fetchRemoteImageToLocal, syncWalletToDrive } from './lib/sync'
 import { reportDiagnostic } from './lib/security'
+import { buildFxSnapshot } from './lib/fx'
 
 type VaultStatus = 'loading' | 'new' | 'locked' | 'unlocked'
 export type GoogleConnectionState = 'disconnected' | 'connected' | 'reconnecting' | 'attention'
@@ -281,9 +282,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     if (resumeSync) bootstrapKey.current = undefined
   }, [])
 
-  // Attempt a genuinely silent OAuth reconnect once at startup when this device knows
-  // which Google account to use. `prompt=none` must never open an interactive popup;
-  // browsers/Google that cannot satisfy it simply fall back to the explicit CTA.
   useEffect(() => {
     if (status === 'loading' || silentReconnectAttempted.current || googleSession || !googleClientConfigured()) return
     const hint = googleRememberedUser ?? googleBinding
@@ -305,17 +303,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         setGoogleConnectionState('attention')
       })
       .finally(() => setGoogleAutoConnecting(false))
-  }, [
-    acceptGoogleSession,
-    devicePreferences.googleRemember,
-    googleBinding,
-    googleConnectionState,
-    googleReconnectMode,
-    googleReconnectUntil,
-    googleRememberedUser,
-    googleSession,
-    status,
-  ])
+  }, [acceptGoogleSession, devicePreferences.googleRemember, googleBinding, googleConnectionState, googleReconnectMode, googleReconnectUntil, googleRememberedUser, googleSession, status])
 
   useEffect(() => {
     if (!googleSession) return
@@ -327,11 +315,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return undefined
       })
       silentReconnectAttempted.current = false
-      if (googleReconnectUntil && googleReconnectUntil > Date.now()) {
-        setGoogleConnectionState('attention')
-      } else {
-        setGoogleConnectionState('disconnected')
-      }
+      if (googleReconnectUntil && googleReconnectUntil > Date.now()) setGoogleConnectionState('attention')
+      else setGoogleConnectionState('disconnected')
     }, expireIn)
     return () => window.clearTimeout(expiryTimer)
   }, [googleReconnectUntil, googleSession])
@@ -342,11 +327,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     return binding
   }, [googleBinding])
 
-  const performSync = useCallback(async (
-    session: GoogleSession,
-    repo: WalletRepository,
-    config: VaultConfig,
-  ) => {
+  const performSync = useCallback(async (session: GoogleSession, repo: WalletRepository, config: VaultConfig) => {
     if (syncBusy) return undefined
     setSyncBusy(true)
     setError(undefined)
@@ -360,7 +341,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         await setGoogleAccountBinding(session.user)
         setGoogleBinding(session.user)
       }
-
       const stats = await syncWalletToDrive(session.accessToken, config, (step) => setSyncMessage(t(`sync.${step}`)))
       setLastSync(stats)
       await repo.ensureDefaults()
@@ -390,7 +370,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     const key = `${vaultConfig.createdAt}:${googleSession?.user.sub ?? 'local'}`
     if (bootstrapKey.current === key) return
     bootstrapKey.current = key
-
     void (async () => {
       try {
         if (googleSession && googleSession.expiresAt > Date.now()) await performSync(googleSession, repository, vaultConfig)
@@ -415,11 +394,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     return () => media.removeEventListener('change', apply)
   }, [settings?.theme])
 
-  const createNewVault = useCallback(async (input: {
-    password: string
-    recoveryKey: string
-    questions: Array<{ questionId: string; answer: string }>
-  }) => {
+  const createNewVault = useCallback(async (input: { password: string; recoveryKey: string; questions: Array<{ questionId: string; answer: string }> }) => {
     setError(undefined)
     try {
       const created = await createVault(input.password, input.recoveryKey, input.questions)
@@ -518,17 +493,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setError(message)
       throw e
     }
-  }, [
-    acceptGoogleSession,
-    assertGoogleAccount,
-    devicePreferences,
-    googleRememberedUser,
-    performSync,
-    repository,
-    status,
-    t,
-    vaultConfig,
-  ])
+  }, [acceptGoogleSession, assertGoogleAccount, devicePreferences, googleRememberedUser, performSync, repository, status, t, vaultConfig])
 
   const retryGoogleConnection = useCallback(async () => {
     setError(undefined)
@@ -682,19 +647,46 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     autoSyncTimer.current = window.setTimeout(() => { void syncNow() }, 1200)
   }, [refresh, settings?.autoSync, googleSession, syncNow])
 
+  const enrichFx = useCallback(async <T extends WalletEntity>(entity: T): Promise<T> => {
+    if (!('type' in entity)) return entity
+    const tx = entity as Transaction
+    const baseCurrency = (settings?.defaultCurrency ?? 'VND').trim().toUpperCase()
+    const sourceCurrency = tx.currency.trim().toUpperCase()
+    if (!sourceCurrency || sourceCurrency === baseCurrency) return { ...tx, currency: sourceCurrency || baseCurrency, fx: undefined } as T
+
+    const previous = transactions.find((item) => item.id === tx.id)
+    const canKeepSnapshot = previous?.fx
+      && previous.currency === sourceCurrency
+      && previous.amount === tx.amount
+      && previous.occurredAt === tx.occurredAt
+      && previous.fx.baseCurrency === baseCurrency
+    if (canKeepSnapshot) return { ...tx, currency: sourceCurrency, fx: previous.fx } as T
+
+    try {
+      const fx = await buildFxSnapshot(tx.amount, sourceCurrency, baseCurrency, tx.occurredAt)
+      return { ...tx, currency: sourceCurrency, fx } as T
+    } catch (fxError) {
+      reportDiagnostic('fx-snapshot', fxError)
+      return { ...tx, currency: sourceCurrency, fx: undefined } as T
+    }
+  }, [settings?.defaultCurrency, transactions])
+
   const saveEntity = useCallback(async <T extends WalletEntity>(entity: T) => {
     if (!repository) throw new Error(t('error.vaultLocked'))
-    await repository.put(entity)
-    applyEntityToMemory(entity)
+    const enriched = await enrichFx(entity)
+    await repository.put(enriched)
+    applyEntityToMemory(enriched)
     await notifyMutation()
-  }, [repository, applyEntityToMemory, notifyMutation, t])
+  }, [repository, applyEntityToMemory, enrichFx, notifyMutation, t])
 
   const saveEntities = useCallback(async <T extends WalletEntity>(entities: T[]) => {
     if (!repository) throw new Error(t('error.vaultLocked'))
-    await repository.putMany(entities)
-    for (const entity of entities) applyEntityToMemory(entity)
+    const enriched: T[] = []
+    for (const entity of entities) enriched.push(await enrichFx(entity))
+    await repository.putMany(enriched)
+    for (const entity of enriched) applyEntityToMemory(entity)
     await notifyMutation()
-  }, [repository, applyEntityToMemory, notifyMutation, t])
+  }, [repository, applyEntityToMemory, enrichFx, notifyMutation, t])
 
   const deleteTransaction = useCallback(async (id: string) => {
     if (!repository) return
@@ -706,12 +698,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     const next = { ...devicePreferences, ...patch }
     await setDeviceSessionPreferences(next)
     setDevicePreferencesState(next)
-
     if (patch.vaultRemember !== undefined) {
       if (next.vaultRemember === 'off') await clearRememberedVaultUnlock()
       else if (dek && vaultConfig) await rememberVault(dek, vaultConfig, next.vaultRemember)
     }
-
     if (patch.googleRemember !== undefined) {
       if (next.googleRemember === 'off') {
         clearStoredGoogleSession()
@@ -729,49 +719,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, [dek, devicePreferences, googleSession, rememberVault, vaultConfig])
 
   const value = useMemo<WalletContextValue>(() => ({
-    status,
-    vaultConfig,
-    repository,
-    transactions,
-    accounts,
-    categories,
-    settings,
-    googleSession,
-    googleBinding,
-    googleRememberedUser,
-    googleConnectionState,
-    googleAutoConnecting,
-    googleConfigured: googleClientConfigured(),
-    devicePreferences,
-    syncBusy,
-    syncMessage,
-    lastSync,
-    error,
-    createNewVault,
-    unlockWithPassword,
-    unlockWithRecovery,
-    lock,
-    refresh,
-    saveEntity,
-    saveEntities,
-    deleteTransaction,
-    connectGoogle,
-    retryGoogleConnection,
-    disconnectGoogle,
-    switchLocalAccount,
-    restoreVaultConfigFromDrive,
-    syncNow,
-    notifyMutation,
-    updateDevicePreferences,
-    clearError: () => setError(undefined),
-  }), [
     status, vaultConfig, repository, transactions, accounts, categories, settings,
     googleSession, googleBinding, googleRememberedUser, googleConnectionState, googleAutoConnecting,
-    devicePreferences, syncBusy, syncMessage, lastSync, error, createNewVault, unlockWithPassword,
-    unlockWithRecovery, lock, refresh, saveEntity, saveEntities, deleteTransaction, connectGoogle,
-    retryGoogleConnection, disconnectGoogle, switchLocalAccount, restoreVaultConfigFromDrive, syncNow,
-    notifyMutation, updateDevicePreferences,
-  ])
+    googleConfigured: googleClientConfigured(), devicePreferences, syncBusy, syncMessage, lastSync, error,
+    createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities,
+    deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount,
+    restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences, clearError: () => setError(undefined),
+  }), [status, vaultConfig, repository, transactions, accounts, categories, settings, googleSession, googleBinding, googleRememberedUser, googleConnectionState, googleAutoConnecting, devicePreferences, syncBusy, syncMessage, lastSync, error, createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities, deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount, restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences])
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>
 }
