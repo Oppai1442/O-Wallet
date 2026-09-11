@@ -24,13 +24,18 @@ function cleanCurrency(value: string) {
   return value.trim().toUpperCase().slice(0, 12)
 }
 
-function cacheKey(from: string, to: string, requestedDate: string) {
-  return `${CACHE_PREFIX}${requestedDate}:${cleanCurrency(from)}:${cleanCurrency(to)}`
+function effectiveRateDate(requestedDate: string) {
+  const today = new Date().toISOString().slice(0, 10)
+  return requestedDate > today ? today : requestedDate
 }
 
-function readCache(from: string, to: string, requestedDate: string) {
+function cacheKey(from: string, to: string, rateDate: string) {
+  return `${CACHE_PREFIX}${rateDate}:${cleanCurrency(from)}:${cleanCurrency(to)}`
+}
+
+function readCache(from: string, to: string, rateDate: string) {
   try {
-    const raw = localStorage.getItem(cacheKey(from, to, requestedDate))
+    const raw = localStorage.getItem(cacheKey(from, to, rateDate))
     if (!raw) return undefined
     const parsed = JSON.parse(raw) as CachedRate
     if (!Number.isFinite(parsed.rate) || parsed.rate <= 0) return undefined
@@ -42,7 +47,7 @@ function readCache(from: string, to: string, requestedDate: string) {
 }
 
 function writeCache(entry: CachedRate) {
-  try { localStorage.setItem(cacheKey(entry.baseCurrency, entry.quoteCurrency, entry.requestedDate), JSON.stringify(entry)) } catch { /* best-effort public cache */ }
+  try { localStorage.setItem(cacheKey(entry.baseCurrency, entry.quoteCurrency, entry.rateDate), JSON.stringify(entry)) } catch { /* best-effort public cache */ }
 }
 
 function requestedDateFromIso(iso: string) {
@@ -52,8 +57,7 @@ function requestedDateFromIso(iso: string) {
 async function fetchFrankfurterRate(from: string, to: string, requestedDate: string): Promise<CachedRate> {
   const source = cleanCurrency(from)
   const target = cleanCurrency(to)
-  const today = new Date().toISOString().slice(0, 10)
-  const date = requestedDate > today ? today : requestedDate
+  const date = effectiveRateDate(requestedDate)
   const url = new URL(`${API_ROOT}/rates`)
   url.searchParams.set('base', source)
   url.searchParams.set('quotes', target)
@@ -82,9 +86,10 @@ export async function getFxRate(from: string, to: string, requestedDate: string,
   const target = cleanCurrency(to)
   if (!source || !target) throw new Error('error.fxUnavailable')
   if (source === target) return { baseCurrency: source, quoteCurrency: target, requestedDate, rateDate: requestedDate, rate: 1, fetchedAt: new Date().toISOString() } satisfies CachedRate
+  const lookupDate = effectiveRateDate(requestedDate)
   if (!force) {
-    const cached = readCache(source, target, requestedDate)
-    if (cached) return cached
+    const cached = readCache(source, target, lookupDate)
+    if (cached) return { ...cached, requestedDate }
   }
   return fetchFrankfurterRate(source, target, requestedDate)
 }
@@ -129,8 +134,4 @@ export function transactionValueInBase(transaction: Transaction, baseCurrency: s
   if (source === target) return transaction.amount
   if (transaction.fx?.baseCurrency === target && Number.isFinite(transaction.fx.convertedAmount)) return transaction.fx.convertedAmount
   return undefined
-}
-
-export function withFxSnapshot<T extends Transaction>(transaction: T, fx: FxSnapshot | undefined): T {
-  return { ...transaction, fx }
 }
