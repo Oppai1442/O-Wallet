@@ -14,13 +14,17 @@ const TransactionModal = lazy(() => import('./TransactionModal').then((module) =
 
 const PAGE_SIZE = 100
 type SortKey = 'newest' | 'oldest' | 'amountHigh' | 'amountLow'
+type CurrencyViewMode = 'native' | 'converted'
 
 export function Transactions() {
-  const { transactions, categories, accounts, deleteTransaction } = useWallet()
+  const { transactions, categories, accounts, settings, deleteTransaction } = useWallet()
   const { t, locale } = useI18n()
   const now = useCurrentTime()
+  const reportingCurrency = (settings?.defaultCurrency ?? 'VND').trim().toUpperCase()
   const [search, setSearch] = useState('')
   const [type, setType] = useState<'all' | TransactionType>('all')
+  const [currencyFilter, setCurrencyFilter] = useState('all')
+  const [currencyView, setCurrencyView] = useState<CurrencyViewMode>('native')
   const [accountId, setAccountId] = useState('all')
   const [categoryId, setCategoryId] = useState('all')
   const [fromDate, setFromDate] = useState('')
@@ -38,6 +42,7 @@ export function Transactions() {
   const [viewImage, setViewImage] = useState<string>()
   const [deleting, setDeleting] = useState<string>()
 
+  const currencies = useMemo(() => [...new Set(transactions.map((tx) => tx.currency.trim().toUpperCase()).filter(Boolean))].sort(), [transactions])
   const categoryMap = useMemo(() => new Map(categories.map((item) => [item.id, categoryPath(item, categories)])), [categories, t])
   const accountMap = useMemo(() => new Map(accounts.map((item) => [item.id, accountDisplayName(item, t)])), [accounts, t])
   const filtered = useMemo(() => {
@@ -48,6 +53,7 @@ export function Transactions() {
     const to = toDate ? new Date(`${toDate}T23:59:59.999`).getTime() : undefined
     const result = transactions.filter((tx) => {
       if (type !== 'all' && tx.type !== type) return false
+      if (currencyFilter !== 'all' && tx.currency.trim().toUpperCase() !== currencyFilter) return false
       if (accountId !== 'all' && tx.accountId !== accountId && tx.destinationAccountId !== accountId) return false
       if (categoryId === '__uncategorized__' && tx.categoryId) return false
       if (categoryId !== 'all' && categoryId !== '__uncategorized__' && tx.categoryId !== categoryId) return false
@@ -59,7 +65,7 @@ export function Transactions() {
       if (imageFilter === 'with' && tx.imageIds.length === 0) return false
       if (imageFilter === 'without' && tx.imageIds.length > 0) return false
       if (!q) return true
-      return [tx.merchant, tx.description, tx.note, ...(tx.tags ?? []), categoryMap.get(tx.categoryId), accountMap.get(tx.accountId)]
+      return [tx.currency, tx.merchant, tx.description, tx.note, ...(tx.tags ?? []), categoryMap.get(tx.categoryId), accountMap.get(tx.accountId)]
         .filter(Boolean).join(' ').toLocaleLowerCase(locale).includes(q)
     })
     return result.sort((a, b) => {
@@ -68,18 +74,18 @@ export function Transactions() {
       if (sort === 'amountLow') return a.amount - b.amount
       return b.occurredAt.localeCompare(a.occurredAt)
     })
-  }, [transactions, search, type, accountId, categoryId, fromDate, toDate, minAmount, maxAmount, imageFilter, sort, categoryMap, accountMap, locale])
+  }, [transactions, search, type, currencyFilter, accountId, categoryId, fromDate, toDate, minAmount, maxAmount, imageFilter, sort, categoryMap, accountMap, locale])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const visible = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page])
 
-  useEffect(() => { setPage(1) }, [search, type, accountId, categoryId, fromDate, toDate, minAmount, maxAmount, imageFilter, sort])
+  useEffect(() => { setPage(1) }, [search, type, currencyFilter, accountId, categoryId, fromDate, toDate, minAmount, maxAmount, imageFilter, sort])
   useEffect(() => { if (page > pageCount) setPage(pageCount) }, [page, pageCount])
 
-  const advancedActive = accountId !== 'all' || categoryId !== 'all' || fromDate || toDate || minAmount || maxAmount || imageFilter !== 'all' || sort !== 'newest'
+  const advancedActive = currencyFilter !== 'all' || accountId !== 'all' || categoryId !== 'all' || fromDate || toDate || minAmount || maxAmount || imageFilter !== 'all' || sort !== 'newest'
 
   function clearAdvanced() {
-    setAccountId('all'); setCategoryId('all'); setFromDate(''); setToDate(''); setMinAmount(''); setMaxAmount(''); setImageFilter('all'); setSort('newest')
+    setCurrencyFilter('all'); setAccountId('all'); setCategoryId('all'); setFromDate(''); setToDate(''); setMinAmount(''); setMaxAmount(''); setImageFilter('all'); setSort('newest')
   }
 
   async function remove(id: string) {
@@ -91,12 +97,22 @@ export function Transactions() {
   const pageLabel = locale.startsWith('vi')
     ? `Trang ${page}/${pageCount} · tối đa ${PAGE_SIZE} giao dịch/trang`
     : `Page ${page}/${pageCount} · up to ${PAGE_SIZE} transactions/page`
+  const conversionHint = locale.startsWith('vi')
+    ? `Quy đổi chỉ thay đổi cách hiển thị sang ${reportingCurrency}; amount/currency gốc trong record không đổi.`
+    : `Conversion only changes display to ${reportingCurrency}; the original amount/currency stored in each record is unchanged.`
+
+  function displayedAmount(tx: Transaction) {
+    if (currencyView === 'native') return { value: tx.amount, currency: tx.currency, converted: false }
+    if (tx.currency.trim().toUpperCase() === reportingCurrency) return { value: tx.amount, currency: reportingCurrency, converted: true }
+    if (tx.fx?.baseCurrency === reportingCurrency && Number.isFinite(tx.fx.convertedAmount)) return { value: tx.fx.convertedAmount, currency: reportingCurrency, converted: true }
+    return { value: tx.amount, currency: tx.currency, converted: false }
+  }
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div><h1 className="text-2xl font-semibold tracking-tight text-stone-950 dark:text-white">{t('transactions.title')}</h1><p className="mt-1 text-sm text-stone-500">{t('transactions.subtitle', { count: transactions.length })}</p></div>
-        <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => setShowVoiceAdd(true)}><Mic size={17} /> {t('voice.entryButton')}</Button><Button onClick={() => setShowAdd(true)}><Plus size={17} /> {t('common.add')}</Button></div>
+        <div><h1 className="text-2xl font-semibold tracking-tight text-stone-950 dark:text-white">{t('transactions.title')}</h1><p className="mt-1 text-sm text-stone-500">{t('transactions.subtitle', { count: transactions.length })}</p>{currencyView === 'converted' && <p className="mt-1 text-xs text-stone-400">{conversionHint}</p>}</div>
+        <div className="flex flex-wrap gap-2"><Select className="w-40" value={currencyView} onChange={(e) => setCurrencyView(e.target.value as CurrencyViewMode)}><option value="native">{locale.startsWith('vi') ? 'Tiền gốc' : 'Original currency'}</option><option value="converted">{locale.startsWith('vi') ? `Quy đổi → ${reportingCurrency}` : `Convert → ${reportingCurrency}`}</option></Select><Button variant="secondary" onClick={() => setShowVoiceAdd(true)}><Mic size={17} /> {t('voice.entryButton')}</Button><Button onClick={() => setShowAdd(true)}><Plus size={17} /> {t('common.add')}</Button></div>
       </div>
 
       <Card className="p-3 sm:p-4">
@@ -107,6 +123,7 @@ export function Transactions() {
         </div>
 
         {showAdvanced && <div className="mt-4 grid gap-3 border-t border-stone-200 pt-4 dark:border-stone-800 sm:grid-cols-2 lg:grid-cols-4">
+          <div><Label>{locale.startsWith('vi') ? 'Tiền tệ' : 'Currency'}</Label><Select value={currencyFilter} onChange={(e) => setCurrencyFilter(e.target.value)}><option value="all">{t('common.all')}</option>{currencies.map((code) => <option key={code} value={code}>{code}</option>)}</Select></div>
           <div><Label>{t('transactions.account')}</Label><Select value={accountId} onChange={(e) => setAccountId(e.target.value)}><option value="all">{t('common.all')}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{accountDisplayName(account, t)}</option>)}</Select></div>
           <div><Label>{t('transactions.category')}</Label><Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}><option value="all">{t('common.all')}</option><option value="__uncategorized__">{t('categories.uncategorized')}</option>{selectableCategories(categories).map((category) => <option key={category.id} value={category.id}>{categoryPath(category, categories)}</option>)}</Select></div>
           <div><Label>{t('transactions.fromDate')}</Label><Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></div>
@@ -122,22 +139,26 @@ export function Transactions() {
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-stone-500"><span>{t('transactions.filteredCount', { count: filtered.length })}</span>{filtered.length > PAGE_SIZE && <span>{pageLabel}</span>}</div>
 
       <Card className="overflow-hidden">
-        {filtered.length === 0 ? <div className="p-4"><EmptyState title={t('transactions.emptyTitle')} text={t('transactions.emptyText')} /></div> : <div className="divide-y divide-stone-100 dark:divide-stone-800">{visible.map((tx) => (
-          <div key={tx.id} className="grid gap-3 px-4 py-4 xl:grid-cols-[minmax(0,1.4fr)_190px_190px_auto] xl:items-center">
+        {filtered.length === 0 ? <div className="p-4"><EmptyState title={t('transactions.emptyTitle')} text={t('transactions.emptyText')} /></div> : <div className="divide-y divide-stone-100 dark:divide-stone-800">{visible.map((tx) => {
+          const shown = displayedAmount(tx)
+          const missingConversion = currencyView === 'converted' && !shown.converted
+          return <div key={tx.id} className="grid gap-3 px-4 py-4 xl:grid-cols-[minmax(0,1.4fr)_190px_220px_auto] xl:items-center">
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2"><span className="truncate font-bold text-stone-900 dark:text-white">{tx.merchant || tx.description || t('transaction.noDescription')}</span><Badge tone={tx.type === 'income' ? 'green' : tx.type === 'expense' ? 'red' : 'slate'}>{t(`transaction.${tx.type}`)}</Badge>{isFutureTransaction(tx, now) && <Badge tone="indigo">{t('transactions.scheduled')}</Badge>}</div>
+              <div className="flex flex-wrap items-center gap-2"><span className="truncate font-bold text-stone-900 dark:text-white">{tx.merchant || tx.description || t('transaction.noDescription')}</span><Badge tone={tx.type === 'income' ? 'green' : tx.type === 'expense' ? 'red' : 'slate'}>{t(`transaction.${tx.type}`)}</Badge><Badge>{tx.currency}</Badge>{isFutureTransaction(tx, now) && <Badge tone="indigo">{t('transactions.scheduled')}</Badge>}</div>
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-500"><span>{formatDateTime(tx.occurredAt, locale)}</span><span>{categoryMap.get(tx.categoryId) ?? t('categories.uncategorized')}</span><span>{accountMap.get(tx.accountId) ?? t('transactions.unknownAccount')}</span></div>
               {(tx.tags?.length ?? 0) > 0 && <div className="mt-2 flex flex-wrap gap-1">{tx.tags?.map((tag) => <span key={tag} className="rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">#{tag}</span>)}</div>}
               {tx.note && <div className="mt-1 truncate text-xs text-stone-400">{tx.note}</div>}
             </div>
             <div className="text-sm text-stone-500">{tx.balanceAfter !== undefined ? <>{t('transactions.balanceAfter')} <span className="font-semibold text-stone-700 dark:text-stone-300">{formatMoney(tx.balanceAfter, tx.currency, locale)}</span></> : '—'}</div>
             <div>
-              <div className={`font-semibold ${tx.type === 'income' ? 'text-emerald-600' : tx.type === 'expense' ? 'text-rose-600' : 'text-stone-700 dark:text-stone-300'}`}>{tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : ''}{formatMoney(tx.amount, tx.currency, locale)}</div>
-              {tx.fx && <div className="mt-0.5 text-[11px] text-stone-400">≈ {formatMoney(tx.fx.convertedAmount, tx.fx.baseCurrency, locale)} · 1 {tx.currency} = {new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(tx.fx.rate)} {tx.fx.baseCurrency} · {tx.fx.rateDate}</div>}
+              <div className={`font-semibold ${tx.type === 'income' ? 'text-emerald-600' : tx.type === 'expense' ? 'text-rose-600' : 'text-stone-700 dark:text-stone-300'}`}>{tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : ''}{formatMoney(shown.value, shown.currency, locale)}</div>
+              {currencyView === 'native' && tx.fx && <div className="mt-0.5 text-[11px] text-stone-400">snapshot: 1 {tx.currency} = {new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(tx.fx.rate)} {tx.fx.baseCurrency} · {tx.fx.rateDate}</div>}
+              {currencyView === 'converted' && shown.converted && tx.currency.trim().toUpperCase() !== reportingCurrency && <div className="mt-0.5 text-[11px] text-stone-400">{formatMoney(tx.amount, tx.currency, locale)} · 1 {tx.currency} = {new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(tx.fx?.rate ?? 1)} {reportingCurrency} · {tx.fx?.rateDate}</div>}
+              {missingConversion && <div className="mt-0.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400">{locale.startsWith('vi') ? `Chưa có snapshot → ${reportingCurrency}; đang hiện tiền gốc.` : `No saved snapshot → ${reportingCurrency}; showing original amount.`}</div>}
             </div>
             <div className="flex flex-wrap justify-end gap-1">{tx.imageIds.map((id, index) => <Button key={id} variant="ghost" className="px-2" title={t('transactions.imageTitle', { index: index + 1 })} onClick={() => setViewImage(id)}><ImageIcon size={17} /></Button>)}<Button variant="ghost" className="px-2" title={t('transactions.edit')} onClick={() => setEditTx(tx)}><Pencil size={17} /></Button><Button variant="ghost" className="px-2" title={t('transactions.duplicate')} onClick={() => setDuplicateTx(tx)}><Copy size={17} /></Button><Button variant="ghost" className="px-2 text-rose-500" disabled={deleting === tx.id} onClick={() => remove(tx.id)}><Trash2 size={17} /></Button></div>
           </div>
-        ))}</div>}
+        })}</div>}
       </Card>
 
       {filtered.length > PAGE_SIZE && <div className="flex items-center justify-center gap-3"><Button variant="secondary" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft size={17}/>{locale.startsWith('vi') ? 'Trước' : 'Previous'}</Button><span className="text-xs font-semibold text-stone-500">{page}/{pageCount}</span><Button variant="secondary" disabled={page >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>{locale.startsWith('vi') ? 'Sau' : 'Next'}<ChevronRight size={17}/></Button></div>}
