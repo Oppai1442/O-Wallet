@@ -1,6 +1,6 @@
-import type { VaultConfig } from '../types'
+import type { VaultConfig, VaultRememberDuration } from '../types'
 import { base64UrlToBytes, bytesToBase64Url, randomBytes, unlockVaultWithPassword } from './crypto'
-import { deleteKv, getKv, setKv, setRememberedVaultUnlock } from './db'
+import { deleteKv, getDeviceSessionPreferences, getKv, setKv, setRememberedVaultUnlock } from './db'
 import { reportDiagnostic } from './security'
 
 const LEGACY_QUICK_UNLOCK_KEY = 'quick-unlock-config-v1'
@@ -65,6 +65,18 @@ function quickUnlockKey(vaultCreatedAt: string) {
 function isWindows() {
   const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData
   return (uaData?.platform ?? navigator.userAgent).toLocaleLowerCase('en-US').includes('win')
+}
+
+function rememberedUnlockTtl(duration: VaultRememberDuration) {
+  switch (duration) {
+    case '15m': return 15 * 60 * 1000
+    case '1h': return 60 * 60 * 1000
+    case '8h': return 8 * 60 * 60 * 1000
+    case '1d': return 24 * 60 * 60 * 1000
+    case '7d': return 7 * 24 * 60 * 60 * 1000
+    case '30d': return 30 * 24 * 60 * 60 * 1000
+    default: return BRIDGE_TTL_MS
+  }
 }
 
 function prfExtensions(salt: Uint8Array) {
@@ -366,6 +378,8 @@ export async function unlockWithQuickUnlock(config: VaultConfig) {
 }
 
 export async function handOffQuickUnlockToWallet(config: VaultConfig, dek: CryptoKey) {
-  await setRememberedVaultUnlock({ vaultCreatedAt: config.createdAt, expiresAt: Date.now() + BRIDGE_TTL_MS, dek })
+  const preferences = await getDeviceSessionPreferences()
+  const ttl = rememberedUnlockTtl(preferences.vaultRemember)
+  await setRememberedVaultUnlock({ vaultCreatedAt: config.createdAt, expiresAt: Date.now() + ttl, dek })
   window.location.reload()
 }
