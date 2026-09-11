@@ -4,6 +4,17 @@ import { transactionValueInBase } from './fx'
 
 export type RangeKey = '7d' | '30d' | '3m' | '6m' | '1y' | 'all'
 
+export interface CurrencySummary {
+  currency: string
+  income: number
+  expense: number
+  net: number
+}
+
+function normalizedCurrency(value: string | undefined, fallback = 'VND') {
+  return value?.trim().toUpperCase() || fallback
+}
+
 export function rangeStart(range: RangeKey, transactions: Transaction[], nowMs = Date.now()) {
   const now = new Date(nowMs)
   const effective = effectiveTransactions(transactions, nowMs)
@@ -25,6 +36,22 @@ export function filteredTransactions(transactions: Transaction[], range: RangeKe
   return effectiveTransactions(transactions, now).filter((item) => new Date(item.occurredAt).getTime() >= start)
 }
 
+/** Native totals never mix monetary units. Each currency is aggregated independently. */
+export function summarizeByCurrency(transactions: Transaction[]) {
+  const sums = new Map<string, { income: number; expense: number }>()
+  for (const item of transactions) {
+    if (item.type === 'transfer') continue
+    const currency = normalizedCurrency(item.currency)
+    const current = sums.get(currency) ?? { income: 0, expense: 0 }
+    if (item.type === 'income') current.income += item.amount
+    if (item.type === 'expense') current.expense += item.amount
+    sums.set(currency, current)
+  }
+  return [...sums.entries()]
+    .map(([currency, values]) => ({ currency, ...values, net: values.income - values.expense }))
+    .sort((a, b) => a.currency.localeCompare(b.currency))
+}
+
 export function summarize(transactions: Transaction[], baseCurrency = 'VND') {
   let income = 0
   let expense = 0
@@ -39,6 +66,11 @@ export function summarize(transactions: Transaction[], baseCurrency = 'VND') {
     if (item.type === 'expense') expense += value
   })
   return { income, expense, net: income - expense, unconverted }
+}
+
+export function transactionsInCurrency(transactions: Transaction[], currency: string) {
+  const normalized = normalizedCurrency(currency)
+  return transactions.filter((item) => normalizedCurrency(item.currency) === normalized)
 }
 
 export function categoryBreakdown(
