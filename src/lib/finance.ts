@@ -25,22 +25,18 @@ export function accountBalanceByCurrency(account: Account, transactions: Transac
 
   for (const tx of transactions) {
     if (tx.deleted || isFutureTransaction(tx, now)) continue
-    const sourceCurrency = ensure(tx.currency)
+    const sourceSide = tx.accountId === account.id
+    const destinationSideMatch = tx.type === 'transfer' && tx.destinationAccountId === account.id
+    if (!sourceSide && !destinationSideMatch) continue
 
-    if (tx.type === 'income' && tx.accountId === account.id) {
-      balances.set(sourceCurrency, (balances.get(sourceCurrency) ?? 0) + tx.amount)
-      continue
+    if (sourceSide) {
+      const sourceCurrency = ensure(tx.currency)
+      if (tx.type === 'income') balances.set(sourceCurrency, (balances.get(sourceCurrency) ?? 0) + tx.amount)
+      if (tx.type === 'expense') balances.set(sourceCurrency, (balances.get(sourceCurrency) ?? 0) - tx.amount)
+      if (tx.type === 'transfer') balances.set(sourceCurrency, (balances.get(sourceCurrency) ?? 0) - tx.amount)
     }
-    if (tx.type === 'expense' && tx.accountId === account.id) {
-      balances.set(sourceCurrency, (balances.get(sourceCurrency) ?? 0) - tx.amount)
-      continue
-    }
-    if (tx.type !== 'transfer') continue
 
-    if (tx.accountId === account.id) {
-      balances.set(sourceCurrency, (balances.get(sourceCurrency) ?? 0) - tx.amount)
-    }
-    if (tx.destinationAccountId === account.id) {
+    if (destinationSideMatch) {
       const destination = destinationSide(tx)
       const destinationCurrency = ensure(destination.currency)
       balances.set(destinationCurrency, (balances.get(destinationCurrency) ?? 0) + destination.amount)
