@@ -7,8 +7,10 @@ export interface SpeechRecognitionResultValue {
   alternatives: string[]
 }
 
+type RecognitionOptions = { langs: string[]; processLocally?: boolean; quality?: string }
 type RecognitionCtor = (new () => any) & {
-  available?: (options: { langs: string[]; processLocally?: boolean; quality?: string }) => Promise<string>
+  available?: (options: RecognitionOptions) => Promise<string>
+  install?: (options: RecognitionOptions) => Promise<boolean>
 }
 
 type SpeechScope = typeof window & {
@@ -162,14 +164,23 @@ function runRecognition({
   })
 }
 
-async function localRecognitionAvailable(language: VoiceInputLanguage) {
+async function ensureLocalRecognition(language: VoiceInputLanguage) {
   const Recognition = recognitionCtor()
   if (!Recognition?.available) return false
+  const options: RecognitionOptions = { langs: [language], processLocally: true, quality: 'dictation' }
   try {
-    const status = await Recognition.available({ langs: [language], processLocally: true, quality: 'dictation' })
-    return status === 'available'
+    const status = await Recognition.available(options)
+    if (status === 'available') return true
+    if (status === 'unavailable' || !Recognition.install) return false
+
+    // `downloadable` and `downloading` both mean the UA knows how to provide the
+    // pack. install() is idempotent and resolves once the requested pack is ready.
+    const installed = await Recognition.install(options)
+    if (!installed) return false
+    const afterInstall = await Recognition.available(options)
+    return afterInstall === 'available'
   } catch (error) {
-    reportDiagnostic('voice-local-availability', error)
+    reportDiagnostic('voice-local-install', error)
     return false
   }
 }
@@ -209,11 +220,19 @@ export async function recognizeSpeech({
     const code = (error as RecognitionFailure)?.speechCode
 
     if (code === 'phrases-not-supported') {
-      return attempt(false, false)
+      try {
+        return await attempt(false, false)
+      } catch (retryError) {
+        if (signal?.aborted) throw new Error('error.voiceCancelled')
+        const retryCode = (retryError as RecognitionFailure)?.speechCode
+        if (retryCode !== 'network' && retryCode !== 'service-not-allowed' && retryCode !== 'language-not-supported' && retryCode !== 'language-unavailable') throw retryError
+        if (await ensureLocalRecognition(language)) return attempt(true, false)
+        throw retryError
+      }
     }
 
     if (code === 'network' || code === 'service-not-allowed' || code === 'language-not-supported' || code === 'language-unavailable') {
-      if (await localRecognitionAvailable(language)) {
+      if (await ensureLocalRecognition(language)) {
         try {
           return await attempt(true, false)
         } catch (localError) {
@@ -233,8 +252,8 @@ export function voiceRecognitionErrorText(error: unknown, locale: string) {
   const code = (error as RecognitionFailure)?.speechCode
   const vi = locale.toLowerCase().startsWith('vi')
   if (code === 'network') return vi
-    ? 'Dịch vụ nhận dạng giọng nói của trình duyệt không kết nối được mạng. Mic vẫn có thể hoạt động bình thường.'
-    : 'The browser speech-recognition service could not reach the network. Your microphone can still be working normally.'
+    ? 'Dịch vụ nhận dạng giọng nói từ xa không kết nối được. O-Wallet cũng chưa thể dùng model nhận dạng trên thiết bị cho ngôn ngữ này.'
+    : 'The remote speech-recognition service could not connect, and O-Wallet could not use an on-device model for this language either.'
   if (code === 'audio-capture') return vi
     ? 'Trình nhận dạng giọng nói không lấy được audio từ mic, dù mic test có thể vẫn chạy. Hãy thử đóng app/tab khác đang giữ mic rồi thử lại.'
     : 'Speech recognition could not capture microphone audio even though a microphone test may still work. Close other apps/tabs using the mic and try again.'
@@ -242,8 +261,8 @@ export function voiceRecognitionErrorText(error: unknown, locale: string) {
     ? 'Engine nhận dạng giọng nói hiện không hỗ trợ ngôn ngữ đã chọn trên thiết bị/trình duyệt này.'
     : 'The speech-recognition engine does not currently support the selected language on this browser/device.'
   if (code === 'service-not-allowed') return vi
-    ? 'Trình duyệt đang chặn hoặc không cho phép dịch vụ nhận dạng giọng nói. Đây không nhất thiết là lỗi quyền microphone.'
-    : 'The browser is blocking or disallowing its speech-recognition service. This is not necessarily a microphone-permission problem.'
+    ? 'Trình duyệt đang chặn dịch vụ nhận dạng từ xa và O-Wallet chưa thể chuyển sang model trên thiết bị.'
+    : 'The browser is blocking the remote recognition service and O-Wallet could not switch to an on-device model.'
   if (code === 'phrases-not-supported') return vi
     ? 'Engine không hỗ trợ contextual phrase biasing; O-Wallet đã thử lại mà không dùng tính năng này.'
     : 'The engine does not support contextual phrase biasing; O-Wallet retried without it.'
