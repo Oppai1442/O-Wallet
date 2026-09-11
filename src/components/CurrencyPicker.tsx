@@ -81,6 +81,8 @@ export function CurrencyPicker({
   const normalizedValue = value.trim().toUpperCase()
   const options = useMemo(() => buildOptions(locale), [locale])
   const selected = options.find((item) => item.code === normalizedValue)
+  const displayedCode = selected?.code ?? (normalizedValue || '—')
+  const displayedSymbol = selected?.symbol ?? (normalizedValue || '—')
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase(locale)
@@ -114,9 +116,9 @@ export function CurrencyPicker({
         className="flex w-full items-center gap-3 rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-left text-sm text-stone-900 outline-none transition hover:border-stone-300 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-100 dark:hover:border-stone-600"
       >
         <span className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="w-9 shrink-0 font-bold tabular-nums">{selected?.symbol ?? normalizedValue || '—'}</span>
+          <span className="w-9 shrink-0 font-bold tabular-nums">{displayedSymbol}</span>
           <span className="min-w-0">
-            <span className="block font-semibold">{selected?.code ?? normalizedValue || '—'}</span>
+            <span className="block font-semibold">{displayedCode}</span>
             <span className="block truncate text-xs text-stone-400">{selected?.name ?? (locale.startsWith('vi') ? 'Mã tiền tệ chưa hợp lệ' : 'Invalid currency code')}</span>
           </span>
         </span>
