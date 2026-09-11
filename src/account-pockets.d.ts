@@ -14,4 +14,9 @@ declare module './types' {
     /** Destination-side currency for transfers. Missing on legacy same-currency transfers. */
     destinationCurrency?: string
   }
+
+  interface ParsedTransactionCandidate {
+    /** Optional future parser output; absent OCR currency falls back to the selected account pocket. */
+    currency?: string
+  }
 }
