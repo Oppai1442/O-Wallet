@@ -5,6 +5,7 @@ import { localizeError, useI18n } from '../i18n'
 import { buildDetectedLines, parseTransactionFromOcr, parseTransactionFromRegions, recognizeImage } from '../lib/ocr'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
 import { combineLocalDateAndTime, localDateKeyFromInputDateTime, localTimeFromInputDateTime, localWeekday, recurringDateKeys } from '../lib/scheduling'
+import { lastTransactionCurrency, rememberTransactionCurrency } from '../lib/currencyPreferences'
 import type { OcrDetectedLine, OcrField, OcrRegion, OcrResult, OcrTemplate, Transaction, TransactionType } from '../types'
 import { Button, Input, Label, Select, Textarea } from './ui'
 import { MultiDatePicker } from './MultiDatePicker'
@@ -17,12 +18,17 @@ import { validateImageBatch } from '../lib/security'
 import { AI_OPENROUTER_KEY_SECRET, analyzeTransactionImage } from '../lib/ai'
 import { CategoryPicker } from './CategoryPicker'
 import { AccountSelect } from './AccountSelect'
+import { CurrencyPicker } from './CurrencyPicker'
 import { VoiceEntry, type VoiceEntryDraft } from './VoiceEntry'
 
 const OcrRegionEditor = lazy(() => import('./OcrRegionEditor').then((module) => ({ default: module.OcrRegionEditor })))
 
 function uniqueTags(raw: string) {
   return [...new Set(raw.split(/[,;#\n]/).map((item) => item.trim()).filter(Boolean))].slice(0, 20)
+}
+
+function validCurrency(code: string) {
+  return /^[A-Z]{3}$/.test(code.trim().toUpperCase())
 }
 
 export function TransactionModal({
@@ -36,13 +42,13 @@ export function TransactionModal({
   duplicateFrom?: Transaction
   initialVoice?: boolean
 }) {
-  const { accounts, categories, repository, saveEntity, saveEntities, settings, transactions } = useWallet()
-  const { t } = useI18n()
+  const { accounts, categories, repository, saveEntity, saveEntities, settings, transactions, vaultConfig } = useWallet()
+  const { t, locale } = useI18n()
   const seed = transaction ?? duplicateFrom
   const editing = Boolean(transaction)
   const [type, setType] = useState<TransactionType>(seed?.type ?? 'expense')
   const [amount, setAmount] = useState(seed?.amount ? String(seed.amount) : '')
-  const [currency, setCurrency] = useState(seed?.currency ?? settings?.defaultCurrency ?? 'VND')
+  const [currency, setCurrency] = useState(seed?.currency ?? lastTransactionCurrency(vaultConfig?.createdAt, settings))
   const initialOccurredAt = seed ? toLocalInputDateTime(seed.occurredAt) : toLocalInputDateTime()
   const initialDateKey = localDateKeyFromInputDateTime(initialOccurredAt)
   const [occurredAt, setOccurredAt] = useState(initialOccurredAt)
@@ -245,7 +251,7 @@ export function TransactionModal({
       const nextType = parsed.type ?? type
       if (parsed.type) setType(parsed.type)
       if (parsed.amount !== undefined) setAmount(String(parsed.amount))
-      if (parsed.currency) setCurrency(parsed.currency)
+      if (parsed.currency && validCurrency(parsed.currency)) setCurrency(parsed.currency.trim().toUpperCase())
       if (parsed.occurredAt) {
         const local = toLocalInputDateTime(parsed.occurredAt)
         const dateKey = localDateKeyFromInputDateTime(local)
@@ -451,7 +457,7 @@ export function TransactionModal({
     }
     for (const draft of selected) {
       const numericAmount = Number(draft.amount)
-      if (!numericAmount || numericAmount <= 0 || !draft.accountId || !draft.occurredAt) {
+      if (!numericAmount || numericAmount <= 0 || !draft.accountId || !draft.occurredAt || !validCurrency(draft.currency)) {
         setActiveBatchId(draft.id)
         setError(t('batch.errorInvalidDraft'))
         return
@@ -477,7 +483,7 @@ export function TransactionModal({
           id: crypto.randomUUID(),
           type: draft.type,
           amount: Number(draft.amount),
-          currency: draft.currency || currency,
+          currency: draft.currency.trim().toUpperCase(),
           occurredAt: fromLocalInputDateTime(draft.occurredAt),
           categoryId: draft.categoryId,
           accountId: draft.accountId,
@@ -495,6 +501,7 @@ export function TransactionModal({
         })
       }
       await saveEntities(records)
+      rememberTransactionCurrency(vaultConfig?.createdAt, selected[selected.length - 1]?.currency ?? currency)
       onClose()
     } catch (e) {
       setError(localizeError(e, t, 'modal.errorSave'))
@@ -505,7 +512,7 @@ export function TransactionModal({
 
   async function save() {
     const numericAmount = Number(amount)
-    if (!repository || !numericAmount || numericAmount <= 0 || !accountId) {
+    if (!repository || !numericAmount || numericAmount <= 0 || !accountId || !validCurrency(currency)) {
       setError(t('modal.errorMissingFields'))
       return
     }
@@ -552,13 +559,14 @@ export function TransactionModal({
       if (!editing && duplicateFrom) imageIds.push(...duplicateFrom.imageIds)
       for (const file of files) imageIds.push((await repository.saveImage(file)).id)
       const now = new Date().toISOString()
+      const normalizedCurrency = currency.trim().toUpperCase()
       const batchId = occurrenceTimes.length > 1 ? crypto.randomUUID() : undefined
       const batchMode = creationMode === 'repeat' ? 'recurring' : 'multi-date'
       const records: Transaction[] = occurrenceTimes.map((time, index) => ({
         id: editing ? transaction!.id : crypto.randomUUID(),
         type,
         amount: numericAmount,
-        currency,
+        currency: normalizedCurrency,
         occurredAt: time,
         categoryId,
         accountId,
@@ -579,6 +587,7 @@ export function TransactionModal({
 
       if (records.length === 1) await saveEntity(records[0])
       else await saveEntities(records)
+      rememberTransactionCurrency(vaultConfig?.createdAt, normalizedCurrency)
       onClose()
     } catch (e) {
       setError(localizeError(e, t, 'modal.errorSave'))
@@ -634,9 +643,9 @@ export function TransactionModal({
                 ))}
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-[1.5fr_.7fr]">
+              <div className="grid gap-4 sm:grid-cols-[1.5fr_.9fr]">
                 <div><Label>{t('modal.amount')}</Label><Input type="number" inputMode="decimal" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="150000" /></div>
-                <div><Label>{t('modal.currency')}</Label><Input value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} /></div>
+                <div><Label>{t('modal.currency')}</Label><CurrencyPicker value={currency} onChange={setCurrency} locale={locale}/></div>
               </div>
 
               {!editing && (
