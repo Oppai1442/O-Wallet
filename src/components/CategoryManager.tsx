@@ -1,8 +1,9 @@
 import { ChevronDown, ChevronRight, Folder, FolderPlus, Pencil, Plus, Tag, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import type { Category, Transaction } from '../types'
+import type { Category, Transaction, WalletEntity } from '../types'
 import { categoryDepth, categoryDescendantIds, categoryPath, isCategoryGroup } from '../lib/categories'
 import { useI18n } from '../i18n'
+import { useWallet } from '../WalletContext'
 import { Button, Card, Input, Label, Select } from './ui'
 
 export function CategoryManager({ categories, transactions, onSave, onSaveMany }: {
@@ -12,6 +13,7 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
   onSaveMany: (categories: Category[], removedIds?: string[]) => Promise<void>
 }) {
   const { t, locale } = useI18n()
+  const { settings, saveEntities } = useWallet()
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(categories.filter((item) => !item.archived && isCategoryGroup(item)).map((item) => item.id)))
   const [name, setName] = useState('')
   const [nodeType, setNodeType] = useState<'group' | 'item'>('item')
@@ -85,7 +87,26 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
     const nextCategories = used
       ? targets.map((item) => ({ ...item, archived: true, updatedAt: timestamp }))
       : targets.map((item) => ({ ...item, deleted: true, updatedAt: timestamp }))
-    await onSaveMany(nextCategories, [...ids])
+
+    if (!settings) {
+      await onSaveMany(nextCategories, [...ids])
+      return
+    }
+
+    const nextRules = (settings.transactionRules ?? [])
+      .map((rule) => ids.has(rule.categoryId ?? '') ? { ...rule, categoryId: undefined, updatedAt: timestamp } : rule)
+      .filter((rule) => Boolean(rule.categoryId || rule.accountId))
+    const nextDefaults = ids.has(settings.transactionDefaults?.categoryId ?? '')
+      ? { ...settings.transactionDefaults, categoryId: undefined }
+      : settings.transactionDefaults
+    const nextSettings = {
+      ...settings,
+      budgets: (settings.budgets ?? []).filter((budget) => !ids.has(budget.categoryId)),
+      transactionRules: nextRules,
+      transactionDefaults: nextDefaults,
+      updatedAt: timestamp,
+    }
+    await saveEntities<WalletEntity>([nextSettings, ...nextCategories])
   }
 
   function row(category: Category) {
