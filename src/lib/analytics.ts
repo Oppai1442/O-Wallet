@@ -1,5 +1,6 @@
 import type { Category, Transaction } from '../types'
 import { effectiveTransactions } from './scheduling'
+import { transactionValueInBase } from './fx'
 
 export type RangeKey = '7d' | '30d' | '3m' | '6m' | '1y' | 'all'
 
@@ -24,14 +25,20 @@ export function filteredTransactions(transactions: Transaction[], range: RangeKe
   return effectiveTransactions(transactions, now).filter((item) => new Date(item.occurredAt).getTime() >= start)
 }
 
-export function summarize(transactions: Transaction[]) {
+export function summarize(transactions: Transaction[], baseCurrency = 'VND') {
   let income = 0
   let expense = 0
+  let unconverted = 0
   transactions.forEach((item) => {
-    if (item.type === 'income') income += item.amount
-    if (item.type === 'expense') expense += item.amount
+    const value = transactionValueInBase(item, baseCurrency)
+    if (value === undefined) {
+      if (item.type !== 'transfer') unconverted += 1
+      return
+    }
+    if (item.type === 'income') income += value
+    if (item.type === 'expense') expense += value
   })
-  return { income, expense, net: income - expense }
+  return { income, expense, net: income - expense, unconverted }
 }
 
 export function categoryBreakdown(
@@ -39,18 +46,21 @@ export function categoryBreakdown(
   categories: Category[],
   displayName: (category: Category) => string = (category) => category.name,
   fallbackName = 'Other',
+  baseCurrency = 'VND',
 ) {
   const names = new Map(categories.map((category) => [category.id, displayName(category)]))
   const sums = new Map<string, number>()
   transactions.filter((item) => item.type === 'expense').forEach((item) => {
-    sums.set(item.categoryId, (sums.get(item.categoryId) ?? 0) + item.amount)
+    const value = transactionValueInBase(item, baseCurrency)
+    if (value === undefined) return
+    sums.set(item.categoryId, (sums.get(item.categoryId) ?? 0) + value)
   })
   return [...sums.entries()]
     .map(([id, value]) => ({ id, name: names.get(id) ?? fallbackName, value }))
     .sort((a, b) => b.value - a.value)
 }
 
-export function trendData(transactions: Transaction[], range: RangeKey, locale = 'vi-VN') {
+export function trendData(transactions: Transaction[], range: RangeKey, locale = 'vi-VN', baseCurrency = 'VND') {
   const map = new Map<string, { label: string; income: number; expense: number }>()
   const monthly = ['3m', '6m', '1y', 'all'].includes(range)
   const fmt = monthly
@@ -58,13 +68,15 @@ export function trendData(transactions: Transaction[], range: RangeKey, locale =
     : new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit' })
 
   transactions.forEach((item) => {
+    const value = transactionValueInBase(item, baseCurrency)
+    if (value === undefined) return
     const date = new Date(item.occurredAt)
     const key = monthly
       ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
       : date.toISOString().slice(0, 10)
     const current = map.get(key) ?? { label: fmt.format(date), income: 0, expense: 0 }
-    if (item.type === 'income') current.income += item.amount
-    if (item.type === 'expense') current.expense += item.amount
+    if (item.type === 'income') current.income += value
+    if (item.type === 'expense') current.expense += value
     map.set(key, current)
   })
 
