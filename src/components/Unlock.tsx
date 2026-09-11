@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Fingerprint, KeyRound, LockKeyhole, Wallet } from 'lucide-react'
+import { KeyRound, LockKeyhole, Wallet } from 'lucide-react'
 import { questionLabel, useI18n } from '../i18n'
 import {
   clearQuickUnlockConfig,
@@ -15,18 +15,18 @@ import { LanguageSwitcher } from './LanguageSwitcher'
 
 const COPY = {
   vi: {
-    quickUnlock: 'Mở nhanh bằng sinh trắc học',
-    quickUnlockHint: 'Dùng vân tay, Face ID hoặc Windows Hello của thiết bị này. Password vẫn là phương án dự phòng.',
+    quickUnlock: 'Mở nhanh bằng passkey',
+    quickUnlockHint: 'Dùng passkey / Windows Hello / khóa màn hình của thiết bị này. Tùy nền tảng, xác minh có thể là PIN, vân tay hoặc khuôn mặt. Password vẫn là phương án dự phòng.',
     quickUnlockBusy: 'Đang xác thực…',
     unsupported: 'Quick Unlock trên thiết bị này không còn khả dụng.',
-    failed: 'Quick Unlock không dùng được trên thiết bị này. Cấu hình local đã được gỡ; hãy mở bằng password rồi thiết lập lại trong Settings.',
+    failed: 'Quick Unlock của vault này không dùng được trên thiết bị hiện tại. Cấu hình local của vault này đã được gỡ; hãy mở bằng password rồi thiết lập lại trong Settings.',
   },
   en: {
-    quickUnlock: 'Quick unlock with biometrics',
-    quickUnlockHint: 'Use this device’s fingerprint, Face ID, or Windows Hello. Your password remains the fallback.',
+    quickUnlock: 'Quick unlock with passkey',
+    quickUnlockHint: 'Use this device’s passkey, Windows Hello, or screen-lock authenticator. Depending on the platform, verification may use a PIN, fingerprint, or face recognition. Your password remains the fallback.',
     quickUnlockBusy: 'Authenticating…',
     unsupported: 'Quick Unlock is no longer available on this device.',
-    failed: 'Quick Unlock cannot be used on this device. Its local setup was removed; unlock with your password and set it up again in Settings.',
+    failed: 'Quick Unlock for this vault cannot be used on this device. This vault’s local setup was removed; unlock with your password and set it up again in Settings.',
   },
 } as const
 
@@ -79,7 +79,7 @@ export function Unlock() {
     } catch (quickUnlockError) {
       if (!isQuickUnlockCancellation(quickUnlockError)) {
         reportDiagnostic('quick-unlock-open', quickUnlockError)
-        await clearQuickUnlockConfig().catch((clearError) => reportDiagnostic('quick-unlock-clear-stale', clearError))
+        await clearQuickUnlockConfig(vaultConfig).catch((clearError) => reportDiagnostic('quick-unlock-clear-stale', clearError))
         setQuickAvailable(false)
         setQuickError(quickUnlockError instanceof Error && quickUnlockError.message === 'error.quickUnlockUnsupported' ? L.unsupported : L.failed)
       }
@@ -111,14 +111,14 @@ export function Unlock() {
         {quickAvailable && mode === 'password' && (
           <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50/70 p-4 dark:border-blue-500/20 dark:bg-blue-500/10">
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white"><Fingerprint size={22} /></div>
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white"><KeyRound size={22} /></div>
               <div className="min-w-0 flex-1">
                 <div className="font-semibold text-stone-900 dark:text-white">{L.quickUnlock}</div>
                 <p className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">{L.quickUnlockHint}</p>
               </div>
             </div>
             <Button className="mt-4 w-full" onClick={() => void submitQuickUnlock()} disabled={quickBusy || busy}>
-              <Fingerprint size={18} /> {quickBusy ? L.quickUnlockBusy : L.quickUnlock}
+              <KeyRound size={18} /> {quickBusy ? L.quickUnlockBusy : L.quickUnlock}
             </Button>
           </div>
         )}
