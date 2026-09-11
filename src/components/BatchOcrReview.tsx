@@ -4,6 +4,7 @@ import { useI18n } from '../i18n'
 import { selectableCategories } from '../lib/categories'
 import { CategoryPicker } from './CategoryPicker'
 import { AccountSelect } from './AccountSelect'
+import { CurrencyPicker } from './CurrencyPicker'
 import { Input, Label, Select, Textarea } from './ui'
 
 export interface BatchOcrConflict {
@@ -54,7 +55,7 @@ export function BatchOcrReview({
   onActiveId: (id: string) => void
   onChange: (draft: BatchOcrDraft) => void
 }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const active = drafts.find((draft) => draft.id === activeId) ?? drafts[0]
   if (!active) return null
   const eligibleCategories = selectableCategories(categories, active.type)
@@ -85,7 +86,7 @@ export function BatchOcrReview({
                 <img src={previewUrls[draft.fileIndex]} alt="" className="h-12 w-12 rounded-lg object-cover" draggable={false} />
                 <span className="min-w-0">
                   <span className="block truncate text-xs font-bold text-stone-800 dark:text-stone-100">{index + 1}. {file?.name ?? t('common.file')}</span>
-                  <span className="mt-0.5 block truncate text-[11px] text-stone-500">{draft.amount || '—'} · {draft.merchant || t('transaction.noDescription')}</span>
+                  <span className="mt-0.5 block truncate text-[11px] text-stone-500">{draft.amount || '—'} {draft.currency || ''} · {draft.merchant || t('transaction.noDescription')}</span>
                 </span>
                 <span className="flex flex-col items-end gap-1">
                   {draft.conflict?.level === 'exact' ? <AlertTriangle size={15} className="text-rose-500" /> : draft.conflict ? <AlertTriangle size={15} className="text-amber-500" /> : <CheckCircle2 size={15} className="text-emerald-500" />}
@@ -118,7 +119,7 @@ export function BatchOcrReview({
 
           <div className="grid min-w-0 gap-3 md:grid-cols-3">
             <div><Label>{t('modal.amount')}</Label><Input type="number" value={active.amount} onChange={(e) => patch({ amount: e.target.value })} /></div>
-            <div><Label>{t('modal.currency')}</Label><Input value={active.currency} onChange={(e) => patch({ currency: e.target.value.toUpperCase() })} /></div>
+            <div><Label>{t('modal.currency')}</Label><CurrencyPicker value={active.currency} onChange={(code) => patch({ currency: code })} locale={locale}/></div>
             <div><Label>{t('modal.time')}</Label><Input type="datetime-local" value={active.occurredAt} onChange={(e) => patch({ occurredAt: e.target.value })} /></div>
           </div>
           <div className="grid min-w-0 gap-3 md:grid-cols-3">
