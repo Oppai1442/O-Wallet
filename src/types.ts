@@ -90,6 +90,20 @@ export interface TransactionRule {
   updatedAt: string
 }
 
+export interface FxSnapshot {
+  /** Wallet/reporting currency. `rate` is base-currency units per 1 transaction-currency unit. */
+  baseCurrency: string
+  rate: number
+  /** Snapshot result at save time. Historical records never reference a shared mutable rate. */
+  convertedAmount: number
+  /** Calendar date the transaction asked to price. Future dates may use the latest available provider rate. */
+  requestedDate: string
+  /** Actual observation date returned by the provider, or requestedDate for manual rates. */
+  rateDate: string
+  provider: 'frankfurter' | 'manual'
+  fetchedAt: string
+}
+
 export type SharedWalletRole = 'owner' | 'member' | 'viewer'
 export type SharedWalletLifecycleState = 'active' | 'closing' | 'deleted'
 
@@ -265,6 +279,8 @@ export interface Transaction {
   type: TransactionType
   amount: number
   currency: string
+  /** Immutable per-record conversion snapshot when currency differs from the wallet base currency. */
+  fx?: FxSnapshot
   occurredAt: string
   categoryId: string
   accountId: string
@@ -316,6 +332,7 @@ export interface AppSettings {
     mode: ImageRetentionMode
     days: number
   }
+  /** Reporting/base currency. Kept under the legacy field name for backward compatibility. */
   defaultCurrency: string
   autoSync: boolean
   rememberDefaults?: DeviceSessionPreferences
