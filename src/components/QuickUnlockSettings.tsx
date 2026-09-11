@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Fingerprint, LoaderCircle, ShieldCheck, X } from 'lucide-react'
+import { KeyRound, LoaderCircle, ShieldCheck, X } from 'lucide-react'
 import {
   clearQuickUnlockConfig,
   enableQuickUnlock,
@@ -15,50 +15,50 @@ import { Button, Card, Input, Label } from './ui'
 const COPY = {
   vi: {
     title: 'Quick Unlock',
-    text: 'Dùng vân tay, Face ID hoặc Windows Hello để mở O-Wallet nhanh trên thiết bị này. Password vẫn là phương án dự phòng.',
-    deviceOnly: 'Thiết lập này chỉ lưu trên thiết bị hiện tại và không sync lên Google Drive.',
+    text: 'Dùng passkey / trình xác thực của thiết bị để mở O-Wallet nhanh. Tùy nền tảng, hệ điều hành có thể xác minh bằng PIN, vân tay, khuôn mặt hoặc cơ chế bảo mật tương đương. Password vẫn là phương án dự phòng.',
+    deviceOnly: 'Enrollment này chỉ lưu trên thiết bị hiện tại, gắn với đúng vault và không sync lên Google Drive.',
     enabled: 'Đã bật',
     disabled: 'Đang tắt',
-    unavailable: 'Thiết bị hoặc trình duyệt này chưa hỗ trợ biometric / platform authenticator.',
+    unavailable: 'Thiết bị hoặc trình duyệt này chưa hỗ trợ platform authenticator / passkey phù hợp.',
     enable: 'Bật Quick Unlock',
     disable: 'Tắt Quick Unlock',
     enableTitle: 'Bật Quick Unlock?',
-    enableConfirm: 'Nhập password hiện tại để xác nhận. Sau đó hệ điều hành sẽ yêu cầu thiết lập hoặc xác thực vân tay, Face ID hay Windows Hello.',
+    enableConfirm: 'Nhập password hiện tại để xác nhận. Sau đó hệ điều hành sẽ yêu cầu xác minh bằng passkey / Windows Hello / khóa màn hình của thiết bị, tùy nền tảng.',
     password: 'Password hiện tại',
     wrongPassword: 'Password không đúng.',
     setup: 'Xác nhận & thiết lập',
     disableTitle: 'Tắt Quick Unlock?',
-    disableConfirm: 'O-Wallet sẽ xóa cấu hình Quick Unlock local trên thiết bị này. Password và dữ liệu ví không bị thay đổi.',
+    disableConfirm: 'O-Wallet sẽ xóa cấu hình Quick Unlock local của vault này trên thiết bị hiện tại. Password và dữ liệu ví không bị thay đổi.',
     disableAction: 'Xác nhận tắt',
     cancel: 'Hủy',
     enabling: 'Đang thiết lập…',
     disabling: 'Đang tắt…',
-    enabledDone: 'Quick Unlock đã được bật trên thiết bị này.',
-    disabledDone: 'Quick Unlock đã được tắt trên thiết bị này.',
+    enabledDone: 'Quick Unlock đã được bật cho vault này trên thiết bị hiện tại.',
+    disabledDone: 'Quick Unlock đã được tắt cho vault này trên thiết bị hiện tại.',
     setupFailed: 'Không thể thiết lập Quick Unlock. Hãy thử lại hoặc tiếp tục dùng password.',
   },
   en: {
     title: 'Quick Unlock',
-    text: 'Use fingerprint, Face ID, or Windows Hello to open O-Wallet quickly on this device. Your password remains the fallback.',
-    deviceOnly: 'This setup is stored only on the current device and is never synced to Google Drive.',
+    text: 'Use this device’s passkey / platform authenticator to open O-Wallet quickly. Depending on the platform, verification may use a PIN, fingerprint, face recognition, or an equivalent device-security method. Your password remains the fallback.',
+    deviceOnly: 'This enrollment is stored only on the current device, is bound to this vault, and is never synced to Google Drive.',
     enabled: 'Enabled',
     disabled: 'Off',
-    unavailable: 'This device or browser does not expose a biometric / platform authenticator.',
+    unavailable: 'This device or browser does not expose a suitable platform authenticator / passkey.',
     enable: 'Enable Quick Unlock',
     disable: 'Disable Quick Unlock',
     enableTitle: 'Enable Quick Unlock?',
-    enableConfirm: 'Enter your current password to confirm. Your operating system will then ask you to set up or verify fingerprint, Face ID, or Windows Hello.',
+    enableConfirm: 'Enter your current password to confirm. Your operating system will then ask you to verify with a passkey, Windows Hello, or the device screen lock, depending on the platform.',
     password: 'Current password',
     wrongPassword: 'Incorrect password.',
     setup: 'Confirm & set up',
     disableTitle: 'Disable Quick Unlock?',
-    disableConfirm: 'O-Wallet will remove the local Quick Unlock configuration from this device. Your password and wallet data are unchanged.',
+    disableConfirm: 'O-Wallet will remove the local Quick Unlock configuration for this vault on this device. Your password and wallet data are unchanged.',
     disableAction: 'Confirm disable',
     cancel: 'Cancel',
     enabling: 'Setting up…',
     disabling: 'Disabling…',
-    enabledDone: 'Quick Unlock is enabled on this device.',
-    disabledDone: 'Quick Unlock is disabled on this device.',
+    enabledDone: 'Quick Unlock is enabled for this vault on this device.',
+    disabledDone: 'Quick Unlock is disabled for this vault on this device.',
     setupFailed: 'Quick Unlock could not be configured. Try again or keep using your password.',
   },
 } as const
@@ -132,12 +132,12 @@ export function QuickUnlockSettings() {
   }
 
   async function confirmDisable() {
-    if (busy) return
+    if (busy || !vaultConfig) return
     setBusy(true)
     setMessage('')
     setError('')
     try {
-      await clearQuickUnlockConfig()
+      await clearQuickUnlockConfig(vaultConfig)
       await refresh()
       setDialog(undefined)
       setMessage(L.disabledDone)
@@ -154,7 +154,7 @@ export function QuickUnlockSettings() {
       <Card className="p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
-            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${enabled ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-500 dark:bg-stone-900 dark:text-stone-400'}`}><Fingerprint size={21} /></div>
+            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${enabled ? 'bg-blue-600 text-white' : 'bg-stone-100 text-stone-500 dark:bg-stone-900 dark:text-stone-400'}`}><KeyRound size={21} /></div>
             <div className="min-w-0">
               <h2 className="font-bold text-stone-900 dark:text-white">{L.title}</h2>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-stone-500">{L.text}</p>
@@ -169,7 +169,7 @@ export function QuickUnlockSettings() {
         {error && <div className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</div>}
 
         <div className="mt-4">
-          {enabled ? <Button variant="secondary" onClick={openDisable}><Fingerprint size={16} />{L.disable}</Button> : <Button onClick={openEnable} disabled={!supported || !vaultConfig}><Fingerprint size={16} />{L.enable}</Button>}
+          {enabled ? <Button variant="secondary" onClick={openDisable}><KeyRound size={16} />{L.disable}</Button> : <Button onClick={openEnable} disabled={!supported || !vaultConfig}><KeyRound size={16} />{L.enable}</Button>}
         </div>
       </Card>
 
