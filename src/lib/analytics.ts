@@ -36,6 +36,15 @@ export function filteredTransactions(transactions: Transaction[], range: RangeKe
   return effectiveTransactions(transactions, now).filter((item) => new Date(item.occurredAt).getTime() >= start)
 }
 
+export function monthKey(value: Date | number = new Date()) {
+  const date = value instanceof Date ? value : new Date(value)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+export function transactionsInMonth(transactions: Transaction[], month: string, now = Date.now()) {
+  return effectiveTransactions(transactions, now).filter((item) => monthKey(new Date(item.occurredAt)) === month)
+}
+
 /** Native totals never mix monetary units. Each currency is aggregated independently. */
 export function summarizeByCurrency(transactions: Transaction[]) {
   const sums = new Map<string, { income: number; expense: number }>()
@@ -79,10 +88,11 @@ export function categoryBreakdown(
   displayName: (category: Category) => string = (category) => category.name,
   fallbackName = 'Other',
   baseCurrency = 'VND',
+  transactionType: 'income' | 'expense' = 'expense',
 ) {
   const names = new Map(categories.map((category) => [category.id, displayName(category)]))
   const sums = new Map<string, number>()
-  transactions.filter((item) => item.type === 'expense').forEach((item) => {
+  transactions.filter((item) => item.type === transactionType).forEach((item) => {
     const value = transactionValueInBase(item, baseCurrency)
     if (value === undefined) return
     sums.set(item.categoryId, (sums.get(item.categoryId) ?? 0) + value)
