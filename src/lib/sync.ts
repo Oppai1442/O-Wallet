@@ -8,7 +8,7 @@ import type {
   SyncState,
   VaultConfig,
 } from '../types'
-import { packEncryptedPayload, unpackEncryptedPayload } from './crypto'
+import { base64UrlToBytes, bytesToBase64Url, packEncryptedPayload, unpackEncryptedPayload } from './crypto'
 import { SECURITY_LIMITS } from './security'
 import {
   db,
@@ -19,20 +19,57 @@ import {
   syncQueueKey,
 } from './db'
 import {
+  downloadDriveFile,
   ensureDriveLayout,
   getDriveStartPageToken,
   listAllDriveChanges,
   listAllDriveFiles,
+  trashDriveFile,
   uploadDriveFile,
   uploadVaultConfig,
-  downloadDriveFile,
   type DriveChange,
   type DriveFileMeta,
 } from './drive'
 
 const SYNC_CONCURRENCY = 5
+const SNAPSHOT_CONCURRENCY = 4
+const SNAPSHOT_MIN_RECORDS = 1_000
+const SNAPSHOT_REFRESH_RECORD_DELTA = 1_000
+const SNAPSHOT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+const SNAPSHOT_TARGET_BYTES = 6 * 1024 * 1024
+const SNAPSHOT_MAX_PACK_BYTES = 8 * 1024 * 1024
+const SNAPSHOT_MAX_MANIFEST_BYTES = 256 * 1024
+const SNAPSHOT_MAX_SHARDS = 512
+const SNAPSHOT_MAX_RECORDS = 1_000_000
+const SNAPSHOT_SCHEMA = 1
 
 const VALID_RECORD_KINDS = new Set(['transaction', 'account', 'category', 'settings'])
+
+type SnapshotRecord = {
+  id: string
+  kind: EncryptedRecordRow['kind']
+  version: number
+  updatedAt: string
+  deviceId: string
+  deleted: boolean
+  payload: string
+}
+
+type SnapshotPack = {
+  schemaVersion: 1
+  generation: string
+  shardIndex: number
+  rows: SnapshotRecord[]
+}
+
+type SnapshotManifest = {
+  schemaVersion: 1
+  generation: string
+  createdAt: string
+  recordCount: number
+  shardCount: number
+  shardIds: string[]
+}
 
 function validRemoteEntityId(value: string | undefined): value is string {
   return Boolean(value && value.length <= 320 && /^[A-Za-z0-9:_-]+$/.test(value))
@@ -99,8 +136,6 @@ function validRemoteFiles(files: DriveFileMeta[], type: 'record' | 'image') {
     try {
       assertRemoteFile(file, type)
     } catch {
-      // A user can manually place/copy files inside the visible O-Wallet folder.
-      // Invalid application metadata must never participate in conflict resolution.
       continue
     }
     const id = file.appProperties!.entityId
@@ -114,13 +149,13 @@ function fileMap(files: DriveFileMeta[], type: 'record' | 'image') {
   return new Map(validRemoteFiles(files, type).map((file) => [file.appProperties!.entityId, file] as const))
 }
 
-async function mapPool<T>(items: T[], limit: number, task: (item: T) => Promise<void>) {
+async function mapPool<T>(items: T[], limit: number, task: (item: T, index: number) => Promise<void>) {
   let next = 0
   const workers = Array.from({ length: Math.min(limit, Math.max(1, items.length)) }, async () => {
     while (true) {
       const index = next++
       if (index >= items.length) return
-      await task(items[index])
+      await task(items[index], index)
     }
   })
   await Promise.all(workers)
@@ -232,12 +267,168 @@ async function uploadImage(token: string, layout: DriveLayout, local: EncryptedI
   stats.pushedImages += 1
 }
 
+function snapshotRecord(row: EncryptedRecordRow): SnapshotRecord {
+  return {
+    id: row.id,
+    kind: row.kind,
+    version: row.version,
+    updatedAt: row.updatedAt,
+    deviceId: row.deviceId,
+    deleted: row.deleted,
+    payload: bytesToBase64Url(new Uint8Array(packEncryptedPayload(row.payload))),
+  }
+}
+
+function restoreSnapshotRecord(row: SnapshotRecord): EncryptedRecordRow {
+  if (!validRemoteEntityId(row.id)) throw new Error('error.invalidDriveRecord')
+  if (!VALID_RECORD_KINDS.has(row.kind)) throw new Error('error.invalidDriveRecord')
+  if (!Number.isInteger(row.version) || row.version < 0 || row.version > 1_000_000_000) throw new Error('error.invalidDriveRecord')
+  if (!row.updatedAt || !Number.isFinite(Date.parse(row.updatedAt)) || row.updatedAt.length > 64) throw new Error('error.invalidDriveRecord')
+  if (!row.deviceId || row.deviceId.length > 128) throw new Error('error.invalidDriveRecord')
+  const packed = base64UrlToBytes(row.payload)
+  if (packed.byteLength > SECURITY_LIMITS.maxEncryptedRecordBytes) throw new Error('error.driveFileTooLarge')
+  return {
+    id: row.id,
+    kind: row.kind,
+    version: row.version,
+    updatedAt: row.updatedAt,
+    deviceId: row.deviceId,
+    deleted: Boolean(row.deleted),
+    payload: unpackEncryptedPayload(packed.buffer.slice(packed.byteOffset, packed.byteOffset + packed.byteLength) as ArrayBuffer),
+  }
+}
+
+function buildSnapshotPacks(rows: EncryptedRecordRow[], generation: string) {
+  const packs: SnapshotPack[] = []
+  let current: SnapshotRecord[] = []
+  let currentBytes = 0
+  const flush = () => {
+    if (!current.length) return
+    packs.push({ schemaVersion: SNAPSHOT_SCHEMA, generation, shardIndex: packs.length, rows: current })
+    current = []
+    currentBytes = 0
+  }
+  for (const row of rows) {
+    const serialized = snapshotRecord(row)
+    const estimatedBytes = JSON.stringify(serialized).length + 2
+    if (current.length && currentBytes + estimatedBytes > SNAPSHOT_TARGET_BYTES) flush()
+    current.push(serialized)
+    currentBytes += estimatedBytes
+  }
+  flush()
+  return packs
+}
+
+async function listSnapshotFiles(token: string, recordsFolderId: string) {
+  return listAllDriveFiles(token, `'${recordsFolderId}' in parents and trashed = false and appProperties has { key='owalletSnapshot' and value='1' }`)
+}
+
+function latestSnapshotManifest(files: DriveFileMeta[]) {
+  return files
+    .filter((file) => file.appProperties?.owalletType === 'bootstrap-manifest' && file.appProperties?.schema === String(SNAPSHOT_SCHEMA))
+    .sort((a, b) => (b.appProperties?.createdAt ?? b.modifiedTime ?? '').localeCompare(a.appProperties?.createdAt ?? a.modifiedTime ?? ''))[0]
+}
+
+async function hydrateBootstrapSnapshot(token: string, layout: DriveLayout) {
+  if ((await db.records.count()) !== 0) return false
+  const files = await listSnapshotFiles(token, layout.recordsId)
+  const manifestFile = latestSnapshotManifest(files)
+  if (!manifestFile) return false
+  try {
+    const raw = await downloadDriveFile(token, manifestFile.id, SNAPSHOT_MAX_MANIFEST_BYTES)
+    const manifest = JSON.parse(new TextDecoder().decode(raw)) as SnapshotManifest
+    if (manifest.schemaVersion !== SNAPSHOT_SCHEMA || !manifest.generation || !Number.isFinite(Date.parse(manifest.createdAt))) throw new Error('invalid manifest')
+    if (!Number.isInteger(manifest.recordCount) || manifest.recordCount < 0 || manifest.recordCount > SNAPSHOT_MAX_RECORDS) throw new Error('invalid record count')
+    if (!Number.isInteger(manifest.shardCount) || manifest.shardCount < 1 || manifest.shardCount > SNAPSHOT_MAX_SHARDS) throw new Error('invalid shard count')
+    if (!Array.isArray(manifest.shardIds) || manifest.shardIds.length !== manifest.shardCount || manifest.shardIds.some((id) => typeof id !== 'string' || id.length > 256)) throw new Error('invalid shard ids')
+
+    let restored = 0
+    await mapPool(manifest.shardIds, SNAPSHOT_CONCURRENCY, async (fileId, shardIndex) => {
+      const bytes = await downloadDriveFile(token, fileId, SNAPSHOT_MAX_PACK_BYTES)
+      const pack = JSON.parse(new TextDecoder().decode(bytes)) as SnapshotPack
+      if (pack.schemaVersion !== SNAPSHOT_SCHEMA || pack.generation !== manifest.generation || pack.shardIndex !== shardIndex || !Array.isArray(pack.rows)) throw new Error('invalid bootstrap pack')
+      const rows = pack.rows.map(restoreSnapshotRecord)
+      if (rows.length) await db.records.bulkPut(rows)
+      restored += rows.length
+    })
+    if (restored !== manifest.recordCount) throw new Error('bootstrap record count mismatch')
+    return true
+  } catch {
+    await db.records.clear()
+    return false
+  }
+}
+
+async function maybePublishBootstrapSnapshot(token: string, layout: DriveLayout) {
+  const rows = await db.records.toArray()
+  if (rows.length < SNAPSHOT_MIN_RECORDS || rows.length > SNAPSHOT_MAX_RECORDS) return
+  const existingFiles = await listSnapshotFiles(token, layout.recordsId)
+  const latest = latestSnapshotManifest(existingFiles)
+  const latestCreatedAt = latest?.appProperties?.createdAt ?? latest?.modifiedTime
+  const latestCount = Number(latest?.appProperties?.recordCount ?? 0)
+  const freshEnough = latestCreatedAt && Date.now() - Date.parse(latestCreatedAt) < SNAPSHOT_MAX_AGE_MS
+  const closeEnough = Number.isFinite(latestCount) && Math.abs(rows.length - latestCount) < SNAPSHOT_REFRESH_RECORD_DELTA
+  if (latest && freshEnough && closeEnough) return
+
+  const generation = crypto.randomUUID()
+  const createdAt = new Date().toISOString()
+  const packs = buildSnapshotPacks(rows, generation)
+  if (!packs.length || packs.length > SNAPSHOT_MAX_SHARDS) return
+  const shardIds = new Array<string>(packs.length)
+
+  await mapPool(packs, SNAPSHOT_CONCURRENCY, async (pack, index) => {
+    const text = JSON.stringify(pack)
+    if (text.length > SNAPSHOT_MAX_PACK_BYTES) throw new Error('bootstrap pack too large')
+    const file = await uploadDriveFile(token, {
+      name: `.bootstrap-${generation}-${String(index).padStart(3, '0')}.owpack`,
+      parentId: layout.recordsId,
+      content: new Blob([text], { type: 'application/json' }),
+      appProperties: {
+        owalletSnapshot: '1',
+        owalletType: 'bootstrap-pack',
+        schema: String(SNAPSHOT_SCHEMA),
+        generation,
+        shardIndex: String(index),
+        createdAt,
+      },
+    })
+    shardIds[index] = file.id
+  })
+
+  const manifest: SnapshotManifest = {
+    schemaVersion: SNAPSHOT_SCHEMA,
+    generation,
+    createdAt,
+    recordCount: rows.length,
+    shardCount: shardIds.length,
+    shardIds,
+  }
+  await uploadDriveFile(token, {
+    name: `.bootstrap-${generation}.json`,
+    parentId: layout.recordsId,
+    content: new Blob([JSON.stringify(manifest)], { type: 'application/json' }),
+    appProperties: {
+      owalletSnapshot: '1',
+      owalletType: 'bootstrap-manifest',
+      schema: String(SNAPSHOT_SCHEMA),
+      generation,
+      createdAt,
+      recordCount: String(rows.length),
+      shardCount: String(shardIds.length),
+    },
+  })
+
+  const stale = existingFiles.filter((file) => file.appProperties?.generation !== generation)
+  await mapPool(stale, 3, async (file) => { await trashDriveFile(token, file.id).catch(() => undefined) })
+}
+
 async function fullRecordReconcile(
   token: string,
   layout: DriveLayout,
   remoteFiles: DriveFileMeta[],
   localRows: EncryptedRecordRow[],
   stats: SyncStats,
+  bootstrapSeed = false,
 ) {
   const safeRemoteFiles = validRemoteFiles(remoteFiles, 'record')
   const remoteMap = fileMap(safeRemoteFiles, 'record')
@@ -248,11 +439,16 @@ async function fullRecordReconcile(
   await mapPool(localRows, SYNC_CONCURRENCY, async (local) => {
     const remoteFile = remoteMap.get(local.id)
     if (!remoteFile) {
-      await uploadRecord(token, layout, local, stats)
+      if (bootstrapSeed) await db.records.delete(local.id)
+      else await uploadRecord(token, layout, local, stats)
       return
     }
     const cmp = compareStamp(local, remoteStamp(remoteFile))
-    if (cmp > 0) {
+    if (bootstrapSeed && cmp !== 0) {
+      await db.records.put(await pullRecord(token, remoteFile))
+      await dequeueSyncEntity('record', local.id)
+      stats.pulledRecords += 1
+    } else if (cmp > 0) {
       await uploadRecord(token, layout, local, stats)
       if (local.version === remoteStamp(remoteFile).version) stats.conflictsResolved += 1
     } else if (cmp < 0) {
@@ -297,8 +493,6 @@ async function fullImageReconcile(
       await uploadImage(token, layout, local, stats)
       if (local.version === remoteStamp(remoteFile).version) stats.conflictsResolved += 1
     } else if (cmp < 0) {
-      // Images are lazy on secondary devices. Discard stale local bytes and keep only
-      // the Drive metadata; the encrypted image is downloaded when the user opens it.
       await db.images.delete(local.id)
       await dequeueSyncEntity('image', local.id)
       stats.pulledImages += 1
@@ -309,8 +503,6 @@ async function fullImageReconcile(
     remoteMap.delete(local.id)
   })
 
-  // Remote-only images are indexed, not downloaded. This keeps first sync fast even
-  // when the wallet has years of screenshots.
   stats.pulledImages += remoteMap.size
 }
 
@@ -369,7 +561,6 @@ async function applyRemoteChange(token: string, change: DriveChange, stats: Sync
     await cacheRemoteImage(file)
     const local = await db.images.get(entityId)
     if (!local) {
-      // Metadata only; bytes remain in Drive until the image is opened.
       stats.pulledImages += 1
       return
     }
@@ -419,10 +610,16 @@ async function runInitialSync(
   stats: SyncStats,
   onProgress?: (message: string) => void,
 ) {
-  // Capture a token before the scan so no concurrent Drive change can fall into the
-  // gap between the folder listing and the incremental sync state.
   const startToken = await getDriveStartPageToken(token)
   onProgress?.('index')
+
+  const startedEmpty = (await db.records.count()) === 0
+  let bootstrapSeed = false
+  if (startedEmpty) {
+    onProgress?.('bootstrap')
+    bootstrapSeed = await hydrateBootstrapSnapshot(token, layout)
+  }
+
   const [remoteRecords, remoteImages, localRecords, localImages] = await Promise.all([
     listAllDriveFiles(token, `'${layout.recordsId}' in parents and trashed = false and appProperties has { key='owalletType' and value='record' }`),
     listAllDriveFiles(token, `'${layout.imagesId}' in parents and trashed = false and appProperties has { key='owalletType' and value='image' }`),
@@ -430,13 +627,12 @@ async function runInitialSync(
     db.images.toArray(),
   ])
 
+  if (bootstrapSeed) stats.pulledRecords += localRecords.length
   onProgress?.('records')
-  await fullRecordReconcile(token, layout, remoteRecords, localRecords, stats)
+  await fullRecordReconcile(token, layout, remoteRecords, localRecords, stats, bootstrapSeed)
   onProgress?.('images')
   await fullImageReconcile(token, layout, remoteImages, localImages, stats)
 
-  // Catch changes that happened while the initial scan was running. This includes our
-  // own uploads and any concurrent edits from another device, and yields a clean token.
   const delta = await listAllDriveChanges(token, startToken)
   await mapPool(delta.changes, SYNC_CONCURRENCY, (change) => applyRemoteChange(token, change, stats))
   return delta.newStartPageToken ?? startToken
@@ -480,6 +676,10 @@ async function syncCore(
     vaultFingerprint: fingerprint,
     initializedAt: state.initializedAt ?? new Date().toISOString(),
   })
+
+  // Snapshot files are acceleration caches only. Per-record files remain canonical.
+  // Failure to publish a cache must never fail ordinary wallet sync.
+  await maybePublishBootstrapSnapshot(token, layout).catch(() => undefined)
 }
 
 export async function syncWalletToDrive(
@@ -501,8 +701,6 @@ export async function syncWalletToDrive(
   try {
     await syncCore(token, vaultConfig, stats, onProgress)
   } catch (error) {
-    // A cached Drive folder ID can become invalid if the user manually removes the
-    // O-Wallet folder. Forget only the cached layout and retry discovery once.
     const message = error instanceof Error ? error.message : String(error)
     if (/Google Drive API 404|notFound|File not found/i.test(message)) {
       const previous = await getSyncState()
@@ -514,7 +712,6 @@ export async function syncWalletToDrive(
       })
       await syncCore(token, vaultConfig, stats, onProgress)
     } else if (/Google Drive API 410|page token|invalid.*token/i.test(message)) {
-      // If Drive ever invalidates an old change cursor, fall back to one full index.
       const previous = await getSyncState()
       await setSyncState({
         schemaVersion: 1,
