@@ -641,11 +641,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, [setLanguage])
 
   const notifyMutation = useCallback(async () => {
-    await refresh()
     if (!settings?.autoSync || !googleSession) return
     if (autoSyncTimer.current) window.clearTimeout(autoSyncTimer.current)
     autoSyncTimer.current = window.setTimeout(() => { void syncNow() }, 1200)
-  }, [refresh, settings?.autoSync, googleSession, syncNow])
+  }, [settings?.autoSync, googleSession, syncNow])
 
   const enrichFx = useCallback(async <T extends WalletEntity>(entity: T): Promise<T> => {
     if (!('type' in entity)) return entity
@@ -691,6 +690,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const deleteTransaction = useCallback(async (id: string) => {
     if (!repository) return
     await repository.tombstoneTransaction(id)
+    setTransactions((current) => current.filter((item) => item.id !== id))
     await notifyMutation()
   }, [repository, notifyMutation])
 
