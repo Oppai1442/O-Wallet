@@ -1,9 +1,26 @@
+function normalizedCurrencyCode(currency: string | undefined) {
+  return (currency ?? '').trim().toUpperCase()
+}
+
+function fallbackNumber(value: number, locale: string) {
+  try {
+    return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value)
+  } catch {
+    return String(value)
+  }
+}
+
 export function formatMoney(value: number, currency = 'VND', locale = 'vi-VN') {
-  return new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: currency === 'VND' ? 0 : 2,
-  }).format(value)
+  const code = normalizedCurrencyCode(currency)
+  if (!/^[A-Z]{3}$/.test(code)) return `${fallbackNumber(value, locale)}${code ? ` ${code}` : ''}`
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: code,
+    }).format(value)
+  } catch {
+    return `${fallbackNumber(value, locale)} ${code}`
+  }
 }
 
 export function formatCompactMoney(value: number, locale = 'vi-VN') {
