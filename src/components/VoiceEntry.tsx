@@ -11,10 +11,9 @@ import {
   parseVoiceDate,
   parseVoiceTime,
   parseVoiceTransactionType,
-  recognizeSpeech,
-  speechRecognitionSupported,
   type VoiceOptionMatch,
 } from '../lib/speech'
+import { recognizeSpeech, speechRecognitionSupported, voiceRecognitionErrorText } from '../lib/speechRecognition'
 import { categoryPath } from '../lib/categories'
 import { AccountSelect } from './AccountSelect'
 import { CategoryPicker } from './CategoryPicker'
@@ -104,7 +103,6 @@ export function VoiceEntry({
     if (target === 'amount') return Number(draft.amount) > 0
     if (target === 'account') return Boolean(draft.accountId)
     if (target === 'destinationAccount') return draft.type !== 'transfer' || Boolean(draft.destinationAccountId && draft.destinationAccountId !== draft.accountId)
-    if (target === 'category') return true
     return true
   }
 
@@ -178,7 +176,7 @@ export function VoiceEntry({
       processTranscript(field, result.transcript)
     } catch (error) {
       if (error instanceof Error && error.message === 'error.voiceCancelled') return
-      setMessage(t(error instanceof Error && error.message.startsWith('error.') ? error.message : 'error.voiceRecognition'))
+      setMessage(voiceRecognitionErrorText(error, locale) ?? t(error instanceof Error && error.message.startsWith('error.') ? error.message : 'error.voiceRecognition'))
     } finally {
       setListening(false)
     }
