@@ -6,6 +6,7 @@ import { UI_LANGUAGES, isUiLanguage, languageFromBrowser, languageLocale, type U
 import { TRANSLATION_PACKS } from './locales/packs'
 import { ASIAN_POLISH } from './locales/polish-asian'
 import { VI_POLISH, EN_POLISH } from './locales/polish-base'
+import { VI_EXTRA_POLISH } from './locales/polish-vi-extra'
 import { FR_POLISH } from './locales/polish-fr'
 import { ES_POLISH } from './locales/polish-es'
 import { DE_POLISH } from './locales/polish-de'
@@ -24,7 +25,7 @@ type Translator = (key: string, vars?: Vars) => string
 const STORAGE_KEY = 'owallet.language'
 
 const POLISH_PACKS: Partial<Record<UiLanguage, Record<string, string>>> = {
-  vi: VI_POLISH,
+  vi: { ...VI_POLISH, ...VI_EXTRA_POLISH },
   en: EN_POLISH,
   ...ASIAN_POLISH,
   id: ID_POLISH,
@@ -70,7 +71,7 @@ function Bridge({ children }: { children: ReactNode }) {
     const t: Translator = (key, vars) => {
       const polished = polish?.[key]
       const translated = pack?.[key]
-      const fallbackPolish = uiLanguage === 'vi' ? VI_POLISH[key] : EN_POLISH[key] ?? FALLBACK_POLISH[key]
+      const fallbackPolish = uiLanguage === 'vi' ? VI_EXTRA_POLISH[key] ?? VI_POLISH[key] : EN_POLISH[key] ?? FALLBACK_POLISH[key]
       let text = polished ?? translated ?? fallbackPolish ?? legacy.t(key, vars)
       if ((polished || translated || fallbackPolish) && vars) {
         for (const [name, value] of Object.entries(vars)) text = text.replaceAll(`{${name}}`, String(value))
