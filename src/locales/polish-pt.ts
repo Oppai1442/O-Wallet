@@ -11,5 +11,9 @@ export const PT_BR_POLISH: Record<string, string> = {
   'analytics.txShort': 'lanç.',
   'categories.roleLabel': 'Tipo de categoria',
   'categories.roleGroup': 'Grupo de categorias',
-  'categories.roleItem': 'Categoria de transação'
+  'categories.roleItem': 'Categoria de transação',
+  'transactions.pageLabel': 'Página {page}/{pages} · até {size} lançamentos por página',
+  'transactions.conversionHint': 'A conversão altera apenas a exibição para {currency}; cada transação mantém o valor e a moeda originais.',
+  'transactions.missingSnapshot': 'Não há cotação salva para {currency}; exibindo o valor original.',
+  'transactions.previous': 'Anterior'
 }
