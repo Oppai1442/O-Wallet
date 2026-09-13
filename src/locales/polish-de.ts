@@ -11,5 +11,9 @@ export const DE_POLISH: Record<string, string> = {
   'analytics.txShort': 'Buch.',
   'categories.roleLabel': 'Kategorieart',
   'categories.roleGroup': 'Kategoriegruppe',
-  'categories.roleItem': 'Transaktionskategorie'
+  'categories.roleItem': 'Transaktionskategorie',
+  'transactions.pageLabel': 'Seite {page}/{pages} · bis zu {size} Buchungen pro Seite',
+  'transactions.conversionHint': 'Die Umrechnung ändert nur die Anzeige in {currency}; Originalbetrag und -währung jeder Transaktion bleiben erhalten.',
+  'transactions.missingSnapshot': 'Kein gespeicherter Wechselkurs zu {currency}; der Originalbetrag wird angezeigt.',
+  'transactions.previous': 'Zurück'
 }
