@@ -5,11 +5,27 @@ import { formatMoney } from '../lib/format'
 import { accountBalanceByCurrency } from '../lib/finance'
 import { accountCurrencies, accountOpeningBalance, withAccountPockets } from '../lib/accounts'
 import { useCurrentTime } from '../lib/useCurrentTime'
-import { useI18n } from '../i18n'
+import { useI18n, type UiLanguage } from '../i18n'
 import { Button, Card, Input, Label, Select } from './ui'
 import { CurrencyPicker } from './CurrencyPicker'
 
 type PocketDraft = { currency: string; balance: string }
+type PocketCopy = { duplicate: string; inUse: string; add: string; hint: string }
+
+const POCKET_COPY: Record<UiLanguage, PocketCopy> = {
+  vi:{duplicate:'Tiền tệ này đã có trong tài khoản.',inUse:'Đang có giao dịch dùng pocket này',add:'Thêm tiền tệ',hint:'Mỗi tài khoản có thể có một hoặc nhiều pocket tiền tệ. Giao dịch chỉ dùng được các tiền tệ có trong tài khoản đó.'},
+  en:{duplicate:'This currency already exists in the account.',inUse:'Transactions are using this pocket',add:'Add currency',hint:'Each account can contain one or more currency pockets. Transactions can only use currencies available in that account.'},
+  ja:{duplicate:'この通貨はすでに口座に追加されています。',inUse:'この通貨は取引で使用されています',add:'通貨を追加',hint:'1つの口座に複数の通貨を持たせられます。取引では、その口座に登録された通貨だけを使用できます。'},
+  'zh-CN':{duplicate:'该币种已存在于账户中。',inUse:'已有交易使用该币种',add:'添加币种',hint:'每个账户可以包含一种或多种币种。交易只能使用该账户中已有的币种。'},
+  'zh-TW':{duplicate:'此幣別已存在於帳戶中。',inUse:'已有交易使用此幣別',add:'新增幣別',hint:'每個帳戶可以包含一種或多種幣別。交易只能使用該帳戶中已有的幣別。'},
+  th:{duplicate:'บัญชีนี้มีสกุลเงินนี้อยู่แล้ว',inUse:'มีรายการที่ใช้สกุลเงินนี้อยู่',add:'เพิ่มสกุลเงิน',hint:'แต่ละบัญชีสามารถมีได้หลายสกุลเงิน และรายการจะใช้ได้เฉพาะสกุลเงินที่มีอยู่ในบัญชีนั้น'},
+  id:{duplicate:'Mata uang ini sudah ada di akun.',inUse:'Ada transaksi yang menggunakan mata uang ini',add:'Tambah mata uang',hint:'Setiap akun dapat memiliki satu atau beberapa mata uang. Transaksi hanya dapat menggunakan mata uang yang tersedia di akun tersebut.'},
+  es:{duplicate:'Esta moneda ya existe en la cuenta.',inUse:'Hay transacciones que usan esta moneda',add:'Añadir moneda',hint:'Cada cuenta puede tener una o varias monedas. Las transacciones solo pueden usar las monedas disponibles en esa cuenta.'},
+  fr:{duplicate:'Cette devise existe déjà dans le compte.',inUse:'Des transactions utilisent cette devise',add:'Ajouter une devise',hint:'Chaque compte peut contenir une ou plusieurs devises. Une transaction ne peut utiliser que les devises disponibles dans ce compte.'},
+  de:{duplicate:'Diese Währung ist im Konto bereits vorhanden.',inUse:'Diese Währung wird von Transaktionen verwendet',add:'Währung hinzufügen',hint:'Ein Konto kann eine oder mehrere Währungen enthalten. Transaktionen können nur im Konto vorhandene Währungen verwenden.'},
+  'pt-BR':{duplicate:'Esta moeda já existe na conta.',inUse:'Há transações usando esta moeda',add:'Adicionar moeda',hint:'Cada conta pode ter uma ou mais moedas. As transações só podem usar moedas disponíveis nessa conta.'},
+  ru:{duplicate:'Эта валюта уже добавлена к счёту.',inUse:'Эта валюта используется в транзакциях',add:'Добавить валюту',hint:'На одном счёте можно хранить одну или несколько валют. В транзакциях доступны только валюты этого счёта.'},
+}
 
 function normalizeCurrency(value: string) {
   return value.trim().toUpperCase()
@@ -23,7 +39,8 @@ export function AccountManager({ accounts, transactions, settings, onSaveAccount
   onSaveAccounts: (accounts: Account[]) => Promise<void>
   onSaveSettings: (patch: Partial<AppSettings>) => Promise<void>
 }) {
-  const { t, locale } = useI18n()
+  const { t, locale, uiLanguage } = useI18n()
+  const pocketCopy = POCKET_COPY[uiLanguage]
   const now = useCurrentTime()
   const catalogues = settings?.accountCatalogues ?? []
   const reportingCurrency = normalizeCurrency(settings?.defaultCurrency ?? 'VND') || 'VND'
@@ -141,12 +158,12 @@ export function AccountManager({ accounts, transactions, settings, onSaveAccount
         const duplicate = pockets.some((item, other) => other !== index && normalizeCurrency(item.currency) === code)
         const cannotRemove = pockets.length <= 1 || locked.has(code)
         return <div key={`${index}:${pocket.currency}`} className="grid gap-2 rounded-xl border border-stone-200 p-2 dark:border-stone-800 sm:grid-cols-[minmax(190px,1fr)_160px_auto] sm:items-end">
-          <div><Label>{locale.startsWith('vi') ? 'Tiền tệ' : 'Currency'}</Label><CurrencyPicker value={pocket.currency} onChange={(currency) => setPockets(pockets.map((item, i) => i === index ? { ...item, currency } : item))} locale={locale}/>{duplicate && <div className="mt-1 text-[11px] font-semibold text-rose-500">{locale.startsWith('vi') ? 'Tiền tệ này đã có trong tài khoản.' : 'This currency already exists in the account.'}</div>}</div>
+          <div><Label>{t('modal.currency')}</Label><CurrencyPicker value={pocket.currency} onChange={(currency) => setPockets(pockets.map((item, i) => i === index ? { ...item, currency } : item))} locale={locale}/>{duplicate && <div className="mt-1 text-[11px] font-semibold text-rose-500">{pocketCopy.duplicate}</div>}</div>
           <div><Label>{t('settings.openingBalance')}</Label><Input type="number" inputMode="decimal" value={pocket.balance} onChange={(e) => setPockets(pockets.map((item, i) => i === index ? { ...item, balance: e.target.value } : item))}/></div>
-          <Button variant="ghost" className="px-2 text-rose-500" disabled={cannotRemove} title={locked.has(code) ? (locale.startsWith('vi') ? 'Đang có giao dịch dùng pocket này' : 'Transactions use this pocket') : undefined} onClick={() => setPockets(pockets.filter((_, i) => i !== index))}><Trash2 size={16}/></Button>
+          <Button variant="ghost" className="px-2 text-rose-500" disabled={cannotRemove} title={locked.has(code) ? pocketCopy.inUse : undefined} onClick={() => setPockets(pockets.filter((_, i) => i !== index))}><Trash2 size={16}/></Button>
         </div>
       })}
-      <Button variant="secondary" onClick={() => setPockets([...pockets, { currency: pockets.some((item) => normalizeCurrency(item.currency) === reportingCurrency) ? 'USD' : reportingCurrency, balance: '0' }])}><Plus size={16}/>{locale.startsWith('vi') ? 'Thêm tiền tệ' : 'Add currency'}</Button>
+      <Button variant="secondary" onClick={() => setPockets([...pockets, { currency: pockets.some((item) => normalizeCurrency(item.currency) === reportingCurrency) ? 'USD' : reportingCurrency, balance: '0' }])}><Plus size={16}/>{pocketCopy.add}</Button>
     </div>
   }
 
@@ -170,7 +187,7 @@ export function AccountManager({ accounts, transactions, settings, onSaveAccount
   }
 
   return <Card className="p-4 sm:p-5">
-    <div><h2 className="text-base font-semibold text-stone-950 dark:text-white">{t('settings.accounts')}</h2><p className="mt-1 text-sm text-stone-500">{locale.startsWith('vi') ? 'Mỗi tài khoản có một hoặc nhiều pocket tiền tệ. Giao dịch chỉ được dùng tiền tệ có trong tài khoản đó.' : 'Each account can contain one or more currency pockets. Transactions can only use currencies available in that account.'}</p></div>
+    <div><h2 className="text-base font-semibold text-stone-950 dark:text-white">{t('settings.accounts')}</h2><p className="mt-1 text-sm text-stone-500">{pocketCopy.hint}</p></div>
 
     <div className="mt-5 rounded-2xl bg-stone-50 p-3 dark:bg-stone-900/60">
       <div className="flex items-center gap-2 text-sm font-semibold text-stone-700 dark:text-stone-200"><FolderPlus size={16}/>{t('accounts.catalogues')}</div>
