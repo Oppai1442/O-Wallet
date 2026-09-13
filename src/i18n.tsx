@@ -12,6 +12,7 @@ import { DE_POLISH } from './locales/polish-de'
 import { PT_BR_POLISH } from './locales/polish-pt'
 import { RU_POLISH } from './locales/polish-ru'
 import { ID_POLISH } from './locales/polish-id'
+import { FALLBACK_POLISH } from './locales/polish-fallback'
 
 /** Legacy two-language type retained for existing settings code. */
 export type Language = 'vi' | 'en'
@@ -67,8 +68,11 @@ function Bridge({ children }: { children: ReactNode }) {
     const pack = uiLanguage === 'vi' || uiLanguage === 'en' ? undefined : TRANSLATION_PACKS[uiLanguage]
     const polish = POLISH_PACKS[uiLanguage]
     const t: Translator = (key, vars) => {
-      let text = polish?.[key] ?? pack?.[key] ?? legacy.t(key, vars)
-      if ((polish?.[key] || pack?.[key]) && vars) {
+      const polished = polish?.[key]
+      const translated = pack?.[key]
+      const fallbackPolish = uiLanguage === 'vi' ? VI_POLISH[key] : EN_POLISH[key] ?? FALLBACK_POLISH[key]
+      let text = polished ?? translated ?? fallbackPolish ?? legacy.t(key, vars)
+      if ((polished || translated || fallbackPolish) && vars) {
         for (const [name, value] of Object.entries(vars)) text = text.replaceAll(`{${name}}`, String(value))
       }
       return text
