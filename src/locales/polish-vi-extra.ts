@@ -6,5 +6,9 @@ export const VI_EXTRA_POLISH: Record<string, string> = {
   'analytics.dailyDetail': 'Theo ngày trong {month}',
   'analytics.noIncomeText': 'Tháng này chưa có giao dịch thu nhập bằng loại tiền đang xem.',
   'categories.roleGroupHint': 'Dùng để gom các danh mục con; không gán trực tiếp cho giao dịch.',
-  'categories.roleItemHint': 'Danh mục thực tế có thể chọn khi thêm khoản thu hoặc chi.'
+  'categories.roleItemHint': 'Danh mục thực tế có thể chọn khi thêm khoản thu hoặc chi.',
+  'transactions.pageLabel': 'Trang {page}/{pages} · tối đa {size} giao dịch/trang',
+  'transactions.conversionHint': 'Quy đổi chỉ thay đổi cách hiển thị sang {currency}; số tiền và tiền tệ gốc trong giao dịch không đổi.',
+  'transactions.missingSnapshot': 'Chưa có tỷ giá đã lưu sang {currency}; đang hiển thị tiền gốc.',
+  'transactions.previous': 'Trước'
 }
