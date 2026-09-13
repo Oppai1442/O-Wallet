@@ -102,12 +102,8 @@ export function Dashboard() {
     }).sort((a, b) => b.percent - a.percent)
   }, [settings?.budgets, currentTransactions, categories, t, now, baseCurrency])
 
-  const missingFxText = locale.startsWith('vi')
-    ? `${convertedSummary.unconverted} giao dịch chưa có snapshot tỷ giá sang ${baseCurrency} nên chưa được tính khi quy đổi.`
-    : `${convertedSummary.unconverted} transaction(s) have no saved FX snapshot to ${baseCurrency} and are excluded in converted view.`
-  const partialBalanceText = locale.startsWith('vi')
-    ? `${valuation.missing} pocket ngoại tệ chưa lấy được tỷ giá; tổng số dư quy đổi đang hiển thị là một phần.`
-    : `${valuation.missing} foreign-currency pocket(s) could not be valued; the converted balance is partial.`
+  const missingFxText = t('fx.missingTransactions', { count: convertedSummary.unconverted, currency: baseCurrency })
+  const partialBalanceText = t('fx.partialBalance', { count: valuation.missing })
 
   function NativeSummaryValues({ field }: { field: 'income' | 'expense' | 'net' }) {
     if (!nativeSummary.length) return <span className="text-stone-400">—</span>
@@ -117,7 +113,7 @@ export function Dashboard() {
   return <div className="space-y-5">
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div><h1 className="text-2xl font-semibold tracking-tight text-stone-950 dark:text-white">{t('dashboard.title')}</h1><p className="mt-1 text-sm text-stone-500">{t('dashboard.subtitle')}</p>{futureCount > 0 && <p className="mt-1 text-xs font-semibold text-blue-500">{t('dashboard.futurePending', { count: futureCount })}</p>}{currencyMode === 'converted' && convertedSummary.unconverted > 0 && <p className="mt-1 text-xs font-semibold text-amber-600 dark:text-amber-400">{missingFxText}</p>}</div>
-      <div className="flex flex-wrap gap-2"><Select className="w-40" value={currencyMode} onChange={(e) => setCurrencyMode(e.target.value as CurrencyViewMode)}><option value="native">{locale.startsWith('vi') ? 'Tiền gốc' : 'Native currencies'}</option><option value="converted">{locale.startsWith('vi') ? `Quy đổi → ${baseCurrency}` : `Convert → ${baseCurrency}`}</option></Select>{currencyMode === 'native' && nativeCurrencies.length > 1 && <Select className="w-28" value={chartCurrency} onChange={(e) => setNativeCurrency(e.target.value)}>{nativeCurrencies.map((code) => <option key={code} value={code}>{code}</option>)}</Select>}<Select className="w-36" value={range} onChange={(e) => setRange(e.target.value as RangeKey)}><option value="7d">{t('range.7d')}</option><option value="30d">{t('range.30d')}</option><option value="3m">{t('range.3m')}</option><option value="6m">{t('range.6m')}</option><option value="1y">{t('range.1y')}</option><option value="all">{t('range.all')}</option></Select></div>
+      <div className="flex flex-wrap gap-2"><Select className="w-40" value={currencyMode} onChange={(e) => setCurrencyMode(e.target.value as CurrencyViewMode)}><option value="native">{t('view.native')}</option><option value="converted">{t('view.convertTo', { currency: baseCurrency })}</option></Select>{currencyMode === 'native' && nativeCurrencies.length > 1 && <Select className="w-28" value={chartCurrency} onChange={(e) => setNativeCurrency(e.target.value)}>{nativeCurrencies.map((code) => <option key={code} value={code}>{code}</option>)}</Select>}<Select className="w-36" value={range} onChange={(e) => setRange(e.target.value as RangeKey)}><option value="7d">{t('range.7d')}</option><option value="30d">{t('range.30d')}</option><option value="3m">{t('range.3m')}</option><option value="6m">{t('range.6m')}</option><option value="1y">{t('range.1y')}</option><option value="all">{t('range.all')}</option></Select></div>
     </div>
 
     <Card className="overflow-hidden"><div className="grid lg:grid-cols-[1.25fr_2fr]">
