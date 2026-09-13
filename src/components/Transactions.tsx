@@ -94,12 +94,8 @@ export function Transactions() {
     try { await deleteTransaction(id) } finally { setDeleting(undefined) }
   }
 
-  const pageLabel = locale.startsWith('vi')
-    ? `Trang ${page}/${pageCount} · tối đa ${PAGE_SIZE} giao dịch/trang`
-    : `Page ${page}/${pageCount} · up to ${PAGE_SIZE} transactions/page`
-  const conversionHint = locale.startsWith('vi')
-    ? `Quy đổi chỉ thay đổi cách hiển thị sang ${reportingCurrency}; amount/currency gốc trong record không đổi.`
-    : `Conversion only changes display to ${reportingCurrency}; the original amount/currency stored in each record is unchanged.`
+  const pageLabel = t('transactions.pageLabel', { page, pages: pageCount, size: PAGE_SIZE })
+  const conversionHint = t('transactions.conversionHint', { currency: reportingCurrency })
 
   function displayedAmount(tx: Transaction) {
     if (currencyView === 'native') return { value: tx.amount, currency: tx.currency, converted: false }
@@ -112,7 +108,7 @@ export function Transactions() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div><h1 className="text-2xl font-semibold tracking-tight text-stone-950 dark:text-white">{t('transactions.title')}</h1><p className="mt-1 text-sm text-stone-500">{t('transactions.subtitle', { count: transactions.length })}</p>{currencyView === 'converted' && <p className="mt-1 text-xs text-stone-400">{conversionHint}</p>}</div>
-        <div className="flex flex-wrap gap-2"><Select className="w-40" value={currencyView} onChange={(e) => setCurrencyView(e.target.value as CurrencyViewMode)}><option value="native">{locale.startsWith('vi') ? 'Tiền gốc' : 'Original currency'}</option><option value="converted">{locale.startsWith('vi') ? `Quy đổi → ${reportingCurrency}` : `Convert → ${reportingCurrency}`}</option></Select><Button variant="secondary" onClick={() => setShowVoiceAdd(true)}><Mic size={17} /> {t('voice.entryButton')}</Button><Button onClick={() => setShowAdd(true)}><Plus size={17} /> {t('common.add')}</Button></div>
+        <div className="flex flex-wrap gap-2"><Select className="w-40" value={currencyView} onChange={(e) => setCurrencyView(e.target.value as CurrencyViewMode)}><option value="native">{t('view.native')}</option><option value="converted">{t('view.convertTo', { currency: reportingCurrency })}</option></Select><Button variant="secondary" onClick={() => setShowVoiceAdd(true)}><Mic size={17} /> {t('voice.entryButton')}</Button><Button onClick={() => setShowAdd(true)}><Plus size={17} /> {t('common.add')}</Button></div>
       </div>
 
       <Card className="p-3 sm:p-4">
@@ -123,7 +119,7 @@ export function Transactions() {
         </div>
 
         {showAdvanced && <div className="mt-4 grid gap-3 border-t border-stone-200 pt-4 dark:border-stone-800 sm:grid-cols-2 lg:grid-cols-4">
-          <div><Label>{locale.startsWith('vi') ? 'Tiền tệ' : 'Currency'}</Label><Select value={currencyFilter} onChange={(e) => setCurrencyFilter(e.target.value)}><option value="all">{t('common.all')}</option>{currencies.map((code) => <option key={code} value={code}>{code}</option>)}</Select></div>
+          <div><Label>{t('modal.currency')}</Label><Select value={currencyFilter} onChange={(e) => setCurrencyFilter(e.target.value)}><option value="all">{t('common.all')}</option>{currencies.map((code) => <option key={code} value={code}>{code}</option>)}</Select></div>
           <div><Label>{t('transactions.account')}</Label><Select value={accountId} onChange={(e) => setAccountId(e.target.value)}><option value="all">{t('common.all')}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{accountDisplayName(account, t)}</option>)}</Select></div>
           <div><Label>{t('transactions.category')}</Label><Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}><option value="all">{t('common.all')}</option><option value="__uncategorized__">{t('categories.uncategorized')}</option>{selectableCategories(categories).map((category) => <option key={category.id} value={category.id}>{categoryPath(category, categories)}</option>)}</Select></div>
           <div><Label>{t('transactions.fromDate')}</Label><Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></div>
@@ -154,14 +150,14 @@ export function Transactions() {
               <div className={`font-semibold ${tx.type === 'income' ? 'text-emerald-600' : tx.type === 'expense' ? 'text-rose-600' : 'text-stone-700 dark:text-stone-300'}`}>{tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : ''}{formatMoney(shown.value, shown.currency, locale)}</div>
               {currencyView === 'native' && tx.fx && <div className="mt-0.5 text-[11px] text-stone-400">snapshot: 1 {tx.currency} = {new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(tx.fx.rate)} {tx.fx.baseCurrency} · {tx.fx.rateDate}</div>}
               {currencyView === 'converted' && shown.converted && tx.currency.trim().toUpperCase() !== reportingCurrency && <div className="mt-0.5 text-[11px] text-stone-400">{formatMoney(tx.amount, tx.currency, locale)} · 1 {tx.currency} = {new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(tx.fx?.rate ?? 1)} {reportingCurrency} · {tx.fx?.rateDate}</div>}
-              {missingConversion && <div className="mt-0.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400">{locale.startsWith('vi') ? `Chưa có snapshot → ${reportingCurrency}; đang hiện tiền gốc.` : `No saved snapshot → ${reportingCurrency}; showing original amount.`}</div>}
+              {missingConversion && <div className="mt-0.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400">{t('transactions.missingSnapshot', { currency: reportingCurrency })}</div>}
             </div>
             <div className="flex flex-wrap justify-end gap-1">{tx.imageIds.map((id, index) => <Button key={id} variant="ghost" className="px-2" title={t('transactions.imageTitle', { index: index + 1 })} onClick={() => setViewImage(id)}><ImageIcon size={17} /></Button>)}<Button variant="ghost" className="px-2" title={t('transactions.edit')} onClick={() => setEditTx(tx)}><Pencil size={17} /></Button><Button variant="ghost" className="px-2" title={t('transactions.duplicate')} onClick={() => setDuplicateTx(tx)}><Copy size={17} /></Button><Button variant="ghost" className="px-2 text-rose-500" disabled={deleting === tx.id} onClick={() => remove(tx.id)}><Trash2 size={17} /></Button></div>
           </div>
         })}</div>}
       </Card>
 
-      {filtered.length > PAGE_SIZE && <div className="flex items-center justify-center gap-3"><Button variant="secondary" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft size={17}/>{locale.startsWith('vi') ? 'Trước' : 'Previous'}</Button><span className="text-xs font-semibold text-stone-500">{page}/{pageCount}</span><Button variant="secondary" disabled={page >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>{locale.startsWith('vi') ? 'Sau' : 'Next'}<ChevronRight size={17}/></Button></div>}
+      {filtered.length > PAGE_SIZE && <div className="flex items-center justify-center gap-3"><Button variant="secondary" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft size={17}/>{t('transactions.previous')}</Button><span className="text-xs font-semibold text-stone-500">{page}/{pageCount}</span><Button variant="secondary" disabled={page >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>{t('common.next')}<ChevronRight size={17}/></Button></div>}
 
       <Suspense fallback={null}>
         {showAdd && <TransactionModal onClose={() => setShowAdd(false)} />}
