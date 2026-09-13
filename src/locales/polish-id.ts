@@ -11,5 +11,9 @@ export const ID_POLISH: Record<string, string> = {
   'analytics.txShort': 'trx',
   'categories.roleLabel': 'Jenis kategori',
   'categories.roleGroup': 'Grup kategori',
-  'categories.roleItem': 'Kategori transaksi'
+  'categories.roleItem': 'Kategori transaksi',
+  'transactions.pageLabel': 'Halaman {page}/{pages} · maks. {size} transaksi per halaman',
+  'transactions.conversionHint': 'Konversi hanya mengubah tampilan ke {currency}; jumlah dan mata uang asli setiap transaksi tetap disimpan.',
+  'transactions.missingSnapshot': 'Belum ada kurs tersimpan ke {currency}; jumlah asli ditampilkan.',
+  'transactions.previous': 'Sebelumnya'
 }
