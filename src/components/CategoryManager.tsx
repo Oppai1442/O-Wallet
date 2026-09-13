@@ -23,18 +23,12 @@ export function CategoryManager({ categories, transactions, onSave, onSaveMany }
   const [editName, setEditName] = useState('')
   const [editKind, setEditKind] = useState<Category['kind']>('expense')
 
-  const roleCopy = locale.startsWith('vi') ? {
-    label: 'Loại danh mục',
-    group: 'Nhóm danh mục',
-    groupHint: 'Chỉ để gom các danh mục con. Không thể gán trực tiếp cho giao dịch.',
-    item: 'Danh mục giao dịch',
-    itemHint: 'Danh mục thực tế có thể chọn khi thêm giao dịch thu hoặc chi.',
-  } : {
-    label: 'Category role',
-    group: 'Category group',
-    groupHint: 'Organizes child categories. It cannot be assigned directly to a transaction.',
-    item: 'Transaction category',
-    itemHint: 'A real category that can be selected for an income or expense transaction.',
+  const roleCopy = {
+    label: t('categories.roleLabel'),
+    group: t('categories.roleGroup'),
+    groupHint: t('categories.roleGroupHint'),
+    item: t('categories.roleItem'),
+    itemHint: t('categories.roleItemHint'),
   }
 
   const active = categories.filter((item) => !item.archived)
