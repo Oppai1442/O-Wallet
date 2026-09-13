@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import type { Transaction } from '../types'
 import { transactionValueInBase } from '../lib/fx'
 import { formatMoney } from '../lib/format'
+import { useI18n } from '../i18n'
 
 interface DayTotals {
   income: number
@@ -16,6 +17,14 @@ function monthDate(key: string) {
 
 function localDateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function isMondayFirst(locale: string) {
+  try {
+    const info = (new Intl.Locale(locale) as unknown as { weekInfo?: { firstDay: number } }).weekInfo
+    if (info) return info.firstDay === 1
+  } catch { /* use fallback */ }
+  return !locale.toLowerCase().startsWith('en-us')
 }
 
 function weekdayLabels(locale: string, mondayFirst: boolean) {
@@ -44,8 +53,9 @@ export function MonthlyCashflowCalendar({ transactions, selectedMonth, currency,
   locale: string
   now: number
 }) {
+  const { t } = useI18n()
   const firstDay = monthDate(selectedMonth)
-  const mondayFirst = locale.startsWith('vi')
+  const mondayFirst = isMondayFirst(locale)
   const labels = useMemo(() => weekdayLabels(locale, mondayFirst), [locale, mondayFirst])
   const todayKey = localDateKey(new Date(now))
 
@@ -81,8 +91,6 @@ export function MonthlyCashflowCalendar({ transactions, selectedMonth, currency,
     return result
   }, [firstDay, mondayFirst])
 
-  const isVi = locale.startsWith('vi')
-
   return <div className="overflow-x-auto pb-1">
     <div className="min-w-[700px]">
       <div className="grid grid-cols-7 border-b border-stone-200 dark:border-stone-800">
@@ -96,7 +104,7 @@ export function MonthlyCashflowCalendar({ transactions, selectedMonth, currency,
           return <div key={cell.key} className={`relative min-h-24 border-b border-r border-stone-200 p-2.5 dark:border-stone-800 ${isToday ? 'bg-blue-50/70 dark:bg-blue-500/10' : 'bg-white dark:bg-stone-950'}`}>
             <div className="flex items-center justify-between gap-2">
               <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${isToday ? 'bg-blue-600 text-white' : 'text-stone-600 dark:text-stone-300'}`}>{cell.day}</span>
-              {totals && <span className="text-[10px] font-medium text-stone-400">{totals.count} {isVi ? 'GD' : 'tx'}</span>}
+              {totals && <span className="text-[10px] font-medium text-stone-400">{totals.count} {t('analytics.txShort')}</span>}
             </div>
             {totals ? <div className="mt-2 space-y-1">
               {totals.income > 0 && <div className="truncate text-xs font-semibold text-emerald-600 dark:text-emerald-400" title={formatMoney(totals.income, currency, locale)}>+ {compactCurrency(totals.income, currency, locale)}</div>}
