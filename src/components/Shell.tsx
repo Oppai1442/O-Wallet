@@ -75,6 +75,8 @@ export function Shell() {
   const fabFeedbackTimer = useRef<number | undefined>(undefined)
   const fabHoldTimer = useRef<number | undefined>(undefined)
   const fabPointerActive = useRef(false)
+  const fabStartedAt = useRef<number | null>(null)
+  const fabVoiceTriggered = useRef(false)
   const sharedProfileActive = page === 'shared'
 
   useEffect(() => {
@@ -161,10 +163,36 @@ export function Shell() {
     fabHoldTimer.current = undefined
   }
 
+  function resetFabVisuals() {
+    clearFabTimers()
+    setFabPressed(false)
+    setFabHolding(false)
+  }
+
+  function resolveFabGesture() {
+    const startedAt = fabStartedAt.current
+    const voiceTriggered = fabVoiceTriggered.current
+    fabStartedAt.current = null
+    fabVoiceTriggered.current = false
+    fabPointerActive.current = false
+    resetFabVisuals()
+    if (startedAt === null || voiceTriggered) return
+
+    const elapsed = performance.now() - startedAt
+    if (elapsed >= HOLD_FOR_VOICE_MS) {
+      navigator.vibrate?.([28, 20, 45])
+      openVoice()
+    } else {
+      openAdd()
+    }
+  }
+
   function startFabHold(event: React.PointerEvent<HTMLButtonElement>) {
     if (sharedProfileActive) return
-    event.currentTarget.setPointerCapture?.(event.pointerId)
+    event.stopPropagation()
     fabPointerActive.current = true
+    fabStartedAt.current = performance.now()
+    fabVoiceTriggered.current = false
     clearFabTimers()
     setFabPressed(true)
     setFabHolding(false)
@@ -177,29 +205,32 @@ export function Shell() {
 
     fabHoldTimer.current = window.setTimeout(() => {
       if (!fabPointerActive.current) return
+      fabVoiceTriggered.current = true
       fabPointerActive.current = false
-      clearFabTimers()
-      setFabPressed(false)
-      setFabHolding(false)
+      fabStartedAt.current = null
+      resetFabVisuals()
       navigator.vibrate?.([28, 20, 45])
       openVoice()
     }, HOLD_FOR_VOICE_MS)
   }
 
-  function finishFabHold() {
-    if (sharedProfileActive || !fabPointerActive.current) return
-    fabPointerActive.current = false
-    clearFabTimers()
-    setFabPressed(false)
-    setFabHolding(false)
-    openAdd()
+  function finishFabHold(event: React.PointerEvent<HTMLButtonElement>) {
+    event.stopPropagation()
+    if (sharedProfileActive) return
+    resolveFabGesture()
   }
 
-  function cancelFabHold() {
+  function cancelFabHold(event: React.PointerEvent<HTMLButtonElement>) {
+    event.stopPropagation()
+    if (sharedProfileActive) return
+    if (event.pointerType === 'touch' && fabStartedAt.current !== null) {
+      resolveFabGesture()
+      return
+    }
+    fabStartedAt.current = null
+    fabVoiceTriggered.current = false
     fabPointerActive.current = false
-    clearFabTimers()
-    setFabPressed(false)
-    setFabHolding(false)
+    resetFabVisuals()
   }
 
   const moreActive = page === 'shared' || page === 'analytics' || page === 'settings'
@@ -228,7 +259,7 @@ export function Shell() {
 
           <button aria-label="Expand navigation" aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen((current) => !current)} className={`absolute right-1 top-0 flex h-7 w-10 -translate-y-[72%] items-center justify-center rounded-full border border-stone-200 bg-white shadow-sm transition dark:border-stone-800 dark:bg-stone-950 ${mobileMenuOpen || moreActive ? 'text-blue-600 dark:text-blue-400' : 'text-stone-400'}`}><ChevronUp size={17} className={`transition-transform duration-200 ${mobileMenuOpen ? 'rotate-180' : ''}`}/></button>
 
-          <button aria-label={t('nav.addTransaction')} disabled={sharedProfileActive} onPointerDown={startFabHold} onPointerUp={finishFabHold} onPointerCancel={cancelFabHold} onContextMenu={(event) => event.preventDefault()} className={`absolute left-1/2 top-0 flex h-14 w-14 -translate-x-1/2 -translate-y-[32%] touch-none select-none items-center justify-center rounded-full border-4 border-white shadow-xl transition-all duration-150 dark:border-stone-950 ${sharedProfileActive ? 'bg-stone-300 text-stone-500 dark:bg-stone-800 dark:text-stone-500' : fabHolding ? 'scale-105 bg-blue-600 text-white shadow-blue-600/30' : fabPressed ? 'scale-95 bg-stone-950 text-white shadow-stone-950/15 dark:bg-white dark:text-stone-950' : 'bg-stone-950 text-white shadow-stone-950/25 dark:bg-white dark:text-stone-950'}`}>
+          <button aria-label={t('nav.addTransaction')} disabled={sharedProfileActive} onPointerDown={startFabHold} onPointerUp={finishFabHold} onPointerCancel={cancelFabHold} onTouchStart={(event) => event.stopPropagation()} onTouchEnd={(event) => event.stopPropagation()} onTouchCancel={(event) => event.stopPropagation()} onContextMenu={(event) => event.preventDefault()} className={`absolute left-1/2 top-0 flex h-14 w-14 -translate-x-1/2 -translate-y-[32%] touch-none select-none items-center justify-center rounded-full border-4 border-white shadow-xl transition-all duration-150 dark:border-stone-950 ${sharedProfileActive ? 'bg-stone-300 text-stone-500 dark:bg-stone-800 dark:text-stone-500' : fabHolding ? 'scale-105 bg-blue-600 text-white shadow-blue-600/30' : fabPressed ? 'scale-95 bg-stone-950 text-white shadow-stone-950/15 dark:bg-white dark:text-stone-950' : 'bg-stone-950 text-white shadow-stone-950/25 dark:bg-white dark:text-stone-950'}`}>
             {fabHolding && <span className="pointer-events-none absolute -inset-2 rounded-full border-2 border-blue-400/25"><span className="absolute inset-[-2px] animate-spin rounded-full border-2 border-transparent border-r-blue-500 border-t-blue-500" style={{ animationDuration: `${HOLD_FOR_VOICE_MS - HOLD_FEEDBACK_DELAY_MS}ms` }} /></span>}
             <Plus size={25}/>
           </button>
