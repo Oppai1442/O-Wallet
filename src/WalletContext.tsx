@@ -17,6 +17,7 @@ import type {
   GoogleSession,
   GoogleUser,
   RememberDuration,
+  SyncProgress,
   SyncStats,
   Transaction,
   VaultConfig,
@@ -79,6 +80,7 @@ interface WalletContextValue {
   devicePreferences: DeviceSessionPreferences
   syncBusy: boolean
   syncMessage: string
+  syncProgress?: SyncProgress
   lastSync?: SyncStats
   error?: string
   createNewVault: (input: {
@@ -143,6 +145,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [devicePreferences, setDevicePreferencesState] = useState<DeviceSessionPreferences>(DEFAULT_DEVICE_PREFERENCES)
   const [syncBusy, setSyncBusy] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
+  const [syncProgress, setSyncProgress] = useState<SyncProgress>()
   const [lastSync, setLastSync] = useState<SyncStats>()
   const [error, setError] = useState<string>()
   const autoSyncTimer = useRef<number | undefined>(undefined)
@@ -341,7 +344,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         await setGoogleAccountBinding(session.user)
         setGoogleBinding(session.user)
       }
-      const stats = await syncWalletToDrive(session.accessToken, config, (step) => setSyncMessage(t(`sync.${step}`)))
+      const stats = await syncWalletToDrive(session.accessToken, config, (progress) => {
+        setSyncProgress(progress)
+        const label = t(`sync.${progress.step}`)
+        const count = progress.total && progress.completed !== undefined ? ` ${progress.completed}/${progress.total}` : ''
+        setSyncMessage(`${label}${count}`)
+      })
       setLastSync(stats)
       await repo.ensureDefaults()
       await refreshWithRepository(repo)
@@ -362,6 +370,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     } finally {
       setSyncBusy(false)
       setSyncMessage('')
+      setSyncProgress(undefined)
     }
   }, [assertGoogleAccount, googleReconnectUntil, refreshWithRepository, syncBusy, t])
 
@@ -721,11 +730,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const value = useMemo<WalletContextValue>(() => ({
     status, vaultConfig, repository, transactions, accounts, categories, settings,
     googleSession, googleBinding, googleRememberedUser, googleConnectionState, googleAutoConnecting,
-    googleConfigured: googleClientConfigured(), devicePreferences, syncBusy, syncMessage, lastSync, error,
+    googleConfigured: googleClientConfigured(), devicePreferences, syncBusy, syncMessage, syncProgress, lastSync, error,
     createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities,
     deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount,
     restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences, clearError: () => setError(undefined),
-  }), [status, vaultConfig, repository, transactions, accounts, categories, settings, googleSession, googleBinding, googleRememberedUser, googleConnectionState, googleAutoConnecting, devicePreferences, syncBusy, syncMessage, lastSync, error, createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities, deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount, restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences])
+  }), [status, vaultConfig, repository, transactions, accounts, categories, settings, googleSession, googleBinding, googleRememberedUser, googleConnectionState, googleAutoConnecting, devicePreferences, syncBusy, syncMessage, syncProgress, lastSync, error, createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities, deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount, restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences])
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>
 }
