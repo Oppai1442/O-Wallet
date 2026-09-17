@@ -3,6 +3,7 @@ import type {
   EncryptedImageRow,
   EncryptedRecordRow,
   RemoteEntityRow,
+  SyncProgress,
   SyncQueueRow,
   SyncStats,
   SyncState,
@@ -578,45 +579,66 @@ async function applyRemoteChange(token: string, change: DriveChange, stats: Sync
   }
 }
 
-async function pushDirtyQueue(token: string, layout: DriveLayout, stats: SyncStats) {
+async function pushDirtyQueue(
+  token: string,
+  layout: DriveLayout,
+  stats: SyncStats,
+  onProgress?: (progress: SyncProgress) => void,
+) {
   const queued = await db.syncQueue.orderBy('queuedAt').toArray()
-  await mapPool(queued, SYNC_CONCURRENCY, async (item: SyncQueueRow) => {
-    if (item.entityType === 'record') {
-      const local = await db.records.get(item.entityId)
-      if (!local) {
-        await db.syncQueue.delete(item.key)
-        return
-      }
-      const remote = await db.remoteRecords.get(local.id)
-      if (remote && compareStamp(local, remote) < 0) return
-      await uploadRecord(token, layout, local, stats)
-      return
-    }
+  const recordQueue = queued.filter((item) => item.entityType === 'record')
+  const imageQueue = queued.filter((item) => item.entityType === 'image')
 
-    const local = await db.images.get(item.entityId)
-    if (!local) {
-      await db.syncQueue.delete(item.key)
-      return
-    }
-    const remote = await db.remoteImages.get(local.id)
-    if (remote && compareStamp(local, remote) < 0) return
-    await uploadImage(token, layout, local, stats)
-  })
+  async function processQueue(items: SyncQueueRow[], step: SyncProgress['step']) {
+    if (!items.length) return
+    let completed = 0
+    onProgress?.({ step, completed, total: items.length })
+    await mapPool(items, SYNC_CONCURRENCY, async (item) => {
+      try {
+        if (item.entityType === 'record') {
+          const local = await db.records.get(item.entityId)
+          if (!local) {
+            await db.syncQueue.delete(item.key)
+            return
+          }
+          const remote = await db.remoteRecords.get(local.id)
+          if (remote && compareStamp(local, remote) < 0) return
+          await uploadRecord(token, layout, local, stats)
+          return
+        }
+
+        const local = await db.images.get(item.entityId)
+        if (!local) {
+          await db.syncQueue.delete(item.key)
+          return
+        }
+        const remote = await db.remoteImages.get(local.id)
+        if (remote && compareStamp(local, remote) < 0) return
+        await uploadImage(token, layout, local, stats)
+      } finally {
+        completed += 1
+        onProgress?.({ step, completed, total: items.length })
+      }
+    })
+  }
+
+  await processQueue(recordQueue, 'records')
+  await processQueue(imageQueue, 'images')
 }
 
 async function runInitialSync(
   token: string,
   layout: DriveLayout,
   stats: SyncStats,
-  onProgress?: (message: string) => void,
+  onProgress?: (progress: SyncProgress) => void,
 ) {
   const startToken = await getDriveStartPageToken(token)
-  onProgress?.('index')
+  onProgress?.({ step: 'index' })
 
   const startedEmpty = (await db.records.count()) === 0
   let bootstrapSeed = false
   if (startedEmpty) {
-    onProgress?.('bootstrap')
+    onProgress?.({ step: 'bootstrap' })
     bootstrapSeed = await hydrateBootstrapSnapshot(token, layout)
   }
 
@@ -628,9 +650,9 @@ async function runInitialSync(
   ])
 
   if (bootstrapSeed) stats.pulledRecords += localRecords.length
-  onProgress?.('records')
+  onProgress?.({ step: 'records' })
   await fullRecordReconcile(token, layout, remoteRecords, localRecords, stats, bootstrapSeed)
-  onProgress?.('images')
+  onProgress?.({ step: 'images' })
   await fullImageReconcile(token, layout, remoteImages, localImages, stats)
 
   const delta = await listAllDriveChanges(token, startToken)
@@ -642,9 +664,9 @@ async function syncCore(
   token: string,
   vaultConfig: VaultConfig,
   stats: SyncStats,
-  onProgress?: (message: string) => void,
+  onProgress?: (progress: SyncProgress) => void,
 ) {
-  onProgress?.('prepare')
+  onProgress?.({ step: 'prepare' })
   let state: SyncState = (await getSyncState()) ?? { schemaVersion: 1 }
   let layout = state.driveLayout ?? await ensureDriveLayout(token)
   const fingerprint = await vaultFingerprint(vaultConfig)
@@ -667,7 +689,7 @@ async function syncCore(
     onProgress?.('images')
   }
 
-  await pushDirtyQueue(token, layout, stats)
+  await pushDirtyQueue(token, layout, stats, onProgress)
 
   await setSyncState({
     schemaVersion: 1,
@@ -685,7 +707,7 @@ async function syncCore(
 export async function syncWalletToDrive(
   token: string,
   vaultConfig: VaultConfig,
-  onProgress?: (message: string) => void,
+  onProgress?: (progress: SyncProgress) => void,
 ): Promise<SyncStats> {
   const startedAt = new Date().toISOString()
   const stats: SyncStats = {
@@ -727,7 +749,7 @@ export async function syncWalletToDrive(
   }
 
   stats.finishedAt = new Date().toISOString()
-  onProgress?.('done')
+  onProgress?.({ step: 'done' })
   return stats
 }
 
