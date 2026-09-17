@@ -499,6 +499,14 @@ export interface ParsedTransactionCandidate {
   rawText: string
 }
 
+export type SyncProgressStep = 'prepare' | 'index' | 'bootstrap' | 'records' | 'images' | 'done'
+
+export interface SyncProgress {
+  step: SyncProgressStep
+  completed?: number
+  total?: number
+}
+
 export interface SyncStats {
   pulledRecords: number
   pushedRecords: number
