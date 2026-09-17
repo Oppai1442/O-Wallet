@@ -13,6 +13,14 @@ import { MonthlyCashflowCalendar } from './MonthlyCashflowCalendar'
 const COLORS = ['#6366f1', '#0ea5e9', '#14b8a6', '#84cc16', '#f59e0b', '#f97316', '#f43f5e', '#a855f7']
 type CurrencyViewMode = 'native' | 'converted'
 
+function groupPieData(data: Array<{ id: string; name: string; value: number }>, otherLabel: string, topCount = 5) {
+  if (data.length <= topCount + 1) return data
+  const head = data.slice(0, topCount)
+  const tail = data.slice(topCount)
+  const otherValue = tail.reduce((sum, item) => sum + item.value, 0)
+  return [...head, { id: '__other__', name: otherLabel, value: otherValue }]
+}
+
 function monthDate(key: string) {
   const [year, month] = key.split('-').map(Number)
   return new Date(year, month - 1, 1)
@@ -63,12 +71,13 @@ export function LedgerAnalytics({ transactions, categories, currency = 'VND', ti
   }
 
   function PieCard({ title: pieTitle, data, emptyTitle, emptyText }: { title: string; data: Array<{ id: string; name: string; value: number }>; emptyTitle: string; emptyText: string }) {
+    const displayData = groupPieData(data, t('common.other'))
     return <Card className="p-4 sm:p-5">
       <h3 className="font-bold text-stone-900 dark:text-white">{pieTitle}</h3>
       <p className="mt-0.5 text-xs text-stone-500">{monthLabel} · {chartCurrency}</p>
-      {data.length ? <>
-        <div className="mt-2 h-72"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={data} dataKey="value" nameKey="name" outerRadius={100} innerRadius={56} paddingAngle={data.length > 1 ? 2 : 0} stroke="none" isAnimationActive={false} label={({ name, percent }) => `${name} ${Math.round((percent ?? 0) * 100)}%`}>{data.map((entry, index) => <Cell key={entry.id} fill={COLORS[index % COLORS.length]}/>)}</Pie><Tooltip formatter={(value) => formatMoney(Number(value), chartCurrency, locale)}/></PieChart></ResponsiveContainer></div>
-        <div className="mt-1 space-y-2">{data.slice(0, 6).map((item, index) => <div key={item.id} className="flex items-center justify-between gap-3 text-sm"><div className="flex min-w-0 items-center gap-2"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}/><span className="truncate text-stone-600 dark:text-stone-300">{item.name}</span></div><span className="shrink-0 font-semibold text-stone-700 dark:text-stone-200">{formatMoney(item.value, chartCurrency, locale)}</span></div>)}</div>
+      {displayData.length ? <>
+        <div className="mt-2 h-64 sm:h-72"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={displayData} dataKey="value" nameKey="name" outerRadius="78%" innerRadius="52%" paddingAngle={displayData.length > 1 ? 2 : 0} stroke="none" isAnimationActive={false} labelLine={false} label={({ name, percent }) => (percent ?? 0) >= 0.1 ? `${name} ${Math.round((percent ?? 0) * 100)}%` : ''}>{displayData.map((entry, index) => <Cell key={entry.id} fill={COLORS[index % COLORS.length]}/>)}</Pie><Tooltip formatter={(value) => formatMoney(Number(value), chartCurrency, locale)}/></PieChart></ResponsiveContainer></div>
+        <div className="mt-2 space-y-2">{displayData.map((item, index) => <div key={item.id} className="flex items-center justify-between gap-3 text-sm"><div className="flex min-w-0 items-center gap-2"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}/><span className="truncate text-stone-600 dark:text-stone-300">{item.name}</span></div><span className="shrink-0 font-semibold text-stone-700 dark:text-stone-200">{formatMoney(item.value, chartCurrency, locale)}</span></div>)}</div>
       </> : <div className="mt-4"><EmptyState title={emptyTitle} text={emptyText}/></div>}
     </Card>
   }
@@ -90,7 +99,7 @@ export function LedgerAnalytics({ transactions, categories, currency = 'VND', ti
       <Card className="p-4"><div className="text-xs font-bold uppercase tracking-wide text-stone-500">{t('analytics.net')}</div><div className="mt-2">{currencyMode === 'native' ? <NativeValues field="net"/> : <div className={`text-2xl font-semibold ${activeSummary.net >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatMoney(activeSummary.net, currency, locale)}</div>}</div></Card>
     </div>
 
-    <Card className="overflow-hidden p-4 sm:p-5"><h3 className="font-bold text-stone-900 dark:text-white">{t('analytics.calendarTitle')}</h3><p className="mb-3 mt-0.5 text-xs text-stone-500">{monthLabel} · {chartCurrency}</p><MonthlyCashflowCalendar transactions={chartTransactions} selectedMonth={selectedMonth} currency={chartCurrency} locale={locale} now={now}/></Card>
+    <Card className="overflow-hidden p-4 sm:p-5"><h3 className="font-bold text-stone-900 dark:text-white">{t('analytics.calendarTitle')}</h3><p className="mb-3 mt-0.5 text-xs text-stone-500">{monthLabel} · {chartCurrency}</p><MonthlyCashflowCalendar transactions={chartTransactions} selectedMonth={selectedMonth} currency={chartCurrency} locale={locale} now={now} currentMonth={currentMonth} onMonthChange={setSelectedMonth}/></Card>
 
     <Card className="p-4 sm:p-5"><h3 className="font-bold text-stone-900 dark:text-white">{t('analytics.cashflow')}</h3><p className="text-xs text-stone-500">{t('analytics.dailyDetail', { month: monthLabel })} · {chartCurrency}</p>{trend.length ? <div className="mt-4 h-80"><ResponsiveContainer width="100%" height="100%"><BarChart data={trend} margin={{ top:8,right:8,left:-10,bottom:0 }}><CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2}/><XAxis dataKey="label" tick={{fontSize:11}} axisLine={false} tickLine={false}/><YAxis tickFormatter={(value)=>formatCompactMoney(Number(value),locale)} tick={{fontSize:11}} axisLine={false} tickLine={false}/><Tooltip shared={false} cursor={false} formatter={(value)=>formatMoney(Number(value),chartCurrency,locale)}/><Legend/><Bar dataKey="income" name={t('transaction.income')} fill="#10b981" radius={[5,5,0,0]}/><Bar dataKey="expense" name={t('transaction.expense')} fill="#f43f5e" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div> : <div className="mt-4"><EmptyState title={t('analytics.noDataTitle')} text={t('analytics.noDataText')}/></div>}</Card>
 
