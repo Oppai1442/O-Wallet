@@ -1,8 +1,10 @@
 import { useMemo } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { Transaction } from '../types'
 import { transactionValueInBase } from '../lib/fx'
-import { formatMoney } from '../lib/format'
+import { formatCompactMoney, formatMoney } from '../lib/format'
 import { useI18n } from '../i18n'
+import { Button } from './ui'
 
 interface DayTotals {
   income: number
@@ -28,36 +30,27 @@ function isMondayFirst(locale: string) {
 }
 
 function weekdayLabels(locale: string, mondayFirst: boolean) {
-  const base = new Date(2026, 0, 4) // Sunday
-  const labels = Array.from({ length: 7 }, (_, index) => new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(new Date(base.getFullYear(), base.getMonth(), base.getDate() + index)))
+  const base = new Date(2026, 0, 4)
+  const labels = Array.from({ length: 7 }, (_, index) => new Intl.DateTimeFormat(locale, { weekday: 'narrow' }).format(new Date(base.getFullYear(), base.getMonth(), base.getDate() + index)))
   return mondayFirst ? [...labels.slice(1), labels[0]] : labels
 }
 
-function compactCurrency(value: number, currency: string, locale: string) {
-  try {
-    return new Intl.NumberFormat(locale, {
-      style: 'currency',
-      currency,
-      notation: 'compact',
-      maximumFractionDigits: 1,
-    }).format(value)
-  } catch {
-    return formatMoney(value, currency, locale)
-  }
-}
-
-export function MonthlyCashflowCalendar({ transactions, selectedMonth, currency, locale, now }: {
+export function MonthlyCashflowCalendar({ transactions, selectedMonth, currency, locale, now, onMonthChange, currentMonth }: {
   transactions: Transaction[]
   selectedMonth: string
   currency: string
   locale: string
   now: number
+  onMonthChange?: (month: string) => void
+  currentMonth?: string
 }) {
   const { t } = useI18n()
   const firstDay = monthDate(selectedMonth)
   const mondayFirst = isMondayFirst(locale)
   const labels = useMemo(() => weekdayLabels(locale, mondayFirst), [locale, mondayFirst])
   const todayKey = localDateKey(new Date(now))
+  const monthLabel = new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(firstDay)
+  const nextDisabled = currentMonth ? selectedMonth >= currentMonth : false
 
   const totalsByDay = useMemo(() => {
     const totals = new Map<string, DayTotals>()
@@ -91,25 +84,47 @@ export function MonthlyCashflowCalendar({ transactions, selectedMonth, currency,
     return result
   }, [firstDay, mondayFirst])
 
-  return <div className="overflow-x-auto pb-1">
-    <div className="min-w-[700px]">
+  function shift(delta: number) {
+    if (!onMonthChange) return
+    const next = new Date(firstDay.getFullYear(), firstDay.getMonth() + delta, 1)
+    onMonthChange(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`)
+  }
+
+  return <div>
+    {onMonthChange && <div className="mb-3 flex items-center justify-between gap-2 rounded-xl bg-stone-50 px-2 py-1.5 dark:bg-stone-900/60">
+      <Button variant="ghost" className="min-h-9 px-2.5" onClick={() => shift(-1)} title={t('analytics.previousMonth')}><ChevronLeft size={17}/></Button>
+      <div className="min-w-0 text-center">
+        <div className="truncate text-sm font-semibold capitalize text-stone-900 dark:text-white">{monthLabel}</div>
+        {currentMonth && selectedMonth !== currentMonth && <button type="button" className="mt-0.5 text-[11px] font-semibold text-blue-600 hover:underline" onClick={() => onMonthChange(currentMonth)}>{t('analytics.backCurrent')}</button>}
+      </div>
+      <Button variant="ghost" className="min-h-9 px-2.5" disabled={nextDisabled} onClick={() => shift(1)} title={t('analytics.nextMonth')}><ChevronRight size={17}/></Button>
+    </div>}
+
+    <div className="w-full overflow-hidden">
       <div className="grid grid-cols-7 border-b border-stone-200 dark:border-stone-800">
-        {labels.map((label) => <div key={label} className="px-2 py-2 text-center text-[11px] font-bold uppercase tracking-wide text-stone-400">{label}</div>)}
+        {labels.map((label, index) => <div key={`${label}-${index}`} className="min-w-0 px-0.5 py-2 text-center text-[10px] font-bold uppercase tracking-wide text-stone-400 sm:px-2 sm:text-[11px]">{label}</div>)}
       </div>
       <div className="grid grid-cols-7 overflow-hidden rounded-b-2xl border-l border-t border-stone-200 dark:border-stone-800">
         {cells.map((cell) => {
-          if (!cell.day) return <div key={cell.key} className="min-h-24 border-b border-r border-stone-200 bg-stone-50/60 dark:border-stone-800 dark:bg-stone-950/30" />
+          if (!cell.day) return <div key={cell.key} className="min-h-16 min-w-0 border-b border-r border-stone-200 bg-stone-50/60 sm:min-h-24 dark:border-stone-800 dark:bg-stone-950/30" />
           const totals = totalsByDay.get(cell.key)
           const isToday = cell.key === todayKey
-          return <div key={cell.key} className={`relative min-h-24 border-b border-r border-stone-200 p-2.5 dark:border-stone-800 ${isToday ? 'bg-blue-50/70 dark:bg-blue-500/10' : 'bg-white dark:bg-stone-950'}`}>
-            <div className="flex items-center justify-between gap-2">
-              <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${isToday ? 'bg-blue-600 text-white' : 'text-stone-600 dark:text-stone-300'}`}>{cell.day}</span>
-              {totals && <span className="text-[10px] font-medium text-stone-400">{totals.count} {t('analytics.txShort')}</span>}
+          return <div key={cell.key} className={`relative min-h-16 min-w-0 overflow-hidden border-b border-r border-stone-200 p-1 sm:min-h-24 sm:p-2.5 dark:border-stone-800 ${isToday ? 'bg-blue-50/70 dark:bg-blue-500/10' : 'bg-white dark:bg-stone-950'}`}>
+            <div className="flex items-start justify-between gap-1">
+              <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold sm:h-7 sm:w-7 sm:text-xs ${isToday ? 'bg-blue-600 text-white' : 'text-stone-600 dark:text-stone-300'}`}>{cell.day}</span>
+              {totals && <span className="hidden truncate text-[10px] font-medium text-stone-400 sm:block">{totals.count} {t('analytics.txShort')}</span>}
             </div>
-            {totals ? <div className="mt-2 space-y-1">
-              {totals.income > 0 && <div className="truncate text-xs font-semibold text-emerald-600 dark:text-emerald-400" title={formatMoney(totals.income, currency, locale)}>+ {compactCurrency(totals.income, currency, locale)}</div>}
-              {totals.expense > 0 && <div className="truncate text-xs font-semibold text-rose-600 dark:text-rose-400" title={formatMoney(totals.expense, currency, locale)}>− {compactCurrency(totals.expense, currency, locale)}</div>}
-            </div> : <div className="mt-3 text-[11px] text-stone-300 dark:text-stone-700">—</div>}
+
+            {totals ? <div className="mt-1 space-y-0.5 sm:mt-2 sm:space-y-1">
+              {totals.income > 0 && <>
+                <div className="truncate text-[9px] font-semibold text-emerald-600 sm:hidden dark:text-emerald-400" title={formatMoney(totals.income, currency, locale)}>+{formatCompactMoney(totals.income, locale)}</div>
+                <div className="hidden truncate text-xs font-semibold text-emerald-600 sm:block dark:text-emerald-400" title={formatMoney(totals.income, currency, locale)}>+ {formatCompactMoney(totals.income, locale, currency)}</div>
+              </>}
+              {totals.expense > 0 && <>
+                <div className="truncate text-[9px] font-semibold text-rose-600 sm:hidden dark:text-rose-400" title={formatMoney(totals.expense, currency, locale)}>−{formatCompactMoney(totals.expense, locale)}</div>
+                <div className="hidden truncate text-xs font-semibold text-rose-600 sm:block dark:text-rose-400" title={formatMoney(totals.expense, currency, locale)}>− {formatCompactMoney(totals.expense, locale, currency)}</div>
+              </>}
+            </div> : <div className="mt-2 text-center text-[10px] text-stone-300 sm:mt-3 sm:text-left sm:text-[11px] dark:text-stone-700">—</div>}
           </div>
         })}
       </div>
