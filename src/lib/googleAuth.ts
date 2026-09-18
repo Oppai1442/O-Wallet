@@ -3,7 +3,8 @@ import { safeGoogleProfileImageUrl } from './security'
 
 const GOOGLE_SCRIPT = 'https://accounts.google.com/gsi/client'
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
-const SCOPES = `openid email profile ${DRIVE_SCOPE}`
+const DRIVE_APPDATA_SCOPE = 'https://www.googleapis.com/auth/drive.appdata'
+const SCOPES = `openid email profile ${DRIVE_SCOPE} ${DRIVE_APPDATA_SCOPE}`
 const TAB_SESSION_KEY = 'o-wallet-google-session-tab-v1'
 const DEVICE_SESSION_KEY = 'o-wallet-google-session-device-v1'
 
