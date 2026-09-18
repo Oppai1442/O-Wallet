@@ -461,6 +461,8 @@ export interface GoogleSession {
 export interface DeviceSessionPreferences {
   googleRemember: RememberDuration
   vaultRemember: VaultRememberDuration
+  /** Device-local preference. When false, Google reconnect requires an explicit user action. */
+  googleAutoLogin: boolean
 }
 
 export interface RememberedVaultUnlock {
