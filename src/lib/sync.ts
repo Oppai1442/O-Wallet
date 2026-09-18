@@ -747,7 +747,7 @@ async function runInitialSync(
   await fullRecordReconcile(token, layout, remoteRecords, localRecords, stats, bootstrapSeed, onProgress)
   await fullImageReconcile(token, layout, remoteImages, localImages, stats, onProgress)
 
-  const delta = await listAllDriveChanges(token, startToken)
+  const delta = await listAllDriveChanges(token, startToken, layout.space ?? 'drive')
   await applyRemoteChangesWithProgress(token, delta.changes, stats, onProgress)
   return delta.newStartPageToken ?? startToken
 }
@@ -775,7 +775,7 @@ async function syncCore(
     nextToken = await runInitialSync(token, layout, stats, recordShardsAvailable, onProgress)
   } else {
     onProgress?.({ step: 'index' })
-    const delta = await listAllDriveChanges(token, nextToken)
+    const delta = await listAllDriveChanges(token, nextToken, layout.space ?? 'drive')
     await applyRemoteChangesWithProgress(token, delta.changes, stats, onProgress)
     nextToken = delta.newStartPageToken ?? nextToken
   }
