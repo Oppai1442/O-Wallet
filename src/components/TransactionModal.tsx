@@ -19,6 +19,7 @@ import { AI_OPENROUTER_KEY_SECRET, analyzeTransactionImage } from '../lib/ai'
 import { CategoryPicker } from './CategoryPicker'
 import { AccountSelect } from './AccountSelect'
 import { VoiceEntry, type VoiceEntryDraft } from './VoiceEntry'
+import { ImageImportMode } from './ImageImportMode'
 
 const OcrRegionEditor = lazy(() => import('./OcrRegionEditor').then((module) => ({ default: module.OcrRegionEditor })))
 
@@ -85,6 +86,7 @@ export function TransactionModal({ onClose, transaction, duplicateFrom, initialV
   const [activeBatchId, setActiveBatchId] = useState<string>()
   const [saving, setSaving] = useState(false)
   const [showVoiceEntry, setShowVoiceEntry] = useState(initialVoice)
+  const [addMode, setAddMode] = useState<'manual' | 'image'>('manual')
   const [error, setError] = useState<string>()
 
   const sourceAccount = accounts.find((account) => account.id === accountId)
@@ -313,7 +315,9 @@ export function TransactionModal({ onClose, transaction, duplicateFrom, initialV
 
   return <div className="fixed inset-0 z-[70] flex items-end justify-center bg-stone-950/50 p-0 sm:items-center sm:p-4" onClick={onClose}>
     <div className="flex max-h-[100dvh] w-full max-w-7xl min-w-0 flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-stone-900 sm:max-h-[94dvh] sm:rounded-3xl" onClick={(e) => e.stopPropagation()}>
-      <div className="flex shrink-0 items-center justify-between border-b border-stone-200 bg-white px-4 py-3 dark:border-stone-800 dark:bg-stone-900 sm:px-5 sm:py-4"><div className="min-w-0"><h2 className="truncate text-lg font-semibold text-stone-950 dark:text-white">{editing ? t('modal.editTitle') : duplicateFrom ? t('modal.duplicateTitle') : t('modal.title')}</h2><p className="truncate text-xs text-stone-500">{t('modal.imageRetentionHint')}</p></div><div className="flex shrink-0 items-center gap-1">{!editing && <Button variant="secondary" className="px-3" onClick={() => setShowVoiceEntry(true)}><Mic size={17}/><span className="hidden sm:inline">{t('voice.entryButton')}</span></Button>}<Button variant="ghost" className="px-3" onClick={onClose}><X size={18}/></Button></div></div>
+      <div className="flex shrink-0 items-center justify-between border-b border-stone-200 bg-white px-4 py-3 dark:border-stone-800 dark:bg-stone-900 sm:px-5 sm:py-4"><div className="min-w-0"><h2 className="truncate text-lg font-semibold text-stone-950 dark:text-white">{editing ? t('modal.editTitle') : duplicateFrom ? t('modal.duplicateTitle') : t('modal.title')}</h2><p className="truncate text-xs text-stone-500">{addMode==='image'&&!editing?t('imageImport.hint'):t('modal.imageRetentionHint')}</p></div><div className="flex shrink-0 items-center gap-1">{!editing&&addMode==='manual' && <Button variant="secondary" className="px-3" onClick={() => setShowVoiceEntry(true)}><Mic size={17}/><span className="hidden sm:inline">{t('voice.entryButton')}</span></Button>}<Button variant="ghost" className="px-3" onClick={onClose}><X size={18}/></Button></div></div>
+      {!editing&&!duplicateFrom&&<div className="shrink-0 border-b border-stone-200 bg-white px-4 py-2 dark:border-stone-800 dark:bg-stone-900 sm:px-5"><div className="grid max-w-md grid-cols-2 gap-1 rounded-xl bg-stone-100 p-1 dark:bg-stone-800"><button type="button" onClick={()=>setAddMode('manual')} className={`rounded-lg px-3 py-2 text-sm font-bold transition ${addMode==='manual'?'bg-white text-stone-900 shadow-sm dark:bg-stone-950 dark:text-white':'text-stone-500 dark:text-stone-400'}`}>{t('imageImport.modeManual')}</button><button type="button" onClick={()=>setAddMode('image')} className={`rounded-lg px-3 py-2 text-sm font-bold transition ${addMode==='image'?'bg-white text-stone-900 shadow-sm dark:bg-stone-950 dark:text-white':'text-stone-500 dark:text-stone-400'}`}>{t('imageImport.modeImage')}</button></div></div>}
+      {!editing&&!duplicateFrom&&addMode==='image'?<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain"><ImageImportMode onClose={onClose}/></div>:<>
 
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
         <div className="grid min-w-0 gap-0 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,.95fr)]">
@@ -345,6 +349,7 @@ export function TransactionModal({ onClose, transaction, duplicateFrom, initialV
       </div>
 
       <div className="flex shrink-0 justify-end gap-2 border-t border-stone-200 bg-white px-4 py-3 dark:border-stone-800 dark:bg-stone-900 sm:px-5"><div className="mr-auto hidden items-center gap-2 text-xs text-stone-500 sm:flex">{duplicateFrom&&<><CopyPlus size={14}/>{t('modal.duplicating')}</>}{!editing&&plannedDates.length>1&&<><CalendarDays size={14}/>{t('schedule.willCreate',{count:plannedDates.length})}</>}</div><Button variant="secondary" onClick={onClose}>{t('common.cancel')}</Button><Button onClick={batchDrafts.length?saveBatchOcr:save} disabled={saving||ocrBusy||aiBusy}>{saving?<><LoaderCircle className="animate-spin" size={17}/>{t('modal.saving')}</>:batchDrafts.length?t('batch.saveSelected',{count:batchDrafts.filter((draft)=>draft.selected).length}):editing?t('common.save'):plannedDates.length>1?t('schedule.saveMany',{count:plannedDates.length}):t('modal.save')}</Button></div>
+      </>}
     </div>
 
     {showVoiceEntry&&<VoiceEntry initial={{type,amount,date:localDateKeyFromInputDateTime(occurredAt),time:localTimeFromInputDateTime(occurredAt),accountId,destinationAccountId,categoryId,merchant,description}} settings={settings} accounts={accounts} categories={categories} onApply={applyVoiceEntry} onClose={()=>setShowVoiceEntry(false)}/>} 
