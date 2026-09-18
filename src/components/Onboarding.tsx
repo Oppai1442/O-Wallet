@@ -143,6 +143,7 @@ export function Onboarding({ autoConnecting = false }: { autoConnecting?: boolea
   const checking = step === 'checking' || action === 'checking-drive'
 
   return (
+    <>
     <main className="relative mx-auto flex min-h-screen max-w-6xl items-center px-4 py-10 sm:px-6">
       <div className="absolute right-4 top-4 sm:right-6 sm:top-6"><LanguageSwitcher compact /></div>
       <div className="grid w-full gap-8 lg:grid-cols-[1fr_1.05fr]">
@@ -265,5 +266,6 @@ export function Onboarding({ autoConnecting = false }: { autoConnecting?: boolea
         <div className="mt-5 flex justify-end"><Button onClick={()=>setPermissionsHelpOpen(false)}>{t('onboarding.permissionsHelpClose')}</Button></div>
       </div>
     </div>}
+    </>
   )
 }
