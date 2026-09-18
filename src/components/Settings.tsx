@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Cloud, Database, Download, ExternalLink, FolderOpen, LockKeyhole, Plus, RefreshCw, Settings2, ShieldCheck, Sparkles, Trash2, Unplug, WalletCards } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { accountDisplayName, UI_LANGUAGES, useI18n, type UiLanguage } from '../i18n'
@@ -186,7 +186,7 @@ export function Settings() {
       </div>
     </div>
   </div>
-  {destroyDialogOpen&&<div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-4" onMouseDown={(event)=>{if(event.target===event.currentTarget&&!destroyBusy)setDestroyDialogOpen(false)}}><div role="dialog" aria-modal="true" className="w-full max-w-md rounded-2xl border border-rose-200 bg-white p-5 shadow-2xl dark:border-rose-500/20 dark:bg-stone-950"><div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-rose-600 dark:bg-rose-500/10 dark:text-rose-300"><Trash2 size={19}/></div><div className="min-w-0"><h2 className="font-bold text-stone-950 dark:text-white">{t('settings.destroyModalTitle')}</h2><p className="mt-1 text-sm leading-6 text-stone-500">{t('settings.destroyModalText')}</p></div></div><div className="mt-4"><Label>{t('settings.destroyModalLabel')}</Label><Input autoFocus value={destroyPhrase} onChange={(e)=>setDestroyPhrase(e.target.value)} placeholder="DELETE" autoComplete="off" spellCheck={false} onKeyDown={(e)=>{if(e.key==='Enter'&&destroyPhrase==='DELETE')void confirmDestroyAllData();if(e.key==='Escape'&&!destroyBusy)setDestroyDialogOpen(false)}}/></div>{error&&<div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</div>}<div className="mt-5 flex justify-end gap-2"><Button variant="secondary" onClick={()=>setDestroyDialogOpen(false)} disabled={destroyBusy}>{t('settings.destroyModalCancel')}</Button><Button variant="danger" onClick={()=>void confirmDestroyAllData()} disabled={destroyBusy||destroyPhrase!=='DELETE'}><Trash2 size={17}/>{destroyBusy?t('settings.destroying'):t('settings.destroyModalConfirm')}</Button></div></div></div>}
+  {destroyDialogOpen&&<div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-4" onMouseDown={(event)=>{if(event.target===event.currentTarget&&!destroyBusy)setDestroyDialogOpen(false)}}><div role="dialog" aria-modal="true" className="w-full max-w-md rounded-2xl border border-rose-200 bg-white p-5 shadow-2xl dark:border-rose-500/20 dark:bg-stone-950"><div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-rose-600 dark:bg-rose-500/10 dark:text-rose-300"><Trash2 size={19}/></div><div className="min-w-0"><h2 className="font-bold text-stone-950 dark:text-white">{t('settings.destroyModalTitle')}</h2><p className="mt-1 text-sm leading-6 text-stone-500">{t('settings.destroyModalText')}</p></div></div><div className="mt-4"><Label>{t('settings.destroyModalLabel')}</Label><Input autoFocus value={destroyPhrase} onChange={(e)=>setDestroyPhrase(e.target.value)} placeholder="DELETE" autoComplete="off" spellCheck={false} onKeyDown={(e)=>{if(e.key==='Escape'&&!destroyBusy)setDestroyDialogOpen(false)}}/></div>{error&&<div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</div>}<div className="mt-5 space-y-3"><SlideToDestroy enabled={destroyPhrase==='DELETE'} busy={destroyBusy} lockedText={t('settings.destroySlideLocked')} slideText={t('settings.destroySlide')} releaseText={t('settings.destroySlideRelease')} onConfirm={()=>void confirmDestroyAllData()}/><div className="flex justify-end"><Button variant="secondary" onClick={()=>setDestroyDialogOpen(false)} disabled={destroyBusy}>{t('settings.destroyModalCancel')}</Button></div></div></div></div>}
   </>
 
   function DriveCard() {
@@ -194,6 +194,64 @@ export function Settings() {
   }
 
   function RememberSelect({value,onChange,google=false}:{value:string;onChange:(value:string)=>void;google?:boolean}) { return <Select value={value} onChange={(e)=>onChange(e.target.value)}>{google&&<option value="tab">{t('settings.googleRememberTab')}</option>}<option value="off">{google?t('settings.googleRememberOff'):t('settings.vaultRememberOff')}</option>{!google&&<option value="15m">{t('settings.duration15m')}</option>}<option value="1h">{t('settings.duration1h')}</option><option value="8h">{t('settings.duration8h')}</option><option value="1d">{t('settings.duration1d')}</option><option value="7d">{t('settings.duration7d')}</option><option value="30d">{t('settings.duration30d')}</option></Select> }
+}
+
+function SlideToDestroy({enabled,busy,lockedText,slideText,releaseText,onConfirm}:{enabled:boolean;busy:boolean;lockedText:string;slideText:string;releaseText:string;onConfirm:()=>void}) {
+  const trackRef = useRef<HTMLDivElement>(null)
+  const [progress,setProgress] = useState(0)
+  const [dragging,setDragging] = useState(false)
+  const threshold = 0.92
+
+  useEffect(() => {
+    if (!enabled || busy) {
+      setProgress(0)
+      setDragging(false)
+    }
+  }, [busy, enabled])
+
+  function progressFromPointer(clientX:number) {
+    const track = trackRef.current
+    if (!track) return 0
+    const rect = track.getBoundingClientRect()
+    const thumb = 44
+    const usable = Math.max(1, rect.width - thumb - 8)
+    return Math.max(0, Math.min(1, (clientX - rect.left - thumb / 2 - 4) / usable))
+  }
+
+  function start(event: React.PointerEvent<HTMLDivElement>) {
+    if (!enabled || busy) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setDragging(true)
+    setProgress(progressFromPointer(event.clientX))
+  }
+
+  function move(event: React.PointerEvent<HTMLDivElement>) {
+    if (!dragging || !enabled || busy) return
+    setProgress(progressFromPointer(event.clientX))
+  }
+
+  function finish(event: React.PointerEvent<HTMLDivElement>) {
+    if (!dragging) return
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    const finalProgress = progressFromPointer(event.clientX)
+    setDragging(false)
+    if (enabled && !busy && finalProgress >= threshold) {
+      setProgress(1)
+      onConfirm()
+      return
+    }
+    setProgress(0)
+  }
+
+  const label = !enabled ? lockedText : progress >= threshold ? releaseText : slideText
+
+  return <div ref={trackRef} role="slider" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress*100)} aria-disabled={!enabled||busy} className={`relative h-14 select-none overflow-hidden rounded-2xl border transition-colors ${enabled?'border-rose-300 bg-rose-50 dark:border-rose-500/30 dark:bg-rose-500/10':'border-stone-200 bg-stone-100 opacity-60 dark:border-stone-800 dark:bg-stone-900'} ${enabled&&!busy?'touch-none cursor-grab active:cursor-grabbing':''}`} onPointerDown={start} onPointerMove={move} onPointerUp={finish} onPointerCancel={()=>{setDragging(false);setProgress(0)}}>
+    <div className="absolute inset-y-0 left-0 bg-rose-500/15 transition-[width] duration-75" style={{width:`${Math.round(progress*100)}%`}}/>
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-16 text-center text-sm font-semibold text-stone-600 dark:text-stone-300">{busy?'…':label}</div>
+    <div className="pointer-events-none absolute left-1 top-1 flex h-12 w-12 items-center justify-center rounded-xl bg-rose-600 text-white shadow-md transition-transform duration-75" style={{transform:`translateX(calc(${progress} * (100% - 0px)))`, left:`calc(4px + ${progress} * (100% - 56px))`}}>
+      <Trash2 size={18}/>
+    </div>
+  </div>
 }
 
 function SectionButton({active,label,hint,icon,onClick}:{active:boolean;label:string;hint:string;icon:ReactNode;onClick:()=>void}) { return <button type="button" onClick={onClick} className={`flex shrink-0 items-center gap-3 rounded-xl border px-3 py-3 text-left transition lg:w-full ${active?'border-stone-300 bg-white text-stone-950 shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:text-white':'border-transparent text-stone-500 hover:bg-white/70 dark:hover:bg-stone-900/70'}`}><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-stone-100 dark:bg-stone-900">{icon}</span><span><span className="block whitespace-nowrap text-sm font-semibold">{label}</span><span className="mt-0.5 hidden text-[11px] text-stone-400 lg:block">{hint}</span></span></button> }
