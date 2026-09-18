@@ -63,6 +63,16 @@ async function driveFetch(token: string, url: string, init?: RequestInit) {
     await retryDelay(response, attempt)
   }
   if (!response) throw new Error('Google Drive API request failed')
+  if (response.status === 403) {
+    try {
+      const body = await response.clone().text()
+      if (/ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficientPermissions|Insufficient Permission/i.test(body)) {
+        throw new Error('error.googleDrivePermissionsRequired')
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === 'error.googleDrivePermissionsRequired') throw error
+    }
+  }
   throw new Error(`Google Drive API ${response.status}`)
 }
 
