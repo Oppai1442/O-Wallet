@@ -13,6 +13,7 @@ export type GooglePrompt = '' | 'none' | 'consent' | 'select_account'
 type TokenResponse = {
   access_token?: string
   expires_in?: number
+  scope?: string
   error?: string
   error_description?: string
 }
@@ -149,6 +150,11 @@ export async function connectGoogle(prompt: GooglePrompt = 'select_account', log
       callback: (response) => {
         if (response.error || !response.access_token) {
           reject(new Error('error.googleAuthorization'))
+          return
+        }
+        const granted = new Set((response.scope ?? '').split(/\s+/).filter(Boolean))
+        if (granted.size > 0 && (!granted.has(DRIVE_SCOPE) || !granted.has(DRIVE_APPDATA_SCOPE))) {
+          reject(new Error('error.googleDrivePermissionsRequired'))
           return
         }
         resolve({ accessToken: response.access_token, expiresIn: response.expires_in ?? 3600 })
