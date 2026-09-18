@@ -304,6 +304,7 @@ export class WalletRepository {
         imageRetention: { mode: 'forever', days: 90 },
         defaultCurrency: 'VND',
         autoSync: true,
+        driveStorageMode: 'visible',
         rememberDefaults: { googleRemember: '30d', vaultRemember: 'off', googleAutoLogin: true },
         ocrTemplates: [],
         budgets: [],
