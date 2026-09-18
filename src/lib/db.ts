@@ -200,3 +200,27 @@ export async function clearLocalVaultForAccountSwitch() {
     await db.kv.where('key').startsWith('local-secret:').delete()
   })
 }
+
+export async function destroyLocalOWalletData() {
+  await db.transaction('rw', [db.records, db.images, db.syncQueue, db.remoteRecords, db.remoteImages, db.sharedRecords, db.kv], async () => {
+    await db.records.clear()
+    await db.images.clear()
+    await db.syncQueue.clear()
+    await db.remoteRecords.clear()
+    await db.remoteImages.clear()
+    await db.sharedRecords.clear()
+    await db.kv.clear()
+  })
+
+  const shouldRemove = (key: string) => key.startsWith('owallet.') || key.startsWith('o-wallet-')
+  for (const storage of [localStorage, sessionStorage]) {
+    const keys: string[] = []
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index)
+      if (key && shouldRemove(key)) keys.push(key)
+    }
+    for (const key of keys) {
+      try { storage.removeItem(key) } catch { /* best-effort cleanup */ }
+    }
+  }
+}
