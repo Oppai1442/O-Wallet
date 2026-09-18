@@ -4,6 +4,7 @@ const SQLITE_EXT = new Set(['mmbak', 'db', 'sqlite', 'sqlite3'])
 
 export const SECURITY_LIMITS = {
   maxImageBytes: 20 * 1024 * 1024,
+  maxScrollCaptureBytes: 64 * 1024 * 1024,
   maxImagePixels: 50_000_000,
   maxScrollCapturePixels: 150_000_000,
   maxScrollCaptureHeight: 120_000,
@@ -54,7 +55,7 @@ export function assertJsonPayloadSize(value: unknown, maxBytes = SECURITY_LIMITS
 
 export async function validateImageFile(file: File) {
   if (file.size <= 0) throw new Error('error.imageEmpty')
-  if (file.size > SECURITY_LIMITS.maxImageBytes) throw new Error('error.imageTooLarge')
+  if (file.size > SECURITY_LIMITS.maxScrollCaptureBytes) throw new Error('error.imageTooLarge')
   const ext = extension(file.name)
   if (ext && !ALLOWED_IMAGE_EXT.has(ext)) throw new Error('error.imageTypeUnsupported')
   if (file.type && !ALLOWED_IMAGE_MIME.has(file.type)) throw new Error('error.imageTypeUnsupported')
@@ -72,6 +73,7 @@ export async function validateImageFile(file: File) {
         && bitmap.width <= SECURITY_LIMITS.maxScrollCaptureWidth
         && bitmap.height <= SECURITY_LIMITS.maxScrollCaptureHeight
         && pixels <= SECURITY_LIMITS.maxScrollCapturePixels
+      if (file.size > SECURITY_LIMITS.maxImageBytes && !scrollLike) throw new Error('error.imageTooLarge')
       if (pixels > SECURITY_LIMITS.maxImagePixels && !scrollLike) throw new Error('error.imageDimensionsTooLarge')
     } finally {
       bitmap.close()
