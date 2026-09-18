@@ -57,6 +57,8 @@ export interface OcrVisualFingerprint {
   colors: Array<{ rgb: string; weight: number }>
   averageLuma: number
   aspectRatio: number
+  /** Coarse top-to-bottom luminance profile used to detect repeated cards/separators. */
+  verticalLumaProfile?: number[]
 }
 
 export interface OcrBlockPattern {
