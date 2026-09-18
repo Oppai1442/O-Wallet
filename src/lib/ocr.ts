@@ -657,10 +657,27 @@ export function rankOcrTemplates(
     if (template.schemaVersion !== 2) return { template, score: 0 }
     const anchors = template.identityAnchors ?? []
     const anchorScore = anchors.length ? anchors.filter((anchor) => text.includes(normalizeLine(anchor).toLocaleLowerCase('vi-VN'))).length / anchors.length : 0
-    const aspect = template.aspectRatio ? 1 - Math.min(1, Math.abs(template.aspectRatio - width / Math.max(1, height)) / Math.max(0.2, Math.abs(template.aspectRatio))) : 0.5
+    const longCapture = height > width * 3
+    const aspect = longCapture ? 0.5 : template.aspectRatio ? 1 - Math.min(1, Math.abs(template.aspectRatio - width / Math.max(1, height)) / Math.max(0.2, Math.abs(template.aspectRatio))) : 0.5
     const visualScore = colorSimilarity(template.visualFingerprint, visual)
     return { template, score: anchorScore * 0.55 + visualScore * 0.30 + aspect * 0.15 }
   }).sort((a, b) => b.score - a.score)
+}
+
+function shapeSimilarity(left: string, right: string) {
+  if (!left || !right) return 0
+  const max = Math.max(left.length, right.length)
+  if (!max) return 1
+  let same = 0
+  const min = Math.min(left.length, right.length)
+  for (let index = 0; index < min; index += 1) if (left[index] === right[index]) same += 1
+  return same / max
+}
+
+function patternShapeScore(line: string, pattern: OcrFieldPattern) {
+  const target = sampleShape(line)
+  const shapes = pattern.sampleShapes?.length ? pattern.sampleShapes : pattern.sampleShape ? [pattern.sampleShape] : []
+  return shapes.length ? Math.max(...shapes.map((shape) => shapeSimilarity(target, shape))) : 0
 }
 
 function candidateValueFromLine(line: string, pattern: OcrFieldPattern) {
@@ -687,7 +704,13 @@ function findPatternLine(lines: OcrDetectedLine[], pattern: OcrFieldPattern) {
     }
   }
   const values = lines.filter((line) => lineLooksLikeValue(line.text, pattern.valueType))
-  return values[Math.max(0, pattern.ordinal ?? 0)]
+  if (!values.length) return undefined
+  const ordinal = Math.max(0, pattern.ordinal ?? 0)
+  const ranked = values.map((line, index) => ({
+    line,
+    score: patternShapeScore(line.text, pattern) * 0.7 + (index === ordinal ? 0.3 : 0),
+  })).sort((a, b) => b.score - a.score)
+  return ranked[0]?.line ?? values[ordinal]
 }
 
 export function parseTransactionWithTemplate(
