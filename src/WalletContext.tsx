@@ -152,6 +152,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const autoSyncTimer = useRef<number | undefined>(undefined)
   const bootstrapKey = useRef<string | undefined>(undefined)
   const silentReconnectAttempted = useRef(false)
+  const syncInFlight = useRef(false)
 
   const repository = useMemo(() => (dek ? new WalletRepository(dek) : undefined), [dek])
 
@@ -342,10 +343,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     return binding
   }, [googleBinding])
 
-  const performSync = useCallback(async (session: GoogleSession, repo: WalletRepository, config: VaultConfig) => {
-    if (syncBusy) return undefined
-    setSyncBusy(true)
-    setError(undefined)
+  const performSync = useCallback(async (session: GoogleSession, repo: WalletRepository, config: VaultConfig, quiet = false) => {
+    if (syncInFlight.current) return undefined
+    syncInFlight.current = true
+    if (!quiet) {
+      setSyncBusy(true)
+      setError(undefined)
+    }
     try {
       if (session.expiresAt <= Date.now()) throw new Error('error.tokenExpired')
       const binding = await assertGoogleAccount(session)
@@ -356,7 +360,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         await setGoogleAccountBinding(session.user)
         setGoogleBinding(session.user)
       }
-      const stats = await syncWalletToDrive(session.accessToken, config, (progress) => {
+      const stats = await syncWalletToDrive(session.accessToken, config, quiet ? undefined : (progress) => {
         setSyncProgress(progress)
         const label = t(`sync.${progress.step}`)
         const count = progress.total && progress.completed !== undefined ? ` ${progress.completed}/${progress.total}` : ''
@@ -376,15 +380,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         if (googleReconnectUntil && googleReconnectUntil > Date.now()) setGoogleConnectionState('attention')
         else setGoogleConnectionState('disconnected')
       }
-      const message = localizeError(syncError, t, 'error.syncFailed')
-      setError(message)
+      if (!quiet) {
+        const message = localizeError(syncError, t, 'error.syncFailed')
+        setError(message)
+      }
       throw syncError
     } finally {
-      setSyncBusy(false)
-      setSyncMessage('')
-      setSyncProgress(undefined)
+      syncInFlight.current = false
+      if (!quiet) {
+        setSyncBusy(false)
+        setSyncMessage('')
+        setSyncProgress(undefined)
+      }
     }
-  }, [assertGoogleAccount, googleReconnectUntil, refreshWithRepository, syncBusy, t])
+  }, [assertGoogleAccount, googleReconnectUntil, refreshWithRepository, t])
 
   useEffect(() => {
     if (!repository || !vaultConfig || status !== 'unlocked') return
@@ -631,7 +640,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
     const heartbeat = () => {
       if (document.visibilityState !== 'visible') return
-      void syncNow().catch((heartbeatError) => reportDiagnostic('sync-heartbeat', heartbeatError))
+      void performSync(googleSession, repository, vaultConfig, true).catch((heartbeatError) => reportDiagnostic('sync-heartbeat', heartbeatError))
     }
 
     const interval = window.setInterval(heartbeat, 30_000)
@@ -643,7 +652,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('focus', heartbeat)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [googleSession, repository, settings?.autoSync, status, syncNow, vaultConfig])
+  }, [googleSession, performSync, repository, settings?.autoSync, status, vaultConfig])
 
   const applyEntityToMemory = useCallback((entity: WalletEntity) => {
     if ('type' in entity) {
