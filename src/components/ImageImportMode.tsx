@@ -11,6 +11,7 @@ import {
   buildPatternTemplate,
   detectTransactionBlocks,
   fingerprintImage,
+  mergePatternTemplateEvidence,
   parseDateTimeText,
   parseMoneyText,
   rankOcrTemplates,
@@ -201,7 +202,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     return {
       template: best,
       score: ranked[0]?.score ?? 0,
-      blocks: detectTransactionBlocks(analysis.result, analysis.width, analysis.height, best),
+      blocks: detectTransactionBlocks(analysis.result, analysis.width, analysis.height, best, analysis.visual),
     }
   }
 
@@ -256,13 +257,13 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       const nextAnalyses: SourceAnalysis[] = []
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index]
-        const [ocr, visual] = await Promise.all([
-          recognizeImageTiled(file, (value, text) => {
-            setProgress((index + value) / files.length)
-            setStatus(`${index + 1}/${files.length} · ${text}`)
-          }),
-          fingerprintImage(file),
-        ])
+        const ocr = await recognizeImageTiled(file, (value, text) => {
+          setProgress((index + value * 0.88) / files.length)
+          setStatus(`${index + 1}/${files.length} · ${text}`)
+        })
+        setStatus(`${index + 1}/${files.length} · visual analysis`)
+        const visual = await fingerprintImage(file)
+        setProgress((index + 0.98) / files.length)
         nextAnalyses.push({
           fileIndex: index,
           result: ocr.result,
@@ -336,8 +337,8 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     const mappings = mappingsFromCorrectedDraft(draft, activeLines)
     if (Object.values(mappings).filter(Boolean).length < 2) return
     const learned = buildPatternTemplate(activeTemplate.name, activeLines, mappings, activeAnalysis.visual, activeTemplate.id)
-    learned.createdAt = activeTemplate.createdAt
-    const nextTemplates = sessionTemplates.map((template) => template.id === learned.id ? learned : template)
+    const merged = mergePatternTemplateEvidence(activeTemplate, learned)
+    const nextTemplates = sessionTemplates.map((template) => template.id === merged.id ? merged : template)
     await persistTemplates(nextTemplates)
     buildDraftsFromAnalyses(analyses, nextTemplates, true)
   }
@@ -359,14 +360,14 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     if (Object.values(effectiveMappings).filter(Boolean).length < 2) return
     const existing = activeTemplate
     const learned = buildPatternTemplate(patternName.trim(), activeLines, effectiveMappings, activeAnalysis.visual, existing?.id)
-    if (existing) learned.createdAt = existing.createdAt
+    const effectiveTemplate = existing ? mergePatternTemplateEvidence(existing, learned) : learned
     const nextTemplates = existing
-      ? sessionTemplates.map((template) => template.id === existing.id ? learned : template)
-      : [...sessionTemplates, learned]
+      ? sessionTemplates.map((template) => template.id === existing.id ? effectiveTemplate : template)
+      : [...sessionTemplates, effectiveTemplate]
     await persistTemplates(nextTemplates)
     buildDraftsFromAnalyses(analyses, nextTemplates, false)
     setLineMappings({})
-    setPatternName(learned.name)
+    setPatternName(effectiveTemplate.name)
     setError(undefined)
   }
 
