@@ -157,6 +157,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const bootstrapKey = useRef<string | undefined>(undefined)
   const silentReconnectAttempted = useRef(false)
   const syncInFlight = useRef(false)
+  const destroyRequested = useRef(false)
 
   const repository = useMemo(() => (dek ? new WalletRepository(dek) : undefined), [dek])
 
@@ -348,7 +349,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, [googleBinding])
 
   const performSync = useCallback(async (session: GoogleSession, repo: WalletRepository, config: VaultConfig, quiet = false) => {
-    if (syncInFlight.current) return undefined
+    if (destroyRequested.current || syncInFlight.current) return undefined
     syncInFlight.current = true
     if (!quiet) {
       setSyncBusy(true)
@@ -592,10 +593,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, [googleSession])
 
   const destroyAllData = useCallback(async () => {
-    if (destroyBusy || syncInFlight.current) return
+    if (destroyBusy) return
+    destroyRequested.current = true
     setDestroyBusy(true)
     setError(undefined)
     try {
+      while (syncInFlight.current) {
+        await new Promise((resolve) => window.setTimeout(resolve, 100))
+      }
+
       const binding = googleBinding ?? await getGoogleAccountBinding()
       const syncState = await getSyncState()
       const hasCloudIdentity = Boolean(binding || googleRememberedUser || syncState?.driveLayout)
@@ -637,6 +643,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setError(message)
       throw destroyError
     } finally {
+      destroyRequested.current = false
       setDestroyBusy(false)
     }
   }, [assertGoogleAccount, destroyBusy, googleBinding, googleRememberedUser, googleSession, t])
