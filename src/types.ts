@@ -324,6 +324,8 @@ export interface Category {
   deleted: boolean
 }
 
+export type DriveStorageMode = 'visible' | 'hidden'
+
 export interface AppSettings {
   id: 'settings'
   theme: ThemeMode
@@ -337,6 +339,8 @@ export interface AppSettings {
   /** Synced seed currency for new transactions. Device-local last-used currency takes precedence. */
   transactionCurrency?: string
   autoSync: boolean
+  /** Personal-wallet Google Drive storage. Hidden mode uses Drive appDataFolder. */
+  driveStorageMode?: DriveStorageMode
   rememberDefaults?: DeviceSessionPreferences
   ocrTemplates?: OcrTemplate[]
   budgets?: BudgetConfig[]
@@ -480,10 +484,16 @@ export interface RememberedVaultUnlock {
 export interface GoogleAccountBinding extends GoogleUser {}
 
 export interface DriveLayout {
+  /** Canonical personal-data root. In hidden mode this lives in appDataFolder. */
   rootId: string
   recordsId: string
   imagesId: string
   vaultFileId?: string
+  storageMode?: DriveStorageMode
+  /** User-visible marker folder. Equals rootId in visible mode. */
+  visibleRootId?: string
+  /** Drive API space containing rootId. */
+  space?: 'drive' | 'appDataFolder'
 }
 
 export interface OcrBox {
