@@ -94,22 +94,22 @@ export async function getDriveStartPageToken(token: string) {
   return result.startPageToken
 }
 
-export async function listDriveChanges(token: string, pageToken: string): Promise<{ changes: DriveChange[]; nextPageToken?: string; newStartPageToken?: string }> {
+export async function listDriveChanges(token: string, pageToken: string, space: 'drive' | 'appDataFolder' = 'drive'): Promise<{ changes: DriveChange[]; nextPageToken?: string; newStartPageToken?: string }> {
   return driveJson(token, `${DRIVE_API}/changes?${qs({
     pageToken,
-    spaces: 'drive',
+    spaces: space,
     pageSize: '1000',
     includeRemoved: 'true',
     fields: 'nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,modifiedTime,size,appProperties,trashed))',
   })}`)
 }
 
-export async function listAllDriveChanges(token: string, startToken: string) {
+export async function listAllDriveChanges(token: string, startToken: string, space: 'drive' | 'appDataFolder' = 'drive') {
   const changes: DriveChange[] = []
   let pageToken = startToken
   let newStartPageToken: string | undefined
   do {
-    const page = await listDriveChanges(token, pageToken)
+    const page = await listDriveChanges(token, pageToken, space)
     changes.push(...page.changes)
     if (page.nextPageToken) pageToken = page.nextPageToken
     else { newStartPageToken = page.newStartPageToken; break }
