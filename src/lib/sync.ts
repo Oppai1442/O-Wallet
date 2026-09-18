@@ -430,43 +430,60 @@ async function fullRecordReconcile(
   localRows: EncryptedRecordRow[],
   stats: SyncStats,
   bootstrapSeed = false,
+  onProgress?: (progress: SyncProgress) => void,
 ) {
   const safeRemoteFiles = validRemoteFiles(remoteFiles, 'record')
   const remoteMap = fileMap(safeRemoteFiles, 'record')
   const remoteRows = safeRemoteFiles.map(remoteRow).filter((row): row is RemoteEntityRow => Boolean(row))
+  const localIds = new Set(localRows.map((row) => row.id))
+  const remoteOnlyCount = Array.from(remoteMap.keys()).filter((id) => !localIds.has(id)).length
+  const total = localRows.length + remoteOnlyCount
+  let completed = 0
+  if (total > 0) onProgress?.({ step: 'records', completed: 0, total })
+
   await db.remoteRecords.clear()
   if (remoteRows.length) await db.remoteRecords.bulkPut(remoteRows)
 
   await mapPool(localRows, SYNC_CONCURRENCY, async (local) => {
-    const remoteFile = remoteMap.get(local.id)
-    if (!remoteFile) {
-      if (bootstrapSeed) await db.records.delete(local.id)
-      else await uploadRecord(token, layout, local, stats)
-      return
+    try {
+      const remoteFile = remoteMap.get(local.id)
+      if (!remoteFile) {
+        if (bootstrapSeed) await db.records.delete(local.id)
+        else await uploadRecord(token, layout, local, stats)
+        return
+      }
+      const cmp = compareStamp(local, remoteStamp(remoteFile))
+      if (bootstrapSeed && cmp !== 0) {
+        await db.records.put(await pullRecord(token, remoteFile))
+        await dequeueSyncEntity('record', local.id)
+        stats.pulledRecords += 1
+      } else if (cmp > 0) {
+        await uploadRecord(token, layout, local, stats)
+        if (local.version === remoteStamp(remoteFile).version) stats.conflictsResolved += 1
+      } else if (cmp < 0) {
+        await db.records.put(await pullRecord(token, remoteFile))
+        await dequeueSyncEntity('record', local.id)
+        stats.pulledRecords += 1
+        if (local.version === remoteStamp(remoteFile).version) stats.conflictsResolved += 1
+      } else {
+        await dequeueSyncEntity('record', local.id)
+      }
+      remoteMap.delete(local.id)
+    } finally {
+      completed += 1
+      if (total > 0) onProgress?.({ step: 'records', completed, total })
     }
-    const cmp = compareStamp(local, remoteStamp(remoteFile))
-    if (bootstrapSeed && cmp !== 0) {
-      await db.records.put(await pullRecord(token, remoteFile))
-      await dequeueSyncEntity('record', local.id)
-      stats.pulledRecords += 1
-    } else if (cmp > 0) {
-      await uploadRecord(token, layout, local, stats)
-      if (local.version === remoteStamp(remoteFile).version) stats.conflictsResolved += 1
-    } else if (cmp < 0) {
-      await db.records.put(await pullRecord(token, remoteFile))
-      await dequeueSyncEntity('record', local.id)
-      stats.pulledRecords += 1
-      if (local.version === remoteStamp(remoteFile).version) stats.conflictsResolved += 1
-    } else {
-      await dequeueSyncEntity('record', local.id)
-    }
-    remoteMap.delete(local.id)
   })
 
   await mapPool(Array.from(remoteMap.values()), SYNC_CONCURRENCY, async (remoteFile) => {
-    await db.records.put(await pullRecord(token, remoteFile))
-    await dequeueSyncEntity('record', remoteFile.appProperties?.entityId ?? '')
-    stats.pulledRecords += 1
+    try {
+      await db.records.put(await pullRecord(token, remoteFile))
+      await dequeueSyncEntity('record', remoteFile.appProperties?.entityId ?? '')
+      stats.pulledRecords += 1
+    } finally {
+      completed += 1
+      if (total > 0) onProgress?.({ step: 'records', completed, total })
+    }
   })
 }
 
@@ -476,35 +493,49 @@ async function fullImageReconcile(
   remoteFiles: DriveFileMeta[],
   localRows: EncryptedImageRow[],
   stats: SyncStats,
+  onProgress?: (progress: SyncProgress) => void,
 ) {
   const safeRemoteFiles = validRemoteFiles(remoteFiles, 'image')
   const remoteMap = fileMap(safeRemoteFiles, 'image')
   const remoteRows = safeRemoteFiles.map(remoteRow).filter((row): row is RemoteEntityRow => Boolean(row))
+  const localIds = new Set(localRows.map((row) => row.id))
+  const remoteOnlyCount = Array.from(remoteMap.keys()).filter((id) => !localIds.has(id)).length
+  const total = localRows.length + remoteOnlyCount
+  let completed = 0
+  if (total > 0) onProgress?.({ step: 'images', completed: 0, total })
+
   await db.remoteImages.clear()
   if (remoteRows.length) await db.remoteImages.bulkPut(remoteRows)
 
   await mapPool(localRows, SYNC_CONCURRENCY, async (local) => {
-    const remoteFile = remoteMap.get(local.id)
-    if (!remoteFile) {
-      await uploadImage(token, layout, local, stats)
-      return
+    try {
+      const remoteFile = remoteMap.get(local.id)
+      if (!remoteFile) {
+        await uploadImage(token, layout, local, stats)
+        return
+      }
+      const cmp = compareStamp(local, remoteStamp(remoteFile))
+      if (cmp > 0) {
+        await uploadImage(token, layout, local, stats)
+        if (local.version === remoteStamp(remoteFile).version) stats.conflictsResolved += 1
+      } else if (cmp < 0) {
+        await db.images.delete(local.id)
+        await dequeueSyncEntity('image', local.id)
+        stats.pulledImages += 1
+        if (local.version === remoteStamp(remoteFile).version) stats.conflictsResolved += 1
+      } else {
+        await dequeueSyncEntity('image', local.id)
+      }
+      remoteMap.delete(local.id)
+    } finally {
+      completed += 1
+      if (total > 0) onProgress?.({ step: 'images', completed, total })
     }
-    const cmp = compareStamp(local, remoteStamp(remoteFile))
-    if (cmp > 0) {
-      await uploadImage(token, layout, local, stats)
-      if (local.version === remoteStamp(remoteFile).version) stats.conflictsResolved += 1
-    } else if (cmp < 0) {
-      await db.images.delete(local.id)
-      await dequeueSyncEntity('image', local.id)
-      stats.pulledImages += 1
-      if (local.version === remoteStamp(remoteFile).version) stats.conflictsResolved += 1
-    } else {
-      await dequeueSyncEntity('image', local.id)
-    }
-    remoteMap.delete(local.id)
   })
 
   stats.pulledImages += remoteMap.size
+  completed += remoteMap.size
+  if (total > 0) onProgress?.({ step: 'images', completed: Math.min(completed, total), total })
 }
 
 async function removeRemoteMapping(change: DriveChange) {
@@ -579,6 +610,25 @@ async function applyRemoteChange(token: string, change: DriveChange, stats: Sync
   }
 }
 
+async function applyRemoteChangesWithProgress(
+  token: string,
+  changes: DriveChange[],
+  stats: SyncStats,
+  onProgress?: (progress: SyncProgress) => void,
+) {
+  if (!changes.length) return
+  let completed = 0
+  onProgress?.({ step: 'records', completed: 0, total: changes.length })
+  await mapPool(changes, SYNC_CONCURRENCY, async (change) => {
+    try {
+      await applyRemoteChange(token, change, stats)
+    } finally {
+      completed += 1
+      onProgress?.({ step: 'records', completed, total: changes.length })
+    }
+  })
+}
+
 async function pushDirtyQueue(
   token: string,
   layout: DriveLayout,
@@ -650,13 +700,11 @@ async function runInitialSync(
   ])
 
   if (bootstrapSeed) stats.pulledRecords += localRecords.length
-  onProgress?.({ step: 'records' })
-  await fullRecordReconcile(token, layout, remoteRecords, localRecords, stats, bootstrapSeed)
-  onProgress?.({ step: 'images' })
-  await fullImageReconcile(token, layout, remoteImages, localImages, stats)
+  await fullRecordReconcile(token, layout, remoteRecords, localRecords, stats, bootstrapSeed, onProgress)
+  await fullImageReconcile(token, layout, remoteImages, localImages, stats, onProgress)
 
   const delta = await listAllDriveChanges(token, startToken)
-  await mapPool(delta.changes, SYNC_CONCURRENCY, (change) => applyRemoteChange(token, change, stats))
+  await applyRemoteChangesWithProgress(token, delta.changes, stats, onProgress)
   return delta.newStartPageToken ?? startToken
 }
 
@@ -681,12 +729,10 @@ async function syncCore(
   if (!nextToken) {
     nextToken = await runInitialSync(token, layout, stats, onProgress)
   } else {
-    onProgress?.('index')
+    onProgress?.({ step: 'index' })
     const delta = await listAllDriveChanges(token, nextToken)
-    onProgress?.('records')
-    await mapPool(delta.changes, SYNC_CONCURRENCY, (change) => applyRemoteChange(token, change, stats))
+    await applyRemoteChangesWithProgress(token, delta.changes, stats, onProgress)
     nextToken = delta.newStartPageToken ?? nextToken
-    onProgress?.('images')
   }
 
   await pushDirtyQueue(token, layout, stats, onProgress)
