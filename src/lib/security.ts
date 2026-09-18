@@ -17,7 +17,7 @@ export const SECURITY_LIMITS = {
   maxImportedStringLength: 8_192,
   maxClearRecordBytes: 1024 * 1024,
   maxEncryptedRecordBytes: 2 * 1024 * 1024,
-  maxEncryptedImageBytes: 22 * 1024 * 1024,
+  maxEncryptedImageBytes: 66 * 1024 * 1024,
   maxImageHeaderBytes: 64 * 1024,
   maxVaultConfigBytes: 512 * 1024,
   maxOcrTextChars: 200_000,
