@@ -385,7 +385,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       return stats
     } catch (syncError) {
       const rawMessage = syncError instanceof Error ? syncError.message : String(syncError)
-      if (/Google Drive API 401|UNAUTHENTICATED|invalid[_ ]token|Invalid Credentials/i.test(rawMessage)) {
+      if (/Google Drive API 401|UNAUTHENTICATED|invalid[_ ]token|Invalid Credentials/i.test(rawMessage) || rawMessage === 'error.googleDrivePermissionsRequired') {
+        clearStoredGoogleSession()
         setGoogleSession(undefined)
         silentReconnectAttempted.current = false
         if (googleReconnectUntil && googleReconnectUntil > Date.now()) setGoogleConnectionState('attention')
@@ -718,6 +719,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setStatus('locked')
       return true
     } catch (e) {
+      if (e instanceof Error && e.message === 'error.googleDrivePermissionsRequired') {
+        clearStoredGoogleSession()
+        setGoogleSession(undefined)
+        setGoogleConnectionState(googleRememberedUser || googleBinding ? 'attention' : 'disconnected')
+      }
       const message = localizeError(e, t, 'error.restoreVault')
       setError(message)
       throw e
