@@ -378,6 +378,8 @@ export interface EncryptedRecordRow {
   updatedAt: string
   deviceId: string
   deleted: boolean
+  /** "core" for settings/accounts/categories, YYYY-MM-DD for transactions. */
+  syncPartition?: string
   payload: EncryptedPayload
 }
 
@@ -399,6 +401,8 @@ export interface SyncQueueRow {
   queuedAt: string
   /** Transaction occurrence time when available; used only to prioritize sync order. */
   priorityAt?: string
+  /** Old shard key when a transaction moves between calendar days. */
+  previousPartition?: string
 }
 
 export interface RemoteEntityRow {
