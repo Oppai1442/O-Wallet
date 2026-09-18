@@ -65,6 +65,7 @@ export function Onboarding({ autoConnecting = false }: { autoConnecting?: boolea
   const [a2, setA2] = useState('')
   const [copied, setCopied] = useState(false)
   const [savedRecovery, setSavedRecovery] = useState(false)
+  const [permissionsHelpOpen, setPermissionsHelpOpen] = useState(false)
 
   const valid = useMemo(() => password.length >= 8 && password === confirm && a1.trim() && a2.trim() && q1 !== q2 && savedRecovery, [password, confirm, a1, a2, q1, q2, savedRecovery])
 
@@ -190,7 +191,10 @@ export function Onboarding({ autoConnecting = false }: { autoConnecting?: boolea
               )}
 
               {!googleConfigured && <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">{t('onboarding.googleClientMissing')}</p>}
-              {error && !checking && <p className="mt-3 text-sm text-rose-600">{error}</p>}
+              {error && !checking && <div className="mt-3">
+                <p className="text-sm text-rose-600">{error}</p>
+                {error===t('error.googleDrivePermissionsRequired')&&<button type="button" className="mt-2 text-sm font-semibold text-blue-600 underline decoration-blue-300 underline-offset-4 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300" onClick={()=>setPermissionsHelpOpen(true)}>{t('onboarding.permissionsHelp')}</button>}
+              </div>}
             </div>
           </Card>
         ) : (
@@ -241,5 +245,25 @@ export function Onboarding({ autoConnecting = false }: { autoConnecting?: boolea
         )}
       </div>
     </main>
+    {permissionsHelpOpen&&<div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4" onMouseDown={(event)=>{if(event.target===event.currentTarget)setPermissionsHelpOpen(false)}}>
+      <div role="dialog" aria-modal="true" aria-labelledby="drive-permission-help-title" className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl dark:border-stone-800 dark:bg-stone-950 sm:p-6">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300"><Cloud size={19}/></div>
+          <div className="min-w-0">
+            <h2 id="drive-permission-help-title" className="text-lg font-bold text-stone-950 dark:text-white">{t('onboarding.permissionsHelpTitle')}</h2>
+            <p className="mt-1 text-sm leading-6 text-stone-500 dark:text-stone-400">{t('onboarding.permissionsHelpText')}</p>
+          </div>
+        </div>
+        <div className="mt-4 overflow-hidden rounded-xl border border-stone-200 bg-stone-950 dark:border-stone-800">
+          <img src="./google-drive-permissions-help.webp" alt={t('onboarding.permissionsHelpTitle')} className="h-auto w-full object-contain" />
+        </div>
+        <ol className="mt-4 grid gap-2 text-sm leading-6 text-stone-600 dark:text-stone-300">
+          <li className="flex gap-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-stone-100 text-xs font-bold text-stone-700 dark:bg-stone-800 dark:text-stone-200">1</span><span>{t('onboarding.permissionsHelpStep1')}</span></li>
+          <li className="flex gap-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-stone-100 text-xs font-bold text-stone-700 dark:bg-stone-800 dark:text-stone-200">2</span><span>{t('onboarding.permissionsHelpStep2')}</span></li>
+          <li className="flex gap-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-stone-100 text-xs font-bold text-stone-700 dark:bg-stone-800 dark:text-stone-200">3</span><span>{t('onboarding.permissionsHelpStep3')}</span></li>
+        </ol>
+        <div className="mt-5 flex justify-end"><Button onClick={()=>setPermissionsHelpOpen(false)}>{t('onboarding.permissionsHelpClose')}</Button></div>
+      </div>
+    </div>}
   )
 }
