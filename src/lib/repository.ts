@@ -25,12 +25,13 @@ function cleanCurrency(value: string | undefined) {
   return value?.trim().toUpperCase() ?? ''
 }
 
-function syncQueueRow(entityType: 'record' | 'image', entityId: string, queuedAt = new Date().toISOString()) {
+function syncQueueRow(entityType: 'record' | 'image', entityId: string, queuedAt = new Date().toISOString(), priorityAt?: string) {
   return {
     key: syncQueueKey(entityType, entityId),
     entityType,
     entityId,
     queuedAt,
+    priorityAt,
   }
 }
 
@@ -126,7 +127,8 @@ export class WalletRepository {
     }
     await db.transaction('rw', [db.records, db.syncQueue], async () => {
       await db.records.put(row)
-      await db.syncQueue.put(syncQueueRow('record', row.id))
+      const priorityAt = 'type' in entity ? (entity as Transaction).occurredAt : row.updatedAt
+      await db.syncQueue.put(syncQueueRow('record', row.id, undefined, priorityAt))
     })
     return row
   }
@@ -161,7 +163,11 @@ export class WalletRepository {
       const queuedAt = new Date().toISOString()
       await db.transaction('rw', [db.records, db.syncQueue], async () => {
         await db.records.bulkPut(rows)
-        await db.syncQueue.bulkPut(rows.map((row) => syncQueueRow('record', row.id, queuedAt)))
+        await db.syncQueue.bulkPut(rows.map((row, index) => {
+          const entity = chunk[index]
+          const priorityAt = 'type' in entity ? (entity as Transaction).occurredAt : row.updatedAt
+          return syncQueueRow('record', row.id, queuedAt, priorityAt)
+        }))
       })
       allRows.push(...rows)
     }
@@ -202,7 +208,7 @@ export class WalletRepository {
     }
     await db.transaction('rw', [db.images, db.syncQueue], async () => {
       await db.images.put(row)
-      await db.syncQueue.put(syncQueueRow('image', row.id))
+      await db.syncQueue.put(syncQueueRow('image', row.id, now, row.updatedAt))
     })
     return row
   }
