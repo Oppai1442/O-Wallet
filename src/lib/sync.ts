@@ -528,7 +528,8 @@ async function fullImageReconcile(
   await db.remoteImages.clear()
   if (remoteRows.length) await db.remoteImages.bulkPut(remoteRows)
 
-  await mapPool(localRows, adaptiveSyncConcurrency(localRows.length || 1), async (local) => {
+  const orderedLocalRows = newestFirst(localRows)
+  await mapPool(orderedLocalRows, adaptiveSyncConcurrency(orderedLocalRows.length), async (local) => {
     try {
       const remoteFile = remoteMap.get(local.id)
       if (!remoteFile) {
@@ -664,6 +665,8 @@ async function pushDirtyQueue(
     db.records.bulkGet(recordQueue.map((item) => item.entityId)),
     db.images.bulkGet(imageQueue.map((item) => item.entityId)),
   ])
+  const recordRowById = new Map(recordRows.filter((row): row is EncryptedRecordRow => Boolean(row)).map((row) => [row.id, row]))
+  const imageRowById = new Map(imageRows.filter((row): row is EncryptedImageRow => Boolean(row)).map((row) => [row.id, row]))
   const recordUpdatedAt = new Map(recordQueue.map((item, index) => [item.entityId, recordRows[index]?.updatedAt ?? item.queuedAt]))
   const imageUpdatedAt = new Map(imageQueue.map((item, index) => [item.entityId, imageRows[index]?.updatedAt ?? item.queuedAt]))
   recordQueue.sort((a, b) => (recordUpdatedAt.get(b.entityId) ?? '').localeCompare(recordUpdatedAt.get(a.entityId) ?? ''))
@@ -676,7 +679,7 @@ async function pushDirtyQueue(
     await mapPool(items, adaptiveSyncConcurrency(items.length), async (item) => {
       try {
         if (item.entityType === 'record') {
-          const local = await db.records.get(item.entityId)
+          const local = recordRowById.get(item.entityId)
           if (!local) {
             await db.syncQueue.delete(item.key)
             return
@@ -687,7 +690,7 @@ async function pushDirtyQueue(
           return
         }
 
-        const local = await db.images.get(item.entityId)
+        const local = imageRowById.get(item.entityId)
         if (!local) {
           await db.syncQueue.delete(item.key)
           return
