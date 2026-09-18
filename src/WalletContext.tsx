@@ -19,6 +19,7 @@ import type {
   RememberDuration,
   SyncProgress,
   SyncStats,
+  DriveStorageMode,
   Transaction,
   VaultConfig,
   VaultRememberDuration,
@@ -37,6 +38,7 @@ import {
   getRememberedVaultUnlock,
   getSyncState,
   getVaultConfig,
+  setSyncState,
   setDeviceSessionPreferences,
   setGoogleAccountBinding,
   setRememberedVaultUnlock,
@@ -51,7 +53,7 @@ import {
   persistGoogleSession,
   revokeGoogle,
 } from './lib/googleAuth'
-import { deleteDriveFilePermanently, downloadVaultConfig, findExistingDriveLayout } from './lib/drive'
+import { deleteAllDriveWalletData, downloadVaultConfig, findExistingDriveLayout, migrateDriveStorageMode } from './lib/drive'
 import { fetchRemoteImageToLocal, syncWalletToDrive } from './lib/sync'
 import { reportDiagnostic } from './lib/security'
 import { buildFxSnapshot } from './lib/fx'
@@ -82,6 +84,7 @@ interface WalletContextValue {
   devicePreferences: DeviceSessionPreferences
   syncBusy: boolean
   destroyBusy: boolean
+  driveModeBusy: boolean
   syncMessage: string
   syncProgress?: SyncProgress
   lastSync?: SyncStats
@@ -103,6 +106,7 @@ interface WalletContextValue {
   disconnectGoogle: () => void
   switchLocalAccount: () => Promise<void>
   destroyAllData: () => Promise<void>
+  changeDriveStorageMode: (mode: DriveStorageMode) => Promise<void>
   restoreVaultConfigFromDrive: () => Promise<boolean>
   syncNow: () => Promise<SyncStats | undefined>
   notifyMutation: () => Promise<void>
@@ -149,6 +153,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [devicePreferences, setDevicePreferencesState] = useState<DeviceSessionPreferences>(DEFAULT_DEVICE_PREFERENCES)
   const [syncBusy, setSyncBusy] = useState(false)
   const [destroyBusy, setDestroyBusy] = useState(false)
+  const [driveModeBusy, setDriveModeBusy] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
   const [syncProgress, setSyncProgress] = useState<SyncProgress>()
   const [lastSync, setLastSync] = useState<SyncStats>()
@@ -592,6 +597,49 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setStatus('new')
   }, [googleSession])
 
+  const changeDriveStorageMode = useCallback(async (mode: DriveStorageMode) => {
+    if (!repository || !settings || driveModeBusy || destroyBusy) return
+    if ((settings.driveStorageMode ?? 'visible') === mode) return
+    setDriveModeBusy(true)
+    setError(undefined)
+    try {
+      while (syncInFlight.current) await new Promise((resolve) => window.setTimeout(resolve, 100))
+
+      const hint = googleRememberedUser ?? googleBinding
+      let session = googleSession && googleSession.expiresAt > Date.now() ? googleSession : undefined
+      if (!session || mode === 'hidden') {
+        session = await connectGoogleAuth(mode === 'hidden' ? 'consent' : (hint ? '' : 'select_account'), hint?.email)
+        if (hint && session.user.sub !== hint.sub) throw new Error('error.googleAccountMismatch')
+        await assertGoogleAccount(session)
+        acceptGoogleSession(session, devicePreferences.googleRemember, false)
+      }
+
+      const layout = await migrateDriveStorageMode(session.accessToken, mode)
+      const previousState = await getSyncState()
+      await setSyncState({
+        schemaVersion: 1,
+        driveLayout: layout,
+        vaultFingerprint: undefined,
+        changeToken: undefined,
+        initializedAt: previousState?.initializedAt,
+      })
+
+      const nextSettings: AppSettings = {
+        ...settings,
+        driveStorageMode: mode,
+        updatedAt: new Date().toISOString(),
+      }
+      await repository.put(nextSettings)
+      setSettings(nextSettings)
+      if (vaultConfig) await performSync(session, repository, vaultConfig)
+    } catch (modeError) {
+      setError(localizeError(modeError, t, 'error.driveMigrationFailed'))
+      throw modeError
+    } finally {
+      setDriveModeBusy(false)
+    }
+  }, [acceptGoogleSession, assertGoogleAccount, devicePreferences.googleRemember, destroyBusy, driveModeBusy, googleBinding, googleRememberedUser, googleSession, performSync, repository, settings, t, vaultConfig])
+
   const destroyAllData = useCallback(async () => {
     if (destroyBusy) return
     destroyRequested.current = true
@@ -610,8 +658,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       if (hasCloudIdentity && !session) throw new Error('error.destroyReconnectGoogle')
       if (session) {
         await assertGoogleAccount(session)
-        const layout = syncState?.driveLayout ?? await findExistingDriveLayout(session.accessToken)
-        if (layout?.rootId) await deleteDriveFilePermanently(session.accessToken, layout.rootId)
+        await deleteAllDriveWalletData(session.accessToken)
       }
 
       revokeGoogle(session)
@@ -832,11 +879,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const value = useMemo<WalletContextValue>(() => ({
     status, vaultConfig, repository, transactions, accounts, categories, settings,
     googleSession, googleBinding, googleRememberedUser, googleConnectionState, googleAutoConnecting,
-    googleConfigured: googleClientConfigured(), devicePreferences, syncBusy, destroyBusy, syncMessage, syncProgress, lastSync, error,
+    googleConfigured: googleClientConfigured(), devicePreferences, syncBusy, destroyBusy, driveModeBusy, syncMessage, syncProgress, lastSync, error,
     createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities,
-    deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount, destroyAllData,
+    deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount, destroyAllData, changeDriveStorageMode,
     restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences, clearError: () => setError(undefined),
-  }), [status, vaultConfig, repository, transactions, accounts, categories, settings, googleSession, googleBinding, googleRememberedUser, googleConnectionState, googleAutoConnecting, devicePreferences, syncBusy, destroyBusy, syncMessage, syncProgress, lastSync, error, createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities, deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount, destroyAllData, restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences])
+  }), [status, vaultConfig, repository, transactions, accounts, categories, settings, googleSession, googleBinding, googleRememberedUser, googleConnectionState, googleAutoConnecting, devicePreferences, syncBusy, destroyBusy, driveModeBusy, syncMessage, syncProgress, lastSync, error, createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities, deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount, destroyAllData, changeDriveStorageMode, restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences])
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>
 }
