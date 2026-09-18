@@ -147,7 +147,10 @@ export function Onboarding({ autoConnecting = false }: { autoConnecting?: boolea
       <div className="grid w-full gap-8 lg:grid-cols-[1fr_1.05fr]">
         <section className="flex flex-col justify-center">
           <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/20"><Wallet size={28} /></div>
-          <h1 className="text-4xl font-semibold tracking-tight text-stone-950 dark:text-white sm:text-5xl">O-Wallet</h1>
+          <div className="flex flex-wrap items-end gap-3">
+            <h1 className="text-4xl font-semibold tracking-tight text-stone-950 dark:text-white sm:text-5xl">O-Wallet</h1>
+            <span className="mb-1 rounded-full border border-stone-200 bg-stone-50 px-2.5 py-1 font-mono text-[11px] font-semibold text-stone-500 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-400">v{__APP_VERSION__}</span>
+          </div>
           <p className="mt-4 max-w-xl text-base leading-7 text-stone-600 dark:text-stone-300">{t('onboarding.tagline')}</p>
           <div className="mt-7 grid gap-3 text-sm text-stone-600 dark:text-stone-300 sm:grid-cols-2 lg:grid-cols-1">
             <div className="flex items-center gap-3"><ShieldCheck className="text-emerald-500" size={20} /> {t('onboarding.noBackend')}</div>
