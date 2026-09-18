@@ -30,6 +30,7 @@ import {
   clearGoogleAccountBinding,
   clearLocalVaultForAccountSwitch,
   clearLocalWalletData,
+  destroyLocalOWalletData,
   clearRememberedVaultUnlock,
   getDeviceSessionPreferences,
   getGoogleAccountBinding,
@@ -50,7 +51,7 @@ import {
   persistGoogleSession,
   revokeGoogle,
 } from './lib/googleAuth'
-import { downloadVaultConfig } from './lib/drive'
+import { deleteDriveFilePermanently, downloadVaultConfig, findExistingDriveLayout } from './lib/drive'
 import { fetchRemoteImageToLocal, syncWalletToDrive } from './lib/sync'
 import { reportDiagnostic } from './lib/security'
 import { buildFxSnapshot } from './lib/fx'
@@ -80,6 +81,7 @@ interface WalletContextValue {
   googleConfigured: boolean
   devicePreferences: DeviceSessionPreferences
   syncBusy: boolean
+  destroyBusy: boolean
   syncMessage: string
   syncProgress?: SyncProgress
   lastSync?: SyncStats
@@ -100,6 +102,7 @@ interface WalletContextValue {
   retryGoogleConnection: () => Promise<GoogleSession | undefined>
   disconnectGoogle: () => void
   switchLocalAccount: () => Promise<void>
+  destroyAllData: () => Promise<void>
   restoreVaultConfigFromDrive: () => Promise<boolean>
   syncNow: () => Promise<SyncStats | undefined>
   notifyMutation: () => Promise<void>
@@ -145,6 +148,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [googleAutoConnecting, setGoogleAutoConnecting] = useState(false)
   const [devicePreferences, setDevicePreferencesState] = useState<DeviceSessionPreferences>(DEFAULT_DEVICE_PREFERENCES)
   const [syncBusy, setSyncBusy] = useState(false)
+  const [destroyBusy, setDestroyBusy] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
   const [syncProgress, setSyncProgress] = useState<SyncProgress>()
   const [lastSync, setLastSync] = useState<SyncStats>()
@@ -587,6 +591,56 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setStatus('new')
   }, [googleSession])
 
+  const destroyAllData = useCallback(async () => {
+    if (destroyBusy || syncInFlight.current) return
+    setDestroyBusy(true)
+    setError(undefined)
+    try {
+      const binding = googleBinding ?? await getGoogleAccountBinding()
+      const syncState = await getSyncState()
+      const hasCloudIdentity = Boolean(binding || googleRememberedUser || syncState?.driveLayout)
+      const session = googleSession && googleSession.expiresAt > Date.now() ? googleSession : undefined
+
+      if (hasCloudIdentity && !session) throw new Error('error.destroyReconnectGoogle')
+      if (session) {
+        await assertGoogleAccount(session)
+        const layout = syncState?.driveLayout ?? await findExistingDriveLayout(session.accessToken)
+        if (layout?.rootId) await deleteDriveFilePermanently(session.accessToken, layout.rootId)
+      }
+
+      revokeGoogle(session)
+      clearStoredGoogleSession()
+      await destroyLocalOWalletData()
+
+      setGoogleSession(undefined)
+      setGoogleRememberedUser(undefined)
+      setGoogleReconnectUntil(undefined)
+      setGoogleReconnectMode(undefined)
+      setGoogleConnectionState('disconnected')
+      setGoogleBinding(undefined)
+      setVaultConfigState(undefined)
+      setDek(undefined)
+      setTransactions([])
+      setAccounts([])
+      setCategories([])
+      setSettings(undefined)
+      setLastSync(undefined)
+      setSyncMessage('')
+      setSyncProgress(undefined)
+      setGoogleAutoConnecting(false)
+      silentReconnectAttempted.current = false
+      bootstrapKey.current = undefined
+      setStatus('new')
+      window.location.reload()
+    } catch (destroyError) {
+      const message = localizeError(destroyError, t, 'error.destroyFailed')
+      setError(message)
+      throw destroyError
+    } finally {
+      setDestroyBusy(false)
+    }
+  }, [assertGoogleAccount, destroyBusy, googleBinding, googleRememberedUser, googleSession, t])
+
   const restoreVaultConfigFromDrive = useCallback(async () => {
     setError(undefined)
     try {
@@ -771,11 +825,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const value = useMemo<WalletContextValue>(() => ({
     status, vaultConfig, repository, transactions, accounts, categories, settings,
     googleSession, googleBinding, googleRememberedUser, googleConnectionState, googleAutoConnecting,
-    googleConfigured: googleClientConfigured(), devicePreferences, syncBusy, syncMessage, syncProgress, lastSync, error,
+    googleConfigured: googleClientConfigured(), devicePreferences, syncBusy, destroyBusy, syncMessage, syncProgress, lastSync, error,
     createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities,
-    deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount,
+    deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount, destroyAllData,
     restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences, clearError: () => setError(undefined),
-  }), [status, vaultConfig, repository, transactions, accounts, categories, settings, googleSession, googleBinding, googleRememberedUser, googleConnectionState, googleAutoConnecting, devicePreferences, syncBusy, syncMessage, syncProgress, lastSync, error, createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities, deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount, restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences])
+  }), [status, vaultConfig, repository, transactions, accounts, categories, settings, googleSession, googleBinding, googleRememberedUser, googleConnectionState, googleAutoConnecting, devicePreferences, syncBusy, destroyBusy, syncMessage, syncProgress, lastSync, error, createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities, deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount, destroyAllData, restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences])
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>
 }
