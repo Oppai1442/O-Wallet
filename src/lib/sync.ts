@@ -32,8 +32,28 @@ import {
   type DriveFileMeta,
 } from './drive'
 
-const SYNC_CONCURRENCY = 5
-const SNAPSHOT_CONCURRENCY = 4
+const SYNC_MIN_CONCURRENCY = 5
+const SYNC_MAX_CONCURRENCY = 16
+const SNAPSHOT_CONCURRENCY = 8
+
+function adaptiveSyncConcurrency(itemCount: number) {
+  if (itemCount <= 0) return 1
+  const nav = navigator as Navigator & { connection?: { effectiveType?: string; saveData?: boolean } }
+  const hardware = Math.max(2, Math.min(16, navigator.hardwareConcurrency || 4))
+  const effectiveType = nav.connection?.effectiveType ?? ''
+  if (nav.connection?.saveData || /(^|-)2g$/.test(effectiveType)) return Math.min(itemCount, 4)
+  if (effectiveType === '3g') return Math.min(itemCount, 6)
+  const batchTarget = itemCount >= 2_000 ? 16 : itemCount >= 500 ? 12 : itemCount >= 100 ? 8 : SYNC_MIN_CONCURRENCY
+  return Math.min(itemCount, SYNC_MAX_CONCURRENCY, Math.max(SYNC_MIN_CONCURRENCY, Math.min(batchTarget, hardware * 2)))
+}
+
+function newestStamp(value: { updatedAt?: string; modifiedTime?: string }) {
+  return value.updatedAt ?? value.modifiedTime ?? ''
+}
+
+function newestFirst<T extends { updatedAt?: string; modifiedTime?: string }>(items: T[]) {
+  return [...items].sort((a, b) => newestStamp(b).localeCompare(newestStamp(a)))
+}
 const SNAPSHOT_MIN_RECORDS = 1_000
 const SNAPSHOT_REFRESH_RECORD_DELTA = 1_000
 const SNAPSHOT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
@@ -444,7 +464,8 @@ async function fullRecordReconcile(
   await db.remoteRecords.clear()
   if (remoteRows.length) await db.remoteRecords.bulkPut(remoteRows)
 
-  await mapPool(localRows, SYNC_CONCURRENCY, async (local) => {
+  const orderedLocalRows = newestFirst(localRows)
+  await mapPool(orderedLocalRows, adaptiveSyncConcurrency(orderedLocalRows.length), async (local) => {
     try {
       const remoteFile = remoteMap.get(local.id)
       if (!remoteFile) {
@@ -475,7 +496,7 @@ async function fullRecordReconcile(
     }
   })
 
-  await mapPool(Array.from(remoteMap.values()), SYNC_CONCURRENCY, async (remoteFile) => {
+  await mapPool(newestFirst(Array.from(remoteMap.values()).map((file) => ({ ...file, updatedAt: file.appProperties?.updatedAt ?? file.modifiedTime ?? '' }))), adaptiveSyncConcurrency(remoteMap.size), async (remoteFile) => {
     try {
       await db.records.put(await pullRecord(token, remoteFile))
       await dequeueSyncEntity('record', remoteFile.appProperties?.entityId ?? '')
@@ -507,7 +528,7 @@ async function fullImageReconcile(
   await db.remoteImages.clear()
   if (remoteRows.length) await db.remoteImages.bulkPut(remoteRows)
 
-  await mapPool(localRows, SYNC_CONCURRENCY, async (local) => {
+  await mapPool(localRows, adaptiveSyncConcurrency(localRows.length || 1), async (local) => {
     try {
       const remoteFile = remoteMap.get(local.id)
       if (!remoteFile) {
@@ -619,7 +640,8 @@ async function applyRemoteChangesWithProgress(
   if (!changes.length) return
   let completed = 0
   onProgress?.({ step: 'records', completed: 0, total: changes.length })
-  await mapPool(changes, SYNC_CONCURRENCY, async (change) => {
+  const orderedChanges = [...changes].sort((a, b) => (b.file?.appProperties?.updatedAt ?? b.file?.modifiedTime ?? '').localeCompare(a.file?.appProperties?.updatedAt ?? a.file?.modifiedTime ?? ''))
+  await mapPool(orderedChanges, adaptiveSyncConcurrency(orderedChanges.length), async (change) => {
     try {
       await applyRemoteChange(token, change, stats)
     } finally {
@@ -635,15 +657,23 @@ async function pushDirtyQueue(
   stats: SyncStats,
   onProgress?: (progress: SyncProgress) => void,
 ) {
-  const queued = await db.syncQueue.orderBy('queuedAt').toArray()
+  const queued = await db.syncQueue.toArray()
   const recordQueue = queued.filter((item) => item.entityType === 'record')
   const imageQueue = queued.filter((item) => item.entityType === 'image')
+  const [recordRows, imageRows] = await Promise.all([
+    db.records.bulkGet(recordQueue.map((item) => item.entityId)),
+    db.images.bulkGet(imageQueue.map((item) => item.entityId)),
+  ])
+  const recordUpdatedAt = new Map(recordQueue.map((item, index) => [item.entityId, recordRows[index]?.updatedAt ?? item.queuedAt]))
+  const imageUpdatedAt = new Map(imageQueue.map((item, index) => [item.entityId, imageRows[index]?.updatedAt ?? item.queuedAt]))
+  recordQueue.sort((a, b) => (recordUpdatedAt.get(b.entityId) ?? '').localeCompare(recordUpdatedAt.get(a.entityId) ?? ''))
+  imageQueue.sort((a, b) => (imageUpdatedAt.get(b.entityId) ?? '').localeCompare(imageUpdatedAt.get(a.entityId) ?? ''))
 
   async function processQueue(items: SyncQueueRow[], step: SyncProgress['step']) {
     if (!items.length) return
     let completed = 0
     onProgress?.({ step, completed, total: items.length })
-    await mapPool(items, SYNC_CONCURRENCY, async (item) => {
+    await mapPool(items, adaptiveSyncConcurrency(items.length), async (item) => {
       try {
         if (item.entityType === 'record') {
           const local = await db.records.get(item.entityId)
