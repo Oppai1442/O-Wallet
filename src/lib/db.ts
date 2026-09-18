@@ -130,6 +130,7 @@ export async function getDeviceId() {
 const DEFAULT_DEVICE_PREFERENCES: DeviceSessionPreferences = {
   googleRemember: '30d',
   vaultRemember: 'off',
+  googleAutoLogin: true,
 }
 
 export async function getDeviceSessionPreferences(): Promise<DeviceSessionPreferences> {
