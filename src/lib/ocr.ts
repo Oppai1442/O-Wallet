@@ -695,16 +695,19 @@ export function detectTransactionBlocks(
     if (inferred.length > 1) groups.splice(0, groups.length, ...inferred)
   }
 
-  return groups.map((group) => {
+  const detected: OcrTransactionBlock[] = []
+  for (const group of groups) {
     const block = blockResultFromLines(group, result, width, height)
-    if (!block) return undefined
+    if (!block) continue
     const candidate = template ? parseTransactionWithTemplate(block.result, template, width, Math.max(1, block.y1 - block.y0)) : parseTransactionFromOcr(block.result)
+    if (!(candidate.amount || candidate.occurredAt || candidate.merchant || candidate.description)) continue
     const confidence = group.reduce((sum, line) => sum + line.confidence, 0) / Math.max(1, group.length)
-    return {
+    detected.push({
       candidate,
       bbox: { x: 0, y: block.y0, width, height: Math.max(1, block.y1 - block.y0) },
       confidence,
       templateId: template?.id,
-    } satisfies OcrTransactionBlock
-  }).filter((block): block is OcrTransactionBlock => Boolean(block && (block.candidate.amount || block.candidate.occurredAt || block.candidate.merchant || block.candidate.description)))
+    })
+  }
+  return detected
 }
