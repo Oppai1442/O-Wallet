@@ -4,7 +4,7 @@ import {
   RECORDS_FOLDER_NAME,
   VAULT_FILE_NAME,
 } from '../constants'
-import type { DriveLayout, VaultConfig } from '../types'
+import type { DriveLayout, DriveStorageMode, VaultConfig } from '../types'
 import { SECURITY_LIMITS } from './security'
 
 const DRIVE_API = 'https://www.googleapis.com/drive/v3'
@@ -117,15 +117,15 @@ export async function listAllDriveChanges(token: string, startToken: string) {
   return { changes, newStartPageToken }
 }
 
-export async function listDriveFiles(token: string, query: string, pageToken?: string): Promise<{ files: DriveFileMeta[]; nextPageToken?: string }> {
-  return driveJson(token, `${DRIVE_API}/files?${qs({ q: query, spaces: 'drive', pageSize: '1000', pageToken, fields: 'nextPageToken,files(id,name,mimeType,modifiedTime,size,appProperties)' })}`)
+export async function listDriveFiles(token: string, query: string, pageToken?: string, space: 'drive' | 'appDataFolder' = 'drive'): Promise<{ files: DriveFileMeta[]; nextPageToken?: string }> {
+  return driveJson(token, `${DRIVE_API}/files?${qs({ q: query, spaces: space, pageSize: '1000', pageToken, fields: 'nextPageToken,files(id,name,mimeType,modifiedTime,size,appProperties)' })}`)
 }
 
-export async function listAllDriveFiles(token: string, query: string) {
+export async function listAllDriveFiles(token: string, query: string, space: 'drive' | 'appDataFolder' = 'drive') {
   const result: DriveFileMeta[] = []
   let pageToken: string | undefined
   do {
-    const page = await listDriveFiles(token, query, pageToken)
+    const page = await listDriveFiles(token, query, pageToken, space)
     result.push(...page.files)
     pageToken = page.nextPageToken
   } while (pageToken)
@@ -139,43 +139,189 @@ export async function createDriveFolder(token: string, name: string, parentId?: 
   })
 }
 
-async function findChild(token: string, parentId: string, name: string, mimeType?: string) {
+async function findChild(token: string, parentId: string, name: string, mimeType?: string, space: 'drive' | 'appDataFolder' = 'drive') {
   const query = [`'${driveQueryLiteral(parentId)}' in parents`, `name = '${driveQueryLiteral(name)}'`, 'trashed = false', mimeType ? `mimeType = '${mimeType}'` : undefined].filter(Boolean).join(' and ')
-  return (await listAllDriveFiles(token, query))[0]
+  return (await listAllDriveFiles(token, query, space))[0]
 }
 
-async function findChildByAppProperty(token: string, parentId: string, key: string, value: string, mimeType?: string) {
+async function findChildByAppProperty(token: string, parentId: string, key: string, value: string, mimeType?: string, space: 'drive' | 'appDataFolder' = 'drive') {
   const query = [`'${driveQueryLiteral(parentId)}' in parents`, 'trashed = false', `appProperties has { key='${driveQueryLiteral(key)}' and value='${driveQueryLiteral(value)}' }`, mimeType ? `mimeType = '${mimeType}'` : undefined].filter(Boolean).join(' and ')
-  return (await listAllDriveFiles(token, query))[0]
+  return (await listAllDriveFiles(token, query, space))[0]
+}
+
+const STORAGE_NOTE_NAME = 'README - O-Wallet data.txt'
+const STORAGE_NOTE_TEXT = [
+  'O-Wallet data is managed by the O-Wallet application.',
+  '',
+  'If hidden storage is enabled, personal wallet data is stored in Google Drive appDataFolder and is not visible in My Drive.',
+  'Do not try to remove hidden O-Wallet data manually. Use O-Wallet > Settings > Data & app > Destroy all data.',
+  '',
+  'Shared Wallet files may remain visible because Google Drive does not allow appDataFolder files to be shared.',
+].join('\n')
+
+async function updateDriveMetadata(token: string, fileId: string, body: Record<string, unknown>) {
+  return driveJson<DriveFileMeta>(token, `${DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,modifiedTime,size,appProperties`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+async function findVisibleRoot(token: string) {
+  const roots = await listAllDriveFiles(token, `mimeType = '${FOLDER_MIME}' and trashed = false and appProperties has { key='owalletRoot' and value='1' }`, 'drive')
+  return roots[0]
+}
+
+async function ensureVisibleRoot(token: string) {
+  return (await findVisibleRoot(token))
+    ?? await createDriveFolder(token, DRIVE_ROOT_NAME, undefined, { owalletRoot: '1', schema: '1', owalletStorageMode: 'visible' })
+}
+
+async function findHiddenRoot(token: string) {
+  const roots = await listAllDriveFiles(token, `mimeType = '${FOLDER_MIME}' and trashed = false and appProperties has { key='owalletHiddenRoot' and value='1' }`, 'appDataFolder')
+  return roots[0]
+}
+
+async function ensureHiddenRoot(token: string) {
+  return (await findHiddenRoot(token))
+    ?? await createDriveFolder(token, DRIVE_ROOT_NAME, 'appDataFolder', { owalletHiddenRoot: '1', schema: '1' })
+}
+
+async function ensureStorageNote(token: string, visibleRootId: string) {
+  const existing = await findChildByAppProperty(token, visibleRootId, 'owalletType', 'storage-note')
+  await uploadDriveFile(token, {
+    id: existing?.id,
+    name: STORAGE_NOTE_NAME,
+    parentId: visibleRootId,
+    content: new Blob([STORAGE_NOTE_TEXT], { type: 'text/plain;charset=utf-8' }),
+    appProperties: { owalletType: 'storage-note', schema: '1' },
+  })
+}
+
+async function layoutInsideRoot(token: string, rootId: string, space: 'drive' | 'appDataFolder', create = false): Promise<DriveLayout> {
+  const [recordsByTag, imagesByTag, vaultByTag] = await Promise.all([
+    findChildByAppProperty(token, rootId, 'owalletFolder', 'records', FOLDER_MIME, space),
+    findChildByAppProperty(token, rootId, 'owalletFolder', 'images', FOLDER_MIME, space),
+    findChildByAppProperty(token, rootId, 'owalletType', 'vault-config', undefined, space),
+  ])
+  let records = recordsByTag ?? await findChild(token, rootId, RECORDS_FOLDER_NAME, FOLDER_MIME, space)
+  let images = imagesByTag ?? await findChild(token, rootId, IMAGES_FOLDER_NAME, FOLDER_MIME, space)
+  const vault = vaultByTag ?? await findChild(token, rootId, VAULT_FILE_NAME, undefined, space)
+  if (create && !records) records = await createDriveFolder(token, RECORDS_FOLDER_NAME, rootId, { owalletFolder: 'records' })
+  if (create && !images) images = await createDriveFolder(token, IMAGES_FOLDER_NAME, rootId, { owalletFolder: 'images' })
+  return {
+    rootId,
+    recordsId: records?.id ?? '',
+    imagesId: images?.id ?? '',
+    vaultFileId: vault?.id,
+    space,
+  }
 }
 
 export async function findExistingDriveLayout(token: string): Promise<DriveLayout | undefined> {
-  const roots = await listAllDriveFiles(token, `mimeType = '${FOLDER_MIME}' and trashed = false and appProperties has { key='owalletRoot' and value='1' }`)
-  const root = roots[0]
-  if (!root) return undefined
-  const [recordsByTag, imagesByTag, vaultByTag] = await Promise.all([
-    findChildByAppProperty(token, root.id, 'owalletFolder', 'records', FOLDER_MIME),
-    findChildByAppProperty(token, root.id, 'owalletFolder', 'images', FOLDER_MIME),
-    findChildByAppProperty(token, root.id, 'owalletType', 'vault-config'),
-  ])
-  const [records, images, vault] = await Promise.all([
-    recordsByTag ? Promise.resolve(recordsByTag) : findChild(token, root.id, RECORDS_FOLDER_NAME, FOLDER_MIME),
-    imagesByTag ? Promise.resolve(imagesByTag) : findChild(token, root.id, IMAGES_FOLDER_NAME, FOLDER_MIME),
-    vaultByTag ? Promise.resolve(vaultByTag) : findChild(token, root.id, VAULT_FILE_NAME),
-  ])
-  return { rootId: root.id, recordsId: records?.id ?? '', imagesId: images?.id ?? '', vaultFileId: vault?.id }
+  const visibleRoot = await findVisibleRoot(token)
+  if (!visibleRoot) {
+    const hiddenRoot = await findHiddenRoot(token).catch(() => undefined)
+    if (!hiddenRoot) return undefined
+    const layout = await layoutInsideRoot(token, hiddenRoot.id, 'appDataFolder')
+    return { ...layout, storageMode: 'hidden', space: 'appDataFolder' }
+  }
+
+  const mode = visibleRoot.appProperties?.owalletStorageMode === 'hidden' ? 'hidden' : 'visible'
+  if (mode === 'hidden') {
+    const hiddenRoot = await findHiddenRoot(token)
+    if (!hiddenRoot) throw new Error('error.hiddenDriveDataMissing')
+    const layout = await layoutInsideRoot(token, hiddenRoot.id, 'appDataFolder')
+    return { ...layout, storageMode: 'hidden', visibleRootId: visibleRoot.id, space: 'appDataFolder' }
+  }
+  const layout = await layoutInsideRoot(token, visibleRoot.id, 'drive')
+  return { ...layout, storageMode: 'visible', visibleRootId: visibleRoot.id, space: 'drive' }
 }
 
 export async function ensureDriveLayout(token: string): Promise<DriveLayout> {
-  let layout = await findExistingDriveLayout(token)
-  if (!layout) {
-    const root = await createDriveFolder(token, DRIVE_ROOT_NAME, undefined, { owalletRoot: '1', schema: '1' })
-    layout = { rootId: root.id, recordsId: '', imagesId: '' }
+  const existing = await findExistingDriveLayout(token)
+  if (existing) {
+    const layout = await layoutInsideRoot(token, existing.rootId, existing.space ?? 'drive', true)
+    return { ...layout, storageMode: existing.storageMode ?? 'visible', visibleRootId: existing.visibleRootId ?? (existing.storageMode === 'hidden' ? undefined : existing.rootId), space: existing.space ?? 'drive' }
   }
-  if (!layout.recordsId) layout.recordsId = (await createDriveFolder(token, RECORDS_FOLDER_NAME, layout.rootId, { owalletFolder: 'records' })).id
-  if (!layout.imagesId) layout.imagesId = (await createDriveFolder(token, IMAGES_FOLDER_NAME, layout.rootId, { owalletFolder: 'images' })).id
-  if (!layout.vaultFileId) layout.vaultFileId = (await findChild(token, layout.rootId, VAULT_FILE_NAME))?.id
-  return layout
+  const root = await ensureVisibleRoot(token)
+  const layout = await layoutInsideRoot(token, root.id, 'drive', true)
+  return { ...layout, storageMode: 'visible', visibleRootId: root.id, space: 'drive' }
+}
+
+async function copyFileContent(token: string, source: DriveFileMeta, parentId: string) {
+  if (source.mimeType === FOLDER_MIME) throw new Error('folder copy requires recursion')
+  const bytes = await downloadDriveFile(token, source.id)
+  return uploadDriveFile(token, {
+    name: source.name,
+    parentId,
+    content: new Blob([bytes], { type: source.mimeType || 'application/octet-stream' }),
+    appProperties: source.appProperties,
+  })
+}
+
+async function copyChildrenRecursive(token: string, sourceParentId: string, targetParentId: string, sourceSpace: 'drive' | 'appDataFolder', skipShared = false) {
+  const children = await listAllDriveFiles(token, `'${driveQueryLiteral(sourceParentId)}' in parents and trashed = false`, sourceSpace)
+  for (const child of children) {
+    if (skipShared && child.appProperties?.owalletFolder === 'shared-wallets') continue
+    if (child.appProperties?.owalletType === 'storage-note') continue
+    if (child.mimeType === FOLDER_MIME) {
+      const folder = await createDriveFolder(token, child.name, targetParentId, child.appProperties)
+      await copyChildrenRecursive(token, child.id, folder.id, sourceSpace, skipShared)
+    } else {
+      await copyFileContent(token, child, targetParentId)
+    }
+  }
+}
+
+async function deletePersonalChildren(token: string, rootId: string, space: 'drive' | 'appDataFolder') {
+  const children = await listAllDriveFiles(token, `'${driveQueryLiteral(rootId)}' in parents and trashed = false`, space)
+  for (const child of children) {
+    if (space === 'drive' && child.appProperties?.owalletFolder === 'shared-wallets') continue
+    if (space === 'drive' && child.appProperties?.owalletType === 'storage-note') continue
+    await deleteDriveFilePermanently(token, child.id)
+  }
+}
+
+export async function migrateDriveStorageMode(token: string, targetMode: DriveStorageMode): Promise<DriveLayout> {
+  const current = await ensureDriveLayout(token)
+  if ((current.storageMode ?? 'visible') === targetMode) return current
+
+  const visibleRoot = await ensureVisibleRoot(token)
+  if (targetMode === 'hidden') {
+    const oldHidden = await findHiddenRoot(token)
+    if (oldHidden) await deleteDriveFilePermanently(token, oldHidden.id)
+    const hiddenRoot = await ensureHiddenRoot(token)
+    await copyChildrenRecursive(token, current.rootId, hiddenRoot.id, current.space ?? 'drive', true)
+    const hiddenLayout = await layoutInsideRoot(token, hiddenRoot.id, 'appDataFolder')
+    if (!hiddenLayout.recordsId || !hiddenLayout.imagesId || !hiddenLayout.vaultFileId) {
+      await deleteDriveFilePermanently(token, hiddenRoot.id).catch(() => undefined)
+      throw new Error('error.driveMigrationFailed')
+    }
+    await ensureStorageNote(token, visibleRoot.id)
+    await updateDriveMetadata(token, visibleRoot.id, { appProperties: { ...(visibleRoot.appProperties ?? {}), owalletRoot: '1', schema: '1', owalletStorageMode: 'hidden' } })
+    await deletePersonalChildren(token, current.rootId, current.space ?? 'drive')
+    return { ...hiddenLayout, storageMode: 'hidden', visibleRootId: visibleRoot.id, space: 'appDataFolder' }
+  }
+
+  await deletePersonalChildren(token, visibleRoot.id, 'drive')
+  await copyChildrenRecursive(token, current.rootId, visibleRoot.id, current.space ?? 'appDataFolder')
+  const visibleLayout = await layoutInsideRoot(token, visibleRoot.id, 'drive')
+  if (!visibleLayout.recordsId || !visibleLayout.imagesId || !visibleLayout.vaultFileId) throw new Error('error.driveMigrationFailed')
+  await updateDriveMetadata(token, visibleRoot.id, { appProperties: { ...(visibleRoot.appProperties ?? {}), owalletRoot: '1', schema: '1', owalletStorageMode: 'visible' } })
+  const note = await findChildByAppProperty(token, visibleRoot.id, 'owalletType', 'storage-note')
+  if (note) await deleteDriveFilePermanently(token, note.id).catch(() => undefined)
+  if (current.space === 'appDataFolder') await deleteDriveFilePermanently(token, current.rootId)
+  return { ...visibleLayout, storageMode: 'visible', visibleRootId: visibleRoot.id, space: 'drive' }
+}
+
+export async function deleteAllDriveWalletData(token: string) {
+  const [visibleRoot, hiddenRoot] = await Promise.all([
+    findVisibleRoot(token).catch(() => undefined),
+    findHiddenRoot(token).catch(() => undefined),
+  ])
+  if (hiddenRoot) await deleteDriveFilePermanently(token, hiddenRoot.id)
+  if (visibleRoot) await deleteDriveFilePermanently(token, visibleRoot.id)
 }
 
 export async function downloadDriveFile(token: string, fileId: string, maxBytes?: number) {
