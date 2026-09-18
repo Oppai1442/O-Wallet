@@ -39,11 +39,15 @@ export interface OcrFieldPattern {
   valueType: OcrValueType
   /** Stable nearby label such as "Số tiền" or "Người nhận". */
   anchorText?: string
+  /** Alternate labels learned from accepted/corrected examples. */
+  anchorTexts?: string[]
   relation?: OcrRelation
   /** Fallback ordinal among values of the same type inside one detected transaction block. */
   ordinal?: number
   /** Normalized sample shape used as a weak hint, never as an exact coordinate. */
   sampleShape?: string
+  /** Alternate normalized value shapes learned over time. */
+  sampleShapes?: string[]
   successes?: number
   failures?: number
 }
