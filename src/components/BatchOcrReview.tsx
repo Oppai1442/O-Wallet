@@ -1,11 +1,11 @@
-import { AlertTriangle, CheckCircle2, Images, SkipForward } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Images, SkipForward } from 'lucide-react'
 import type { Account, AccountCatalogue, Category, TransactionType } from '../types'
 import { useI18n } from '../i18n'
 import { selectableCategories } from '../lib/categories'
 import { accountCurrencies } from '../lib/accounts'
 import { CategoryPicker } from './CategoryPicker'
 import { AccountSelect } from './AccountSelect'
-import { Input, Label, Select, Textarea } from './ui'
+import { Button, Input, Label, Select, Textarea } from './ui'
 
 export interface BatchOcrConflict {
   level: 'exact' | 'possible'
@@ -78,6 +78,7 @@ export function BatchOcrReview({ drafts, previewUrls, files, accounts, categorie
         <div className="grid min-w-0 gap-3 md:grid-cols-2"><div className="min-w-0"><Label>{t('modal.merchant')}</Label><Input className="min-w-0" value={active.merchant} onChange={(e) => patch({ merchant: e.target.value })}/></div><div><Label>{t('modal.balanceAfter')}</Label><Input type="number" value={active.balanceAfter} onChange={(e) => patch({ balanceAfter: e.target.value })}/></div></div>
         <div><Label>{t('modal.description')}</Label><Textarea rows={2} className="break-words" value={active.description} onChange={(e) => patch({ description: e.target.value })}/></div>
         <details className="rounded-xl bg-stone-50 p-2.5 dark:bg-stone-950/40"><summary className="cursor-pointer text-xs font-bold text-stone-600 dark:text-stone-300">{t('modal.rawOcr')}</summary><pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-words text-[11px] text-stone-500">{active.rawText}</pre></details>
+        <div className="flex items-center justify-between gap-2 border-t border-stone-200 pt-3 dark:border-stone-800"><Button variant="secondary" disabled={drafts.findIndex((draft)=>draft.id===active.id)<=0} onClick={()=>{const index=drafts.findIndex((draft)=>draft.id===active.id);if(index>0)onActiveId(drafts[index-1].id)}}><ChevronLeft size={16}/>{t('common.back')}</Button><div className="text-xs font-semibold text-stone-500">{drafts.findIndex((draft)=>draft.id===active.id)+1} / {drafts.length}</div><Button variant="secondary" disabled={drafts.findIndex((draft)=>draft.id===active.id)>=drafts.length-1} onClick={()=>{const index=drafts.findIndex((draft)=>draft.id===active.id);if(index>=0&&index<drafts.length-1)onActiveId(drafts[index+1].id)}}>{t('common.next')}<ChevronRight size={16}/></Button></div>
       </div>
     </div>
   </div>
