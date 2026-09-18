@@ -30,11 +30,53 @@ export interface OcrDetectedLine {
   height: number
 }
 
+export type OcrValueType = 'money' | 'datetime' | 'text' | 'digits'
+export type OcrRelation = 'same-row-right' | 'below' | 'above' | 'nearest'
+
+export interface OcrFieldPattern {
+  id: string
+  field: OcrField
+  valueType: OcrValueType
+  /** Stable nearby label such as "Số tiền" or "Người nhận". */
+  anchorText?: string
+  relation?: OcrRelation
+  /** Fallback ordinal among values of the same type inside one detected transaction block. */
+  ordinal?: number
+  /** Normalized sample shape used as a weak hint, never as an exact coordinate. */
+  sampleShape?: string
+  successes?: number
+  failures?: number
+}
+
+export interface OcrVisualFingerprint {
+  /** Quantized RGB buckets ordered by frequency. */
+  colors: Array<{ rgb: string; weight: number }>
+  averageLuma: number
+  aspectRatio: number
+}
+
+export interface OcrBlockPattern {
+  /** Repeated text anchor identifying the start/body of one transaction block. */
+  anchorTexts?: string[]
+  repeat: boolean
+}
+
 export interface OcrTemplate {
   id: string
   name: string
+  /** Missing means legacy coordinate template (schema 1). */
+  schemaVersion?: 1 | 2
   aspectRatio?: number
+  /** Legacy/fallback regions. Pattern templates may keep this empty. */
   regions: OcrRegion[]
+  /** Semantic/relative field extraction for schema 2. */
+  fieldPatterns?: OcrFieldPattern[]
+  /** Visual signature used only for template ranking, not as the sole extractor. */
+  visualFingerprint?: OcrVisualFingerprint
+  /** How repeated transaction blocks are detected in long/scrolling captures. */
+  blockPattern?: OcrBlockPattern
+  /** Stable OCR words/phrases that identify this screen/layout. */
+  identityAnchors?: string[]
   createdAt: string
   updatedAt: string
 }
