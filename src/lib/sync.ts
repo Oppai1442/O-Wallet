@@ -11,6 +11,7 @@ import type {
 } from '../types'
 import { base64UrlToBytes, bytesToBase64Url, packEncryptedPayload, unpackEncryptedPayload } from './crypto'
 import { SECURITY_LIMITS } from './security'
+import { syncRecordShards } from './recordShards'
 import {
   db,
   dequeueSyncEntity,
@@ -470,7 +471,7 @@ async function fullRecordReconcile(
       const remoteFile = remoteMap.get(local.id)
       if (!remoteFile) {
         if (bootstrapSeed) await db.records.delete(local.id)
-        else await uploadRecord(token, layout, local, stats)
+        else if (local.kind !== 'transaction') await uploadRecord(token, layout, local, stats)
         return
       }
       const cmp = compareStamp(local, remoteStamp(remoteFile))
@@ -479,7 +480,7 @@ async function fullRecordReconcile(
         await dequeueSyncEntity('record', local.id)
         stats.pulledRecords += 1
       } else if (cmp > 0) {
-        await uploadRecord(token, layout, local, stats)
+        if (local.kind !== 'transaction') await uploadRecord(token, layout, local, stats)
         if (local.version === remoteStamp(remoteFile).version) stats.conflictsResolved += 1
       } else if (cmp < 0) {
         await db.records.put(await pullRecord(token, remoteFile))
@@ -684,6 +685,7 @@ async function pushDirtyQueue(
             await db.syncQueue.delete(item.key)
             return
           }
+          if (local.kind === 'transaction') return
           const remote = await db.remoteRecords.get(local.id)
           if (remote && compareStamp(local, remote) < 0) return
           await uploadRecord(token, layout, local, stats)
@@ -768,6 +770,7 @@ async function syncCore(
     nextToken = delta.newStartPageToken ?? nextToken
   }
 
+  await syncRecordShards(token, layout.recordsId, stats, onProgress)
   await pushDirtyQueue(token, layout, stats, onProgress)
 
   await setSyncState({
@@ -778,9 +781,8 @@ async function syncCore(
     initializedAt: state.initializedAt ?? new Date().toISOString(),
   })
 
-  // Snapshot files are acceleration caches only. Per-record files remain canonical.
-  // Failure to publish a cache must never fail ordinary wallet sync.
-  await maybePublishBootstrapSnapshot(token, layout).catch(() => undefined)
+  // v2 time shards are now canonical for transactions. Existing bootstrap snapshots
+  // remain readable for migration, but are no longer republished after shard adoption.
 }
 
 export async function syncWalletToDrive(
