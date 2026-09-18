@@ -5,6 +5,9 @@ const SQLITE_EXT = new Set(['mmbak', 'db', 'sqlite', 'sqlite3'])
 export const SECURITY_LIMITS = {
   maxImageBytes: 20 * 1024 * 1024,
   maxImagePixels: 50_000_000,
+  maxScrollCapturePixels: 150_000_000,
+  maxScrollCaptureHeight: 120_000,
+  maxScrollCaptureWidth: 4_096,
   maxImagesPerBatch: 50,
   maxSqliteImportBytes: 128 * 1024 * 1024,
   maxImportedTransactions: 250_000,
@@ -63,9 +66,13 @@ export async function validateImageFile(file: File) {
   if ('createImageBitmap' in globalThis) {
     const bitmap = await createImageBitmap(file)
     try {
-      if (bitmap.width <= 0 || bitmap.height <= 0 || bitmap.width * bitmap.height > SECURITY_LIMITS.maxImagePixels) {
-        throw new Error('error.imageDimensionsTooLarge')
-      }
+      if (bitmap.width <= 0 || bitmap.height <= 0) throw new Error('error.imageDimensionsTooLarge')
+      const pixels = bitmap.width * bitmap.height
+      const scrollLike = bitmap.height >= bitmap.width * 4
+        && bitmap.width <= SECURITY_LIMITS.maxScrollCaptureWidth
+        && bitmap.height <= SECURITY_LIMITS.maxScrollCaptureHeight
+        && pixels <= SECURITY_LIMITS.maxScrollCapturePixels
+      if (pixels > SECURITY_LIMITS.maxImagePixels && !scrollLike) throw new Error('error.imageDimensionsTooLarge')
     } finally {
       bitmap.close()
     }
