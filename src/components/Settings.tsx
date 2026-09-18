@@ -248,7 +248,7 @@ function SlideToDestroy({enabled,busy,lockedText,slideText,releaseText,onConfirm
   return <div ref={trackRef} role="slider" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress*100)} aria-disabled={!enabled||busy} className={`relative h-14 select-none overflow-hidden rounded-2xl border transition-colors ${enabled?'border-rose-300 bg-rose-50 dark:border-rose-500/30 dark:bg-rose-500/10':'border-stone-200 bg-stone-100 opacity-60 dark:border-stone-800 dark:bg-stone-900'} ${enabled&&!busy?'touch-none cursor-grab active:cursor-grabbing':''}`} onPointerDown={start} onPointerMove={move} onPointerUp={finish} onPointerCancel={()=>{setDragging(false);setProgress(0)}}>
     <div className="absolute inset-y-0 left-0 bg-rose-500/15 transition-[width] duration-75" style={{width:`${Math.round(progress*100)}%`}}/>
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-16 text-center text-sm font-semibold text-stone-600 dark:text-stone-300">{busy?'…':label}</div>
-    <div className="pointer-events-none absolute left-1 top-1 flex h-12 w-12 items-center justify-center rounded-xl bg-rose-600 text-white shadow-md transition-transform duration-75" style={{transform:`translateX(calc(${progress} * (100% - 0px)))`, left:`calc(4px + ${progress} * (100% - 56px))`}}>
+    <div className="pointer-events-none absolute left-1 top-1 flex h-12 w-12 items-center justify-center rounded-xl bg-rose-600 text-white shadow-md transition-transform duration-75" style={{left:`calc(4px + ${progress} * (100% - 56px))`}}>
       <Trash2 size={18}/>
     </div>
   </div>
