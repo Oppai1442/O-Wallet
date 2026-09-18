@@ -559,6 +559,14 @@ export interface ParsedTransactionCandidate {
   rawText: string
 }
 
+export interface OcrTransactionBlock {
+  candidate: ParsedTransactionCandidate
+  /** Source-image coordinates in pixels, retained so review can focus the exact row/card. */
+  bbox: { x: number; y: number; width: number; height: number }
+  confidence: number
+  templateId?: string
+}
+
 export type SyncProgressStep = 'prepare' | 'index' | 'bootstrap' | 'records' | 'images' | 'done'
 
 export interface SyncProgress {
