@@ -252,7 +252,7 @@ export class WalletRepository {
     if (headerEnd > clear.byteLength) throw new Error('error.corruptImage')
     const header = JSON.parse(new TextDecoder().decode(clear.slice(4, headerEnd))) as { mimeType?: string; originalName?: string; originalSize?: number }
     const imageBytes = clear.slice(headerEnd)
-    if (imageBytes.byteLength <= 0 || imageBytes.byteLength > SECURITY_LIMITS.maxImageBytes) throw new Error('error.corruptImage')
+    if (imageBytes.byteLength <= 0 || imageBytes.byteLength > SECURITY_LIMITS.maxScrollCaptureBytes) throw new Error('error.corruptImage')
     const mimeType = sniffRasterImageMime(imageBytes)
     if (!mimeType) throw new Error('error.corruptImage')
     const originalSize = Number(header.originalSize)
