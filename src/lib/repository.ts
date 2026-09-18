@@ -25,13 +25,19 @@ function cleanCurrency(value: string | undefined) {
   return value?.trim().toUpperCase() ?? ''
 }
 
-function syncQueueRow(entityType: 'record' | 'image', entityId: string, queuedAt = new Date().toISOString(), priorityAt?: string) {
+function syncPartitionForEntity(entity: WalletEntity) {
+  if ('type' in entity) return entity.occurredAt.slice(0, 10)
+  return 'core'
+}
+
+function syncQueueRow(entityType: 'record' | 'image', entityId: string, queuedAt = new Date().toISOString(), priorityAt?: string, previousPartition?: string) {
   return {
     key: syncQueueKey(entityType, entityId),
     entityType,
     entityId,
     queuedAt,
     priorityAt,
+    previousPartition,
   }
 }
 
@@ -116,6 +122,7 @@ export class WalletRepository {
     const nextVersion = (existing?.version ?? 0) + 1
     const kind = recordKind(entity)
     const payload = await encryptJson(this.key, entity, `record:${kind}:${entity.id}`)
+    const syncPartition = syncPartitionForEntity(entity)
     const row: EncryptedRecordRow = {
       id: entity.id,
       kind,
@@ -123,12 +130,13 @@ export class WalletRepository {
       updatedAt: entity.updatedAt,
       deviceId,
       deleted: entity.deleted,
+      syncPartition,
       payload,
     }
     await db.transaction('rw', [db.records, db.syncQueue], async () => {
       await db.records.put(row)
       const priorityAt = 'type' in entity ? (entity as Transaction).occurredAt : row.updatedAt
-      await db.syncQueue.put(syncQueueRow('record', row.id, undefined, priorityAt))
+      await db.syncQueue.put(syncQueueRow('record', row.id, undefined, priorityAt, existing?.syncPartition && existing.syncPartition !== syncPartition ? existing.syncPartition : undefined))
     })
     return row
   }
@@ -157,6 +165,7 @@ export class WalletRepository {
           updatedAt: entity.updatedAt,
           deviceId,
           deleted: entity.deleted,
+          syncPartition: syncPartitionForEntity(entity),
           payload: await encryptJson(this.key, entity, `record:${kind}:${entity.id}`),
         } satisfies EncryptedRecordRow
       }))
@@ -166,13 +175,31 @@ export class WalletRepository {
         await db.syncQueue.bulkPut(rows.map((row, index) => {
           const entity = chunk[index]
           const priorityAt = 'type' in entity ? (entity as Transaction).occurredAt : row.updatedAt
-          return syncQueueRow('record', row.id, queuedAt, priorityAt)
+          const previousPartition = existing[index]?.syncPartition && existing[index]?.syncPartition !== row.syncPartition ? existing[index]?.syncPartition : undefined
+          return syncQueueRow('record', row.id, queuedAt, priorityAt, previousPartition)
         }))
       })
       allRows.push(...rows)
     }
 
     return allRows
+  }
+
+  async ensureSyncPartitions() {
+    const rows = await db.records.toArray()
+    const missing = rows.filter((row) => !row.syncPartition)
+    if (!missing.length) return 0
+    const repaired: EncryptedRecordRow[] = []
+    for (const row of missing) {
+      try {
+        const entity = await decryptJson<WalletEntity>(this.key, row.payload, `record:${row.kind}:${row.id}`)
+        repaired.push({ ...row, syncPartition: syncPartitionForEntity(entity) })
+      } catch (error) {
+        reportDiagnostic(`partition-backfill:${row.id}`, error)
+      }
+    }
+    if (repaired.length) await db.records.bulkPut(repaired)
+    return repaired.length
   }
 
   async tombstoneTransaction(id: string) {
