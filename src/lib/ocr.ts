@@ -652,7 +652,7 @@ function blockResultFromLines(lines: OcrDetectedLine[], result: OcrResult, width
   const boxes = result.boxes.filter((box) => {
     const cy = (box.bbox.y0 + box.bbox.y1) / 2
     return cy >= y0 && cy <= y1
-  })
+  }).map((box) => ({ ...box, bbox: { ...box.bbox, y0: box.bbox.y0 - y0, y1: box.bbox.y1 - y0 } }))
   return { result: { text: textFromBoxes(boxes), boxes }, y0, y1 }
 }
 
