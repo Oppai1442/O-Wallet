@@ -483,7 +483,30 @@ export async function fingerprintImage(image: Blob): Promise<OcrVisualFingerprin
       count += 1
     }
     const colors = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([rgb, amount]) => ({ rgb, weight: amount / Math.max(1, count) }))
-    return { colors, averageLuma: luma / Math.max(1, count), aspectRatio: bitmap.width / Math.max(1, bitmap.height) }
+    const rowLuma = Array.from({ length: sampleHeight }, () => 0)
+    const rowCount = Array.from({ length: sampleHeight }, () => 0)
+    for (let y = 0; y < sampleHeight; y += 1) {
+      for (let x = 0; x < sampleWidth; x += 4) {
+        const index = (y * sampleWidth + x) * 4
+        const r = data[index], g = data[index + 1], b = data[index + 2]
+        rowLuma[y] += 0.2126 * r + 0.7152 * g + 0.0722 * b
+        rowCount[y] += 1
+      }
+      rowLuma[y] /= Math.max(1, rowCount[y])
+    }
+    const buckets = 64
+    const verticalLumaProfile = Array.from({ length: buckets }, (_, bucket) => {
+      const start = Math.floor(bucket * sampleHeight / buckets)
+      const end = Math.max(start + 1, Math.floor((bucket + 1) * sampleHeight / buckets))
+      let sum = 0
+      let rows = 0
+      for (let y = start; y < Math.min(sampleHeight, end); y += 1) {
+        sum += rowLuma[y]
+        rows += 1
+      }
+      return sum / Math.max(1, rows)
+    })
+    return { colors, averageLuma: luma / Math.max(1, count), aspectRatio: bitmap.width / Math.max(1, bitmap.height), verticalLumaProfile }
   } finally {
     bitmap.close()
   }
@@ -545,9 +568,11 @@ export function buildPatternTemplate(
       field,
       valueType: type,
       anchorText: anchor?.text,
+      anchorTexts: anchor?.text ? [anchor.text] : [],
       relation: anchor?.relation ?? 'nearest',
       ordinal: sameTypeBefore,
       sampleShape: sampleShape(line.text),
+      sampleShapes: [sampleShape(line.text)],
       successes: 1,
       failures: 0,
     }
@@ -566,6 +591,49 @@ export function buildPatternTemplate(
     identityAnchors,
     createdAt: now,
     updatedAt: now,
+  }
+}
+
+export function mergePatternTemplateEvidence(existing: OcrTemplate, learned: OcrTemplate): OcrTemplate {
+  if (existing.schemaVersion !== 2 || learned.schemaVersion !== 2) return learned
+  const currentPatterns = existing.fieldPatterns ?? []
+  const learnedPatterns = learned.fieldPatterns ?? []
+  const mergedPatterns: OcrFieldPattern[] = learnedPatterns.map((next) => {
+    const prior = currentPatterns.find((item) => item.field === next.field)
+    if (!prior) return next
+    const anchors = [...new Set([...(prior.anchorTexts ?? (prior.anchorText ? [prior.anchorText] : [])), ...(next.anchorTexts ?? (next.anchorText ? [next.anchorText] : []))])].slice(-8)
+    const shapes = [...new Set([...(prior.sampleShapes ?? (prior.sampleShape ? [prior.sampleShape] : [])), ...(next.sampleShapes ?? (next.sampleShape ? [next.sampleShape] : []))])].slice(-8)
+    return {
+      ...prior,
+      ...next,
+      id: prior.id,
+      anchorText: next.anchorText ?? prior.anchorText,
+      anchorTexts: anchors,
+      relation: next.relation ?? prior.relation,
+      ordinal: next.ordinal ?? prior.ordinal,
+      sampleShape: next.sampleShape ?? prior.sampleShape,
+      sampleShapes: shapes,
+      successes: (prior.successes ?? 0) + 1,
+      failures: prior.failures ?? 0,
+    }
+  })
+  for (const prior of currentPatterns) {
+    if (!mergedPatterns.some((item) => item.field === prior.field)) mergedPatterns.push(prior)
+  }
+  const identityAnchors = [...new Set([
+    ...(existing.identityAnchors ?? []),
+    ...(learned.identityAnchors ?? []),
+    ...mergedPatterns.flatMap((pattern) => pattern.anchorTexts ?? (pattern.anchorText ? [pattern.anchorText] : [])),
+  ])].filter(Boolean).slice(-16)
+  return {
+    ...existing,
+    ...learned,
+    id: existing.id,
+    createdAt: existing.createdAt,
+    fieldPatterns: mergedPatterns,
+    identityAnchors,
+    blockPattern: { anchorTexts: identityAnchors.slice(0, 6), repeat: true },
+    updatedAt: new Date().toISOString(),
   }
 }
 
@@ -602,9 +670,13 @@ function candidateValueFromLine(line: string, pattern: OcrFieldPattern) {
 }
 
 function findPatternLine(lines: OcrDetectedLine[], pattern: OcrFieldPattern) {
-  if (pattern.anchorText) {
-    const anchorText = normalizeLine(pattern.anchorText).toLocaleLowerCase('vi-VN')
-    const anchorIndex = lines.findIndex((line) => normalizeLine(line.text).toLocaleLowerCase('vi-VN').includes(anchorText))
+  const anchors = pattern.anchorTexts?.length ? pattern.anchorTexts : pattern.anchorText ? [pattern.anchorText] : []
+  if (anchors.length) {
+    const normalizedAnchors = anchors.map((value) => normalizeLine(value).toLocaleLowerCase('vi-VN'))
+    const anchorIndex = lines.findIndex((line) => {
+      const text = normalizeLine(line.text).toLocaleLowerCase('vi-VN')
+      return normalizedAnchors.some((anchor) => text.includes(anchor))
+    })
     if (anchorIndex >= 0) {
       const anchor = lines[anchorIndex]
       if (pattern.relation === 'same-row-right' && lineLooksLikeValue(anchor.text, pattern.valueType)) return anchor
@@ -656,11 +728,28 @@ function blockResultFromLines(lines: OcrDetectedLine[], result: OcrResult, width
   return { result: { text: textFromBoxes(boxes), boxes }, y0, y1 }
 }
 
+function visualSeparatorPositions(visual: OcrVisualFingerprint | undefined) {
+  const profile = visual?.verticalLumaProfile
+  if (!profile || profile.length < 8) return [] as number[]
+  const deltas = profile.slice(1).map((value, index) => Math.abs(value - profile[index]))
+  const mean = deltas.reduce((sum, value) => sum + value, 0) / Math.max(1, deltas.length)
+  const variance = deltas.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, deltas.length)
+  const threshold = mean + Math.sqrt(variance) * 1.25
+  const candidates: number[] = []
+  for (let index = 1; index < profile.length; index += 1) {
+    if (deltas[index - 1] < Math.max(8, threshold)) continue
+    const normalizedY = index / profile.length
+    if (normalizedY > 0.03 && normalizedY < 0.97) candidates.push(normalizedY)
+  }
+  return candidates.filter((value, index, all) => index === 0 || value - all[index - 1] > 0.03)
+}
+
 export function detectTransactionBlocks(
   result: OcrResult,
   width: number,
   height: number,
   template?: OcrTemplate,
+  visual?: OcrVisualFingerprint,
 ): OcrTransactionBlock[] {
   const lines = buildDetectedLines(result, width, height).sort((a, b) => a.y - b.y)
   if (!lines.length) return []
@@ -693,6 +782,26 @@ export function detectTransactionBlocks(
     }
     if (current.length) inferred.push(current)
     if (inferred.length > 1) groups.splice(0, groups.length, ...inferred)
+  }
+
+  if (groups.length === 1 && height > width * 2.2) {
+    const separators = visualSeparatorPositions(visual)
+    if (separators.length) {
+      const visualGroups: OcrDetectedLine[][] = []
+      let current: OcrDetectedLine[] = []
+      let separatorIndex = 0
+      for (const line of lines) {
+        const center = line.y + line.height / 2
+        while (separatorIndex < separators.length && center > separators[separatorIndex]) {
+          if (current.length >= 2) visualGroups.push(current)
+          current = []
+          separatorIndex += 1
+        }
+        current.push(line)
+      }
+      if (current.length >= 2) visualGroups.push(current)
+      if (visualGroups.length > 1) groups.splice(0, groups.length, ...visualGroups)
+    }
   }
 
   const detected: OcrTransactionBlock[] = []
