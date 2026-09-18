@@ -133,7 +133,7 @@ export function Settings() {
   const expenseCategories = selectableCategories(categories, 'expense')
 
   useEffect(() => { void repository?.storageStats().then(setStorage) }, [repository, transactions])
-  useEffect(() => { if (!googleSession) { setDriveFolder(undefined); return }; void findExistingDriveLayout(googleSession.accessToken).then((layout) => setDriveFolder(layout?.rootId)).catch(() => setDriveFolder(undefined)) }, [googleSession, lastSync])
+  useEffect(() => { if (!googleSession) { setDriveFolder(undefined); return }; void findExistingDriveLayout(googleSession.accessToken).then((layout) => setDriveFolder(layout?.visibleRootId ?? layout?.rootId)).catch(() => setDriveFolder(undefined)) }, [googleSession, lastSync])
 
   async function updateSettings(patch: Partial<AppSettings>) { if (settings) await saveEntity({ ...settings, ...patch, updatedAt: new Date().toISOString() }) }
   async function changeLanguage(next: UiLanguage) { setLanguage(next); await updateSettings({ language: next as AppSettings['language'] }) }
