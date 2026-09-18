@@ -11,7 +11,7 @@ import type {
 } from '../types'
 import { base64UrlToBytes, bytesToBase64Url, packEncryptedPayload, unpackEncryptedPayload } from './crypto'
 import { SECURITY_LIMITS } from './security'
-import { syncRecordShards } from './recordShards'
+import { hasRemoteRecordShards, syncRecordShards } from './recordShards'
 import {
   db,
   dequeueSyncEntity,
@@ -715,6 +715,7 @@ async function runInitialSync(
   token: string,
   layout: DriveLayout,
   stats: SyncStats,
+  recordShardsAvailable: boolean,
   onProgress?: (progress: SyncProgress) => void,
 ) {
   const startToken = await getDriveStartPageToken(token)
@@ -722,15 +723,23 @@ async function runInitialSync(
 
   const startedEmpty = (await db.records.count()) === 0
   let bootstrapSeed = false
-  if (startedEmpty) {
+  if (startedEmpty && !recordShardsAvailable) {
     onProgress?.({ step: 'bootstrap' })
     bootstrapSeed = await hydrateBootstrapSnapshot(token, layout)
   }
 
+  const remoteRecordPromise = recordShardsAvailable
+    ? Promise.all(['account', 'category', 'settings'].map((kind) => listAllDriveFiles(token, `'${layout.recordsId}' in parents and trashed = false and appProperties has { key='owalletType' and value='record' } and appProperties has { key='kind' and value='${kind}' }`))).then((groups) => groups.flat())
+    : listAllDriveFiles(token, `'${layout.recordsId}' in parents and trashed = false and appProperties has { key='owalletType' and value='record' }`)
+
+  const localRecordPromise = recordShardsAvailable
+    ? db.records.where('kind').anyOf(['account', 'category', 'settings']).toArray()
+    : db.records.toArray()
+
   const [remoteRecords, remoteImages, localRecords, localImages] = await Promise.all([
-    listAllDriveFiles(token, `'${layout.recordsId}' in parents and trashed = false and appProperties has { key='owalletType' and value='record' }`),
+    remoteRecordPromise,
     listAllDriveFiles(token, `'${layout.imagesId}' in parents and trashed = false and appProperties has { key='owalletType' and value='image' }`),
-    db.records.toArray(),
+    localRecordPromise,
     db.images.toArray(),
   ])
 
@@ -760,9 +769,10 @@ async function syncCore(
     await setSyncState(state)
   }
 
+  const recordShardsAvailable = await hasRemoteRecordShards(token, layout.recordsId)
   let nextToken = state.changeToken
   if (!nextToken) {
-    nextToken = await runInitialSync(token, layout, stats, onProgress)
+    nextToken = await runInitialSync(token, layout, stats, recordShardsAvailable, onProgress)
   } else {
     onProgress?.({ step: 'index' })
     const delta = await listAllDriveChanges(token, nextToken)
