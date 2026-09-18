@@ -220,6 +220,23 @@ export async function trashDriveFile(token: string, fileId: string) {
   await driveJson(token, `${DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=id,trashed`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }) })
 }
 
+export async function deleteDriveFilePermanently(token: string, fileId: string) {
+  const url = `${DRIVE_API}/files/${encodeURIComponent(fileId)}`
+  let response: Response | undefined
+  for (let attempt = 0; attempt < DRIVE_RETRY_ATTEMPTS; attempt += 1) {
+    response = await fetch(url, {
+      method: 'DELETE',
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
+      headers: authHeaders(token),
+    })
+    if (response.ok || response.status === 404) return
+    if (attempt >= DRIVE_RETRY_ATTEMPTS - 1 || !(await retryableDriveResponse(response))) break
+    await retryDelay(response, attempt)
+  }
+  throw new Error(`Google Drive API ${response?.status ?? 'delete failed'}`)
+}
+
 export function openDriveFolderUrl(folderId: string) { return `https://drive.google.com/drive/folders/${encodeURIComponent(folderId)}` }
 export async function getDriveFileMeta(token: string, fileId: string) { return driveJson<DriveFileMeta>(token, `${DRIVE_API}/files/${encodeURIComponent(fileId)}?${qs({ fields: 'id,name,mimeType,modifiedTime,size,appProperties,trashed' })}`) }
 export async function listDriveChildren(token: string, parentId: string) { return listAllDriveFiles(token, `'${driveQueryLiteral(parentId)}' in parents and trashed = false`) }
