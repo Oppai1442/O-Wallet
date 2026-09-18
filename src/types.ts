@@ -397,6 +397,8 @@ export interface SyncQueueRow {
   entityType: SyncEntityType
   entityId: string
   queuedAt: string
+  /** Transaction occurrence time when available; used only to prioritize sync order. */
+  priorityAt?: string
 }
 
 export interface RemoteEntityRow {
