@@ -281,6 +281,42 @@ async function pullRemoteChanges(
   for (const [month, meta] of changed) await pullMonth(token, month, meta, cached?.months[month], stats, onProgress, progress)
 }
 
+async function transactionQueueState() {
+  const queued = await db.syncQueue.where('entityType').equals('record').toArray()
+  if (!queued.length) return { hasDirtyTransactions: false, queued: [] as typeof queued }
+  const rows = await db.records.bulkGet(queued.map((item) => item.entityId))
+  return {
+    hasDirtyTransactions: rows.some((row) => row?.kind === 'transaction'),
+    queued,
+  }
+}
+
+function storageTransitionNeeded(index: RecordShardIndex | undefined) {
+  if (!index) return false
+  return Object.entries(index.months).some(([month, meta]) => meta.storage !== (isHotMonth(month) ? 'daily' : 'monthly'))
+}
+
+function changedUploadRecordCount(
+  remote: RecordShardIndex | undefined,
+  localMonths: Awaited<ReturnType<typeof localMonthState>>,
+) {
+  let total = 0
+  for (const [month, local] of localMonths) {
+    const remoteMonth = remote?.months[month]
+    const storage: MonthMeta['storage'] = isHotMonth(month) ? 'daily' : 'monthly'
+    if (remoteMonth?.hash === local.hash && remoteMonth.storage === storage) continue
+    if (storage === 'monthly' || remoteMonth?.storage !== 'daily') {
+      total += local.count
+      continue
+    }
+    for (const [day, payload] of local.days) {
+      const remoteDay = remoteMonth.days[day]
+      if (!remoteDay?.fileId || remoteDay.hash !== payload.hash) total += payload.rows.length
+    }
+  }
+  return total
+}
+
 async function publishLocal(
   token: string,
   recordsId: string,
@@ -291,7 +327,7 @@ async function publishLocal(
   onProgress?: (progress: SyncProgress) => void,
 ) {
   const nextMonths: Record<string, MonthMeta> = {}
-  const changedRecordCount = [...localMonths.entries()].reduce((sum, [month, local]) => sum + (local.hash === remote?.months[month]?.hash ? 0 : local.count), 0)
+  const changedRecordCount = changedUploadRecordCount(remote, localMonths)
   let completed = 0
   if (changedRecordCount) onProgress?.({ step: 'records', completed: 0, total: changedRecordCount })
 
@@ -366,6 +402,8 @@ async function publishLocal(
   }
 
   if (nextIndex.rootHash !== remote?.rootHash) {
+    const latestRemote = await readRemoteIndex(token, recordsId)
+    if ((latestRemote.index?.rootHash ?? '') !== (remote?.rootHash ?? '')) throw new Error('record-shard-index-changed')
     const text = JSON.stringify(nextIndex)
     if (new TextEncoder().encode(text).byteLength > MAX_INDEX_BYTES) throw new Error('error.driveFileTooLarge')
     await uploadDriveFile(token, {
@@ -384,9 +422,9 @@ async function publishLocal(
   await mapPool(stale, 3, async (fileId) => { await trashDriveFile(token, fileId).catch(() => undefined) })
 
   const queuedTransactions = await db.syncQueue.where('entityType').equals('record').toArray()
-  await Promise.all(queuedTransactions.map(async (item) => {
-    const row = await db.records.get(item.entityId)
-    if (row?.kind === 'transaction') await dequeueSyncEntity('record', item.entityId)
+  const queuedRows = await db.records.bulkGet(queuedTransactions.map((item) => item.entityId))
+  await Promise.all(queuedTransactions.map(async (item, index) => {
+    if (queuedRows[index]?.kind === 'transaction') await dequeueSyncEntity('record', item.entityId)
   }))
   return nextIndex
 }
@@ -401,9 +439,26 @@ export async function syncRecordShards(
   stats: SyncStats,
   onProgress?: (progress: SyncProgress) => void,
 ) {
-  const cached = await getKv<RecordShardIndex>(INDEX_KEY)
-  const { file, index: remote } = await readRemoteIndex(token, recordsId)
-  if (remote) await pullRemoteChanges(token, remote, cached, stats, onProgress)
-  const local = await localMonthState()
-  return publishLocal(token, recordsId, file, remote, local, stats, onProgress)
+  let cached = await getKv<RecordShardIndex>(INDEX_KEY)
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { file, index: remote } = await readRemoteIndex(token, recordsId)
+    const queueState = await transactionQueueState()
+    if (
+      remote
+      && cached
+      && remote.rootHash === cached.rootHash
+      && !queueState.hasDirtyTransactions
+      && !storageTransitionNeeded(remote)
+    ) return remote
+
+    if (remote) await pullRemoteChanges(token, remote, cached, stats, onProgress)
+    const local = await localMonthState()
+    try {
+      return await publishLocal(token, recordsId, file, remote, local, stats, onProgress)
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== 'record-shard-index-changed' || attempt === 2) throw error
+      cached = remote
+    }
+  }
+  throw new Error('error.syncFailed')
 }
