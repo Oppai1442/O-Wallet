@@ -669,8 +669,8 @@ async function pushDirtyQueue(
   const imageRowById = new Map(imageRows.filter((row): row is EncryptedImageRow => Boolean(row)).map((row) => [row.id, row]))
   const recordUpdatedAt = new Map(recordQueue.map((item, index) => [item.entityId, recordRows[index]?.updatedAt ?? item.queuedAt]))
   const imageUpdatedAt = new Map(imageQueue.map((item, index) => [item.entityId, imageRows[index]?.updatedAt ?? item.queuedAt]))
-  recordQueue.sort((a, b) => (recordUpdatedAt.get(b.entityId) ?? '').localeCompare(recordUpdatedAt.get(a.entityId) ?? ''))
-  imageQueue.sort((a, b) => (imageUpdatedAt.get(b.entityId) ?? '').localeCompare(imageUpdatedAt.get(a.entityId) ?? ''))
+  recordQueue.sort((a, b) => (b.priorityAt ?? recordUpdatedAt.get(b.entityId) ?? '').localeCompare(a.priorityAt ?? recordUpdatedAt.get(a.entityId) ?? ''))
+  imageQueue.sort((a, b) => (b.priorityAt ?? imageUpdatedAt.get(b.entityId) ?? '').localeCompare(a.priorityAt ?? imageUpdatedAt.get(a.entityId) ?? ''))
 
   async function processQueue(items: SyncQueueRow[], step: SyncProgress['step']) {
     if (!items.length) return
