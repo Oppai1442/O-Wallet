@@ -3,8 +3,12 @@ import type {
   OcrBox,
   OcrDetectedLine,
   OcrField,
+  OcrFieldPattern,
   OcrRegion,
   OcrResult,
+  OcrTemplate,
+  OcrTransactionBlock,
+  OcrVisualFingerprint,
   ParsedTransactionCandidate,
   TransactionType,
 } from '../types'
@@ -380,4 +384,327 @@ export function parseTransactionFromRegions(
       .map((item) => `[${item.region.field}] ${cleanRegionText(item.text, item.region)}`)
       .join('\n\n') || result.text,
   }
+}
+
+
+function canvasBlob(canvas: HTMLCanvasElement, type = 'image/png') {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('modal.errorOcr')), type)
+  })
+}
+
+export async function readRasterDimensions(image: Blob) {
+  const bitmap = await createImageBitmap(image)
+  try { return { width: bitmap.width, height: bitmap.height } } finally { bitmap.close() }
+}
+
+export async function recognizeImageTiled(
+  image: File | Blob,
+  onProgress?: (progress: number, status: string) => void,
+  options?: { tileHeight?: number; overlap?: number },
+): Promise<{ result: OcrResult; width: number; height: number }> {
+  const { width, height } = await readRasterDimensions(image)
+  const tileHeight = Math.max(900, options?.tileHeight ?? 2400)
+  const overlap = Math.max(80, Math.min(tileHeight / 3, options?.overlap ?? 240))
+  if (height <= tileHeight * 1.35) {
+    return { result: await recognizeImage(image, onProgress), width, height }
+  }
+
+  const step = tileHeight - overlap
+  const starts: number[] = []
+  for (let y = 0; y < height; y += step) {
+    starts.push(y)
+    if (y + tileHeight >= height) break
+  }
+
+  const boxes: OcrBox[] = []
+  const texts: string[] = []
+  const seen = new Set<string>()
+  for (let index = 0; index < starts.length; index += 1) {
+    const y = starts[index]
+    const h = Math.min(tileHeight, height - y)
+    const bitmap = await createImageBitmap(image, 0, y, width, h)
+    try {
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = h
+      const context = canvas.getContext('2d', { alpha: false })
+      if (!context) throw new Error('modal.errorOcr')
+      context.drawImage(bitmap, 0, 0)
+      const tile = await canvasBlob(canvas)
+      const result = await recognizeImage(tile, (progress, status) => {
+        onProgress?.((index + progress) / starts.length, `${index + 1}/${starts.length} · ${status}`)
+      })
+      texts.push(result.text)
+      for (const box of result.boxes) {
+        const shifted: OcrBox = { ...box, bbox: { ...box.bbox, y0: box.bbox.y0 + y, y1: box.bbox.y1 + y } }
+        const key = `${normalizeLine(shifted.text).toLocaleLowerCase('vi-VN')}|${Math.round(shifted.bbox.x0 / 6)}|${Math.round(shifted.bbox.y0 / 6)}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        boxes.push(shifted)
+      }
+    } finally {
+      bitmap.close()
+    }
+  }
+  const stitched = textFromBoxes(boxes)
+  return {
+    result: { text: stitched || texts.join('\n'), boxes: boxes.slice(0, SECURITY_LIMITS.maxOcrBoxes) },
+    width,
+    height,
+  }
+}
+
+function quantizedColor(r: number, g: number, b: number) {
+  const q = (value: number) => Math.round(value / 32) * 32
+  return `${Math.min(255, q(r))},${Math.min(255, q(g))},${Math.min(255, q(b))}`
+}
+
+export async function fingerprintImage(image: Blob): Promise<OcrVisualFingerprint> {
+  const bitmap = await createImageBitmap(image)
+  try {
+    const sampleWidth = Math.min(96, bitmap.width)
+    const sampleHeight = Math.max(1, Math.min(192, Math.round(bitmap.height * sampleWidth / Math.max(1, bitmap.width))))
+    const canvas = document.createElement('canvas')
+    canvas.width = sampleWidth
+    canvas.height = sampleHeight
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) throw new Error('modal.errorOcr')
+    context.drawImage(bitmap, 0, 0, sampleWidth, sampleHeight)
+    const data = context.getImageData(0, 0, sampleWidth, sampleHeight).data
+    const counts = new Map<string, number>()
+    let luma = 0
+    let count = 0
+    for (let index = 0; index < data.length; index += 16) {
+      const r = data[index], g = data[index + 1], b = data[index + 2]
+      const key = quantizedColor(r, g, b)
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+      luma += 0.2126 * r + 0.7152 * g + 0.0722 * b
+      count += 1
+    }
+    const colors = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([rgb, amount]) => ({ rgb, weight: amount / Math.max(1, count) }))
+    return { colors, averageLuma: luma / Math.max(1, count), aspectRatio: bitmap.width / Math.max(1, bitmap.height) }
+  } finally {
+    bitmap.close()
+  }
+}
+
+function valueTypeForField(field: OcrField): OcrFieldPattern['valueType'] {
+  if (field === 'amount' || field === 'balanceAfter') return 'money'
+  if (field === 'occurredAt') return 'datetime'
+  return 'text'
+}
+
+function lineLooksLikeValue(line: string, type: OcrFieldPattern['valueType']) {
+  if (type === 'money') return Boolean(parseMoneyText(line))
+  if (type === 'datetime') return Boolean(parseDateTimeText(line))
+  if (type === 'digits') return /^\D*\d[\d\s.-]{4,}\D*$/.test(line)
+  return line.trim().length >= 2
+}
+
+function sampleShape(text: string) {
+  return normalizeLine(text)
+    .replace(/[A-ZÀ-Ỹ]/g, 'A')
+    .replace(/[a-zà-ỹ]/g, 'a')
+    .replace(/\d/g, '0')
+    .replace(/A+/g, 'A')
+    .replace(/a+/g, 'a')
+    .replace(/0+/g, '0')
+    .slice(0, 80)
+}
+
+function inferAnchor(lines: OcrDetectedLine[], index: number, field: OcrField) {
+  const line = lines[index]
+  const stripped = stripFieldLabel(line.text, field)
+  if (stripped !== normalizeLine(line.text)) {
+    const prefixLength = Math.max(0, line.text.length - stripped.length)
+    const prefix = normalizeLine(line.text.slice(0, prefixLength).replace(/[:：\-–—]+$/g, ''))
+    if (prefix.length >= 2) return { text: prefix, relation: 'same-row-right' as const }
+  }
+  const previous = lines[index - 1]
+  if (previous && line.y - (previous.y + previous.height) < Math.max(0.08, line.height * 3) && !lineLooksLikeValue(previous.text, valueTypeForField(field))) {
+    return { text: previous.text, relation: 'below' as const }
+  }
+  return undefined
+}
+
+export function buildPatternTemplate(
+  name: string,
+  lines: OcrDetectedLine[],
+  mappings: Record<string, OcrField | ''>,
+  visualFingerprint?: OcrVisualFingerprint,
+  existingId?: string,
+): OcrTemplate {
+  const mapped = lines.map((line, index) => ({ line, index, field: mappings[line.id] })).filter((item) => item.field && item.field !== 'ignore' && item.field !== 'generic') as Array<{ line: OcrDetectedLine; index: number; field: Exclude<OcrField, 'ignore' | 'generic'> }>
+  const fieldPatterns: OcrFieldPattern[] = mapped.map(({ line, index, field }) => {
+    const type = valueTypeForField(field)
+    const anchor = inferAnchor(lines, index, field)
+    const sameTypeBefore = mapped.filter((item) => item.index < index && valueTypeForField(item.field) === type).length
+    return {
+      id: crypto.randomUUID(),
+      field,
+      valueType: type,
+      anchorText: anchor?.text,
+      relation: anchor?.relation ?? 'nearest',
+      ordinal: sameTypeBefore,
+      sampleShape: sampleShape(line.text),
+      successes: 1,
+      failures: 0,
+    }
+  })
+  const identityAnchors = [...new Set(fieldPatterns.map((pattern) => pattern.anchorText).filter((value): value is string => Boolean(value && value.length >= 2)))].slice(0, 12)
+  const now = new Date().toISOString()
+  return {
+    id: existingId ?? crypto.randomUUID(),
+    name,
+    schemaVersion: 2,
+    aspectRatio: visualFingerprint?.aspectRatio,
+    regions: [],
+    fieldPatterns,
+    visualFingerprint,
+    blockPattern: { anchorTexts: identityAnchors.slice(0, 4), repeat: true },
+    identityAnchors,
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+function colorSimilarity(a?: OcrVisualFingerprint, b?: OcrVisualFingerprint) {
+  if (!a || !b) return 0
+  const lookup = new Map(b.colors.map((item) => [item.rgb, item.weight]))
+  const overlap = a.colors.reduce((sum, item) => sum + Math.min(item.weight, lookup.get(item.rgb) ?? 0), 0)
+  const luma = 1 - Math.min(1, Math.abs(a.averageLuma - b.averageLuma) / 255)
+  return overlap * 0.75 + luma * 0.25
+}
+
+export function rankOcrTemplates(
+  templates: OcrTemplate[],
+  result: OcrResult,
+  width: number,
+  height: number,
+  visual?: OcrVisualFingerprint,
+) {
+  const text = normalizeLine(result.text).toLocaleLowerCase('vi-VN')
+  return templates.map((template) => {
+    if (template.schemaVersion !== 2) return { template, score: 0 }
+    const anchors = template.identityAnchors ?? []
+    const anchorScore = anchors.length ? anchors.filter((anchor) => text.includes(normalizeLine(anchor).toLocaleLowerCase('vi-VN'))).length / anchors.length : 0
+    const aspect = template.aspectRatio ? 1 - Math.min(1, Math.abs(template.aspectRatio - width / Math.max(1, height)) / Math.max(0.2, Math.abs(template.aspectRatio))) : 0.5
+    const visualScore = colorSimilarity(template.visualFingerprint, visual)
+    return { template, score: anchorScore * 0.55 + visualScore * 0.30 + aspect * 0.15 }
+  }).sort((a, b) => b.score - a.score)
+}
+
+function candidateValueFromLine(line: string, pattern: OcrFieldPattern) {
+  if (pattern.valueType === 'money') return parseMoneyText(line)
+  if (pattern.valueType === 'datetime') return parseDateTimeText(line)
+  return stripFieldLabel(line, pattern.field)
+}
+
+function findPatternLine(lines: OcrDetectedLine[], pattern: OcrFieldPattern) {
+  if (pattern.anchorText) {
+    const anchorText = normalizeLine(pattern.anchorText).toLocaleLowerCase('vi-VN')
+    const anchorIndex = lines.findIndex((line) => normalizeLine(line.text).toLocaleLowerCase('vi-VN').includes(anchorText))
+    if (anchorIndex >= 0) {
+      const anchor = lines[anchorIndex]
+      if (pattern.relation === 'same-row-right' && lineLooksLikeValue(anchor.text, pattern.valueType)) return anchor
+      if (pattern.relation === 'below') return lines.slice(anchorIndex + 1).find((line) => line.y >= anchor.y && line.y - anchor.y < 0.16 && lineLooksLikeValue(line.text, pattern.valueType))
+      if (pattern.relation === 'above') return [...lines.slice(0, anchorIndex)].reverse().find((line) => anchor.y - line.y < 0.16 && lineLooksLikeValue(line.text, pattern.valueType))
+      const nearby = lines.filter((line, index) => index !== anchorIndex && Math.abs(line.y - anchor.y) < 0.12 && lineLooksLikeValue(line.text, pattern.valueType))
+      if (nearby.length) return nearby.sort((a, b) => Math.abs(a.y - anchor.y) - Math.abs(b.y - anchor.y))[0]
+    }
+  }
+  const values = lines.filter((line) => lineLooksLikeValue(line.text, pattern.valueType))
+  return values[Math.max(0, pattern.ordinal ?? 0)]
+}
+
+export function parseTransactionWithTemplate(
+  result: OcrResult,
+  template: OcrTemplate,
+  width: number,
+  height: number,
+): ParsedTransactionCandidate {
+  if (template.schemaVersion !== 2 || !template.fieldPatterns?.length) {
+    return template.regions.length ? parseTransactionFromRegions(result, template.regions, width, height) : parseTransactionFromOcr(result)
+  }
+  const lines = buildDetectedLines(result, width, height)
+  const base = parseTransactionFromOcr(result)
+  const values: Partial<Record<OcrField, unknown>> = {}
+  for (const pattern of template.fieldPatterns) {
+    const line = findPatternLine(lines, pattern)
+    if (!line) continue
+    values[pattern.field] = candidateValueFromLine(line.text, pattern)
+  }
+  return {
+    ...base,
+    amount: typeof values.amount === 'number' ? values.amount : base.amount,
+    occurredAt: typeof values.occurredAt === 'string' ? values.occurredAt : base.occurredAt,
+    merchant: typeof values.merchant === 'string' ? values.merchant : base.merchant,
+    balanceAfter: typeof values.balanceAfter === 'number' ? values.balanceAfter : base.balanceAfter,
+    description: typeof values.description === 'string' ? values.description : base.description,
+  }
+}
+
+function blockResultFromLines(lines: OcrDetectedLine[], result: OcrResult, width: number, height: number) {
+  if (!lines.length) return undefined
+  const y0 = Math.max(0, Math.min(...lines.map((line) => line.y)) * height)
+  const y1 = Math.min(height, Math.max(...lines.map((line) => line.y + line.height)) * height)
+  const boxes = result.boxes.filter((box) => {
+    const cy = (box.bbox.y0 + box.bbox.y1) / 2
+    return cy >= y0 && cy <= y1
+  })
+  return { result: { text: textFromBoxes(boxes), boxes }, y0, y1 }
+}
+
+export function detectTransactionBlocks(
+  result: OcrResult,
+  width: number,
+  height: number,
+  template?: OcrTemplate,
+): OcrTransactionBlock[] {
+  const lines = buildDetectedLines(result, width, height).sort((a, b) => a.y - b.y)
+  if (!lines.length) return []
+  const dateIndices = lines.map((line, index) => parseDateTimeText(line.text) ? index : -1).filter((index) => index >= 0)
+  const anchorTexts = template?.schemaVersion === 2 ? (template.blockPattern?.anchorTexts ?? []) : []
+  const anchorIndices = anchorTexts.length
+    ? lines.map((line, index) => anchorTexts.some((anchor) => normalizeLine(line.text).toLocaleLowerCase('vi-VN').includes(normalizeLine(anchor).toLocaleLowerCase('vi-VN'))) ? index : -1).filter((index) => index >= 0)
+    : []
+  const starts = [...new Set((anchorIndices.length >= 2 ? anchorIndices : dateIndices.length >= 2 ? dateIndices : [0]))].sort((a, b) => a - b)
+  const groups: OcrDetectedLine[][] = []
+  for (let index = 0; index < starts.length; index += 1) {
+    const start = starts[index]
+    const end = starts[index + 1] ?? lines.length
+    const slice = lines.slice(start, end)
+    if (slice.length) groups.push(slice)
+  }
+
+  if (groups.length === 1 && height > width * 3) {
+    const inferred: OcrDetectedLine[][] = []
+    let current: OcrDetectedLine[] = []
+    for (const line of lines) {
+      const previous = current[current.length - 1]
+      const gapPx = previous ? (line.y - (previous.y + previous.height)) * height : 0
+      const medianLinePx = Math.max(12, line.height * height)
+      if (current.length >= 2 && gapPx > medianLinePx * 2.8) {
+        inferred.push(current)
+        current = []
+      }
+      current.push(line)
+    }
+    if (current.length) inferred.push(current)
+    if (inferred.length > 1) groups.splice(0, groups.length, ...inferred)
+  }
+
+  return groups.map((group) => {
+    const block = blockResultFromLines(group, result, width, height)
+    if (!block) return undefined
+    const candidate = template ? parseTransactionWithTemplate(block.result, template, width, Math.max(1, block.y1 - block.y0)) : parseTransactionFromOcr(block.result)
+    const confidence = group.reduce((sum, line) => sum + line.confidence, 0) / Math.max(1, group.length)
+    return {
+      candidate,
+      bbox: { x: 0, y: block.y0, width, height: Math.max(1, block.y1 - block.y0) },
+      confidence,
+      templateId: template?.id,
+    } satisfies OcrTransactionBlock
+  }).filter((block): block is OcrTransactionBlock => Boolean(block && (block.candidate.amount || block.candidate.occurredAt || block.candidate.merchant || block.candidate.description)))
 }
