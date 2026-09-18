@@ -353,6 +353,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     try {
       if (session.expiresAt <= Date.now()) throw new Error('error.tokenExpired')
       const binding = await assertGoogleAccount(session)
+      await repo.ensureSyncPartitions()
       const cachedSyncState = await getSyncState()
       const remoteVault = await downloadVaultConfig(session.accessToken, cachedSyncState?.driveLayout)
       if (remoteVault && remoteVault.createdAt !== config.createdAt) throw new Error('error.driveVaultMismatch')
