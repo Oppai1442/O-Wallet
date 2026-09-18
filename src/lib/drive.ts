@@ -28,14 +28,46 @@ function authHeaders(token: string, extra?: HeadersInit) {
   }
 }
 
+const DRIVE_RETRY_ATTEMPTS = 5
+
+async function retryDelay(response: Response, attempt: number) {
+  const retryAfter = Number(response.headers.get('retry-after') ?? 0)
+  const delay = retryAfter > 0
+    ? Math.min(8_000, retryAfter * 1_000)
+    : Math.min(4_000, 250 * 2 ** attempt)
+  await new Promise((resolve) => window.setTimeout(resolve, delay))
+}
+
+async function retryableDriveResponse(response: Response) {
+  if (response.status === 429 || response.status >= 500) return true
+  if (response.status !== 403) return false
+  try {
+    const body = await response.clone().text()
+    return /rateLimitExceeded|userRateLimitExceeded|sharingRateLimitExceeded/i.test(body)
+  } catch {
+    return false
+  }
+}
+
+async function driveFetch(token: string, url: string, init?: RequestInit) {
+  let response: Response | undefined
+  for (let attempt = 0; attempt < DRIVE_RETRY_ATTEMPTS; attempt += 1) {
+    response = await fetch(url, {
+      ...init,
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
+      headers: authHeaders(token, init?.headers),
+    })
+    if (response.ok) return response
+    if (attempt >= DRIVE_RETRY_ATTEMPTS - 1 || !(await retryableDriveResponse(response))) break
+    await retryDelay(response, attempt)
+  }
+  if (!response) throw new Error('Google Drive API request failed')
+  throw new Error(`Google Drive API ${response.status}`)
+}
+
 async function driveJson<T>(token: string, url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    cache: 'no-store',
-    referrerPolicy: 'no-referrer',
-    headers: authHeaders(token, init?.headers),
-  })
-  if (!response.ok) throw new Error(`Google Drive API ${response.status}`)
+  const response = await driveFetch(token, url, init)
   return response.json() as Promise<T>
 }
 
@@ -147,8 +179,7 @@ export async function ensureDriveLayout(token: string): Promise<DriveLayout> {
 }
 
 export async function downloadDriveFile(token: string, fileId: string, maxBytes?: number) {
-  const response = await fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media`, { headers: authHeaders(token), cache: 'no-store', referrerPolicy: 'no-referrer' })
-  if (!response.ok) throw new Error(`Google Drive API ${response.status}`)
+  const response = await driveFetch(token, `${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media`)
   const declared = Number(response.headers.get('content-length') ?? 0)
   if (maxBytes && declared > maxBytes) throw new Error('error.driveFileTooLarge')
   const buffer = await response.arrayBuffer()
