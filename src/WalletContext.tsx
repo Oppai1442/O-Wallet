@@ -61,6 +61,7 @@ export type GoogleConnectionState = 'disconnected' | 'connected' | 'reconnecting
 const DEFAULT_DEVICE_PREFERENCES: DeviceSessionPreferences = {
   googleRemember: '30d',
   vaultRemember: 'off',
+  googleAutoLogin: true,
 }
 
 interface WalletContextValue {
@@ -204,18 +205,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setGoogleReconnectUntil(storedGoogle.reconnectUntil)
       setGoogleReconnectMode(storedGoogle.mode ?? preferences.googleRemember)
 
-      if (storedGoogle.session) {
+      if (preferences.googleAutoLogin && storedGoogle.session) {
         setGoogleSession(storedGoogle.session)
         setGoogleConnectionState('connected')
       } else if (
-        googleClientConfigured()
+        preferences.googleAutoLogin
+        && googleClientConfigured()
         && storedGoogle.user
         && storedGoogle.reconnectUntil
         && storedGoogle.reconnectUntil > Date.now()
       ) {
         setGoogleConnectionState('reconnecting')
       } else {
-        setGoogleConnectionState('disconnected')
+        setGoogleSession(undefined)
+        setGoogleConnectionState(storedGoogle.user ? 'attention' : 'disconnected')
       }
 
       if (!config) {
@@ -264,10 +267,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setSettings(appSettings)
     if (appSettings?.language) setLanguage(appSettings.language)
     if (appSettings?.rememberDefaults) {
-      await setDeviceSessionPreferences(appSettings.rememberDefaults)
-      setDevicePreferencesState(appSettings.rememberDefaults)
+      const nextPreferences: DeviceSessionPreferences = {
+        ...DEFAULT_DEVICE_PREFERENCES,
+        ...appSettings.rememberDefaults,
+        googleAutoLogin: devicePreferences.googleAutoLogin,
+      }
+      await setDeviceSessionPreferences(nextPreferences)
+      setDevicePreferencesState(nextPreferences)
     }
-  }, [setLanguage])
+  }, [devicePreferences.googleAutoLogin, setLanguage])
 
   const refresh = useCallback(async () => {
     if (!repository) return
@@ -286,6 +294,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
+    if (!devicePreferences.googleAutoLogin) {
+      if (!googleSession && googleConnectionState === 'reconnecting') setGoogleConnectionState(googleRememberedUser || googleBinding ? 'attention' : 'disconnected')
+      return
+    }
     if (status === 'loading' || silentReconnectAttempted.current || googleSession || !googleClientConfigured()) return
     const hint = googleRememberedUser ?? googleBinding
     if (!hint || !googleReconnectUntil || googleReconnectUntil <= Date.now()) {
@@ -306,7 +318,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         setGoogleConnectionState('attention')
       })
       .finally(() => setGoogleAutoConnecting(false))
-  }, [acceptGoogleSession, devicePreferences.googleRemember, googleBinding, googleConnectionState, googleReconnectMode, googleReconnectUntil, googleRememberedUser, googleSession, status])
+  }, [acceptGoogleSession, devicePreferences.googleAutoLogin, devicePreferences.googleRemember, googleBinding, googleConnectionState, googleReconnectMode, googleReconnectUntil, googleRememberedUser, googleSession, status])
 
   useEffect(() => {
     if (!googleSession) return
@@ -613,6 +625,25 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
     return performSync(session, repository, vaultConfig)
   }, [acceptGoogleSession, devicePreferences.googleRemember, googleBinding, googleRememberedUser, googleSession, performSync, repository, syncBusy, t, vaultConfig])
+
+  useEffect(() => {
+    if (!settings?.autoSync || status !== 'unlocked' || !googleSession || !repository || !vaultConfig) return
+
+    const heartbeat = () => {
+      if (document.visibilityState !== 'visible') return
+      void syncNow().catch((heartbeatError) => reportDiagnostic('sync-heartbeat', heartbeatError))
+    }
+
+    const interval = window.setInterval(heartbeat, 30_000)
+    const onVisibility = () => { if (document.visibilityState === 'visible') heartbeat() }
+    window.addEventListener('focus', heartbeat)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', heartbeat)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [googleSession, repository, settings?.autoSync, status, syncNow, vaultConfig])
 
   const applyEntityToMemory = useCallback((entity: WalletEntity) => {
     if ('type' in entity) {
