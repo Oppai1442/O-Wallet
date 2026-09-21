@@ -816,6 +816,16 @@ function visualSeparatorPositions(visual: OcrVisualFingerprint | undefined) {
   return candidates.filter((value, index, all) => index === 0 || value - all[index - 1] > 0.03)
 }
 
+function transactionEvidence(candidate: ParsedTransactionCandidate) {
+  let score = 0
+  if (candidate.amount !== undefined) score += 2
+  if (candidate.occurredAt) score += 2
+  if (candidate.merchant) score += 1
+  if (candidate.description) score += 1
+  if (candidate.balanceAfter !== undefined) score += 1
+  return score
+}
+
 export function detectTransactionBlocks(
   result: OcrResult,
   width: number,
@@ -881,8 +891,12 @@ export function detectTransactionBlocks(
     const block = blockResultFromLines(group, result, width, height)
     if (!block) continue
     const candidate = template ? parseTransactionWithTemplate(block.result, template, width, Math.max(1, block.y1 - block.y0)) : parseTransactionFromOcr(block.result)
-    if (!(candidate.amount || candidate.occurredAt || candidate.merchant || candidate.description)) continue
     const confidence = group.reduce((sum, line) => sum + line.confidence, 0) / Math.max(1, group.length)
+    const evidence = transactionEvidence(candidate)
+    const strongEnough = template
+      ? evidence >= 2 && confidence >= 18
+      : evidence >= 3 && confidence >= 22
+    if (!strongEnough) continue
     detected.push({
       candidate,
       bbox: { x: 0, y: block.y0, width, height: Math.max(1, block.y1 - block.y0) },
