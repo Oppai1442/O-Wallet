@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { Bot, CalendarDays, CopyPlus, ImagePlus, Images, LoaderCircle, Mic, Repeat2, ScanText, Sparkles, X } from 'lucide-react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { Bot, CalendarDays, CopyPlus, ImagePlus, Images, LoaderCircle, Mic, Repeat2, ScanText, Sparkles, Square, X } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { localizeError, useI18n } from '../i18n'
 import { buildDetectedLines, parseTransactionFromOcr, parseTransactionFromRegions, recognizeImageTiled } from '../lib/ocr'
@@ -75,6 +75,7 @@ export function TransactionModal({ onClose, transaction, duplicateFrom, initialV
   const [templateId, setTemplateId] = useState('')
   const [templateName, setTemplateName] = useState('')
   const [ocrBusy, setOcrBusy] = useState(false)
+  const ocrAbortRef = useRef<AbortController | undefined>(undefined)
   const [aiBusy, setAiBusy] = useState(false)
   const [ocrProgress, setOcrProgress] = useState(0)
   const [ocrStatus, setOcrStatus] = useState('')
@@ -136,6 +137,8 @@ export function TransactionModal({ onClose, transaction, duplicateFrom, initialV
     return () => URL.revokeObjectURL(url)
   }, [files, showRegions])
 
+  useEffect(() => () => ocrAbortRef.current?.abort(), [])
+
   async function chooseImages(selected: File[]) {
     setError(undefined)
     try {
@@ -180,14 +183,21 @@ export function TransactionModal({ onClose, transaction, duplicateFrom, initialV
 
   async function runOcr() {
     if (!files[0]) return
+    const controller = new AbortController()
+    ocrAbortRef.current = controller
     setOcrBusy(true); setError(undefined); setOcrProgress(0)
     try {
-      const ocr = await recognizeImageTiled(files[0], (progress, status) => { setOcrProgress(progress); setOcrStatus(status) }, { retries: 1 })
+      const ocr = await recognizeImageTiled(files[0], (progress, status) => { setOcrProgress(progress); setOcrStatus(status) }, { retries: 1, signal: controller.signal })
       const result = ocr.result
       const size = { width: ocr.width, height: ocr.height }
       setImageSize(size); setOcrResult(result); setDetectedLines(buildDetectedLines(result, size.width, size.height)); setLineMappings(Object.fromEntries(regions.filter((region) => region.sourceLineId).map((region) => [region.sourceLineId!, region.field])))
       applyParsedCandidate(regions.length ? parseTransactionFromRegions(result, regions, size.width, size.height) : parseTransactionFromOcr(result))
-    } catch (e) { setError(localizeError(e, t, 'modal.errorOcr')) } finally { setOcrBusy(false) }
+    } catch (e) {
+      if ((e as Error)?.name !== 'AbortError') setError(localizeError(e, t, 'modal.errorOcr'))
+    } finally {
+      if (ocrAbortRef.current === controller) ocrAbortRef.current = undefined
+      setOcrBusy(false)
+    }
   }
 
   async function runAi() {
@@ -220,12 +230,14 @@ export function TransactionModal({ onClose, transaction, duplicateFrom, initialV
 
   async function runBatchOcr() {
     if (!files.length || editing) return
+    const controller = new AbortController()
+    ocrAbortRef.current = controller
     setOcrBusy(true); setError(undefined); setBatchDrafts([]); setOcrProgress(0)
     try {
       const drafts: BatchOcrDraft[] = []; const batchCandidates: Transaction[] = []; const existingIds = new Set(transactions.map((item) => item.id))
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index]
-        const ocr = await recognizeImageTiled(file, (progress, status) => { setOcrProgress((index + progress) / files.length); setOcrStatus(`${index + 1}/${files.length} · ${status}`) }, { retries: 1 })
+        const ocr = await recognizeImageTiled(file, (progress, status) => { setOcrProgress((index + progress) / files.length); setOcrStatus(`${index + 1}/${files.length} · ${status}`) }, { retries: 1, signal: controller.signal })
         const result = ocr.result
         const size = { width: ocr.width, height: ocr.height }
         const parsed = regions.length ? parseTransactionFromRegions(result, regions, size.width, size.height) : parseTransactionFromOcr(result)
@@ -242,7 +254,12 @@ export function TransactionModal({ onClose, transaction, duplicateFrom, initialV
         if (parsed.amount) batchCandidates.push({ id: draftId, type: parsedType, amount: parsed.amount, currency: resolvedCurrency, occurredAt: candidateOccurredAt, categoryId: resolvedCategoryId, accountId: resolvedAccountId, destinationAccountId: destinationId, merchant: parsed.merchant, balanceAfter: parsed.balanceAfter, description: parsed.description, imageIds: [], createdAt: candidateOccurredAt, updatedAt: candidateOccurredAt, deleted: false })
       }
       setBatchDrafts(drafts); setActiveBatchId(drafts[0]?.id); setOcrProgress(1)
-    } catch (e) { setError(localizeError(e, t, 'modal.errorOcr')) } finally { setOcrBusy(false) }
+    } catch (e) {
+      if ((e as Error)?.name !== 'AbortError') setError(localizeError(e, t, 'modal.errorOcr'))
+    } finally {
+      if (ocrAbortRef.current === controller) ocrAbortRef.current = undefined
+      setOcrBusy(false)
+    }
   }
 
   function updateBatchDraft(next: BatchOcrDraft) {
@@ -338,7 +355,7 @@ export function TransactionModal({ onClose, transaction, duplicateFrom, initialV
           </div>
 
           <div className="min-w-0 space-y-4 bg-stone-50/60 p-4 dark:bg-stone-950/30 sm:p-5">
-            <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-4 dark:border-stone-700 dark:bg-stone-900"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="font-bold text-stone-800 dark:text-stone-100">{t('modal.screenshot')}</div><div className="text-xs text-stone-500">{t('modal.ocrHint')}</div></div><label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-stone-100 px-3 py-2 text-sm font-semibold text-stone-800 hover:bg-stone-200 dark:bg-stone-800 dark:text-stone-100"><ImagePlus size={17}/>{t('modal.chooseImages')}<input hidden type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple onChange={(e)=>{const selected=Array.from(e.target.files ?? []);e.currentTarget.value='';void chooseImages(selected)}}/></label></div>{files.length>0&&<><div className="mt-4 flex gap-2 overflow-x-auto pb-2">{files.map((file,index)=><div key={`${file.name}-${file.size}-${index}`} className="w-40 shrink-0 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-700 dark:bg-stone-950/40"><div className="truncate text-xs font-semibold text-stone-700 dark:text-stone-200">{file.name}</div><div className="mt-1 text-[11px] text-stone-400">{Math.max(1,Math.round(file.size/1024))} KB</div></div>)}</div><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={()=>setShowRegions((value)=>!value)} disabled={aiBusy}><Sparkles size={17}/>{showRegions?t('ocr.hideRegions'):t('ocr.configureRegions')}</Button><Button onClick={runOcr} disabled={ocrBusy||aiBusy}><ScanText size={17}/>{ocrBusy?`OCR ${Math.round(ocrProgress*100)}%`:regions.length?t('ocr.runRegions'):t('modal.ocrFirst')}</Button><Button variant="secondary" onClick={()=>void runAi()} disabled={ocrBusy||aiBusy}><Bot size={17}/>{aiBusy?t('ai.reading'):t('ai.readImage')}</Button>{!editing&&files.length>1&&<Button variant="secondary" onClick={runBatchOcr} disabled={ocrBusy||aiBusy}><Images size={17}/>{t('batch.run',{count:files.length})}</Button>}</div>{ocrBusy&&<div className="mt-3 h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800"><div className="h-full bg-blue-500 transition-all" style={{width:`${ocrProgress*100}%`}}/></div>}{ocrStatus&&ocrBusy&&<div className="mt-1 text-xs text-stone-500">{ocrStatus}</div>}<div className="mt-2 text-xs leading-5 text-stone-500">{t('ai.modalPrivacy')}</div></>}</div>
+            <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-4 dark:border-stone-700 dark:bg-stone-900"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="font-bold text-stone-800 dark:text-stone-100">{t('modal.screenshot')}</div><div className="text-xs text-stone-500">{t('modal.ocrHint')}</div></div><label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-stone-100 px-3 py-2 text-sm font-semibold text-stone-800 hover:bg-stone-200 dark:bg-stone-800 dark:text-stone-100"><ImagePlus size={17}/>{t('modal.chooseImages')}<input hidden type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple onChange={(e)=>{const selected=Array.from(e.target.files ?? []);e.currentTarget.value='';void chooseImages(selected)}}/></label></div>{files.length>0&&<><div className="mt-4 flex gap-2 overflow-x-auto pb-2">{files.map((file,index)=><div key={`${file.name}-${file.size}-${index}`} className="w-40 shrink-0 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-700 dark:bg-stone-950/40"><div className="truncate text-xs font-semibold text-stone-700 dark:text-stone-200">{file.name}</div><div className="mt-1 text-[11px] text-stone-400">{Math.max(1,Math.round(file.size/1024))} KB</div></div>)}</div><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={()=>setShowRegions((value)=>!value)} disabled={aiBusy}><Sparkles size={17}/>{showRegions?t('ocr.hideRegions'):t('ocr.configureRegions')}</Button>{ocrBusy?<Button variant="secondary" onClick={()=>ocrAbortRef.current?.abort()}><Square size={15}/>{t('imageImport.cancel')}</Button>:<Button onClick={runOcr} disabled={aiBusy}><ScanText size={17}/>{regions.length?t('ocr.runRegions'):t('modal.ocrFirst')}</Button>}<Button variant="secondary" onClick={()=>void runAi()} disabled={ocrBusy||aiBusy}><Bot size={17}/>{aiBusy?t('ai.reading'):t('ai.readImage')}</Button>{!editing&&files.length>1&&<Button variant="secondary" onClick={runBatchOcr} disabled={ocrBusy||aiBusy}><Images size={17}/>{t('batch.run',{count:files.length})}</Button>}</div>{ocrBusy&&<div className="mt-3 h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800"><div className="h-full bg-blue-500 transition-all" style={{width:`${ocrProgress*100}%`}}/></div>}{ocrStatus&&ocrBusy&&<div className="mt-1 text-xs text-stone-500">{ocrStatus}</div>}<div className="mt-2 text-xs leading-5 text-stone-500">{t('ai.modalPrivacy')}</div></>}</div>
             {detectedLines.length>0&&<OcrTeachingPanel lines={detectedLines} mappings={lineMappings} onMap={mapDetectedLine}/>} 
             {previewUrls[0]&&showRegions&&<div className="rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900"><div className="mb-3 grid gap-2 sm:grid-cols-[1fr_auto]"><Select value={templateId} onChange={(e)=>applyTemplate(e.target.value)}><option value="">{t('ocr.noTemplate')}</option>{templates.map((template)=><option key={template.id} value={template.id}>{template.name}</option>)}</Select><div className="flex gap-2"><Input className="min-w-0" value={templateName} onChange={(e)=>setTemplateName(e.target.value)} placeholder={t('ocr.templateName')}/><Button variant="secondary" onClick={()=>void saveTemplate()} disabled={!regions.length||!templateName.trim()}>{t('ocr.saveTemplate')}</Button></div></div><Suspense fallback={<div className="py-8 text-center text-sm text-stone-500">{t('common.loading')}</div>}><OcrRegionEditor imageUrl={previewUrls[0]} regions={regions} onChange={setRegions} onDimensions={setImageSize}/></Suspense></div>}
             {ocrRaw&&<details className="rounded-2xl bg-white p-4 dark:bg-stone-900"><summary className="cursor-pointer text-sm font-bold text-stone-700 dark:text-stone-200">{t('modal.rawOcr')}</summary><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-stone-500">{ocrRaw}</pre></details>}{error&&<div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</div>}
