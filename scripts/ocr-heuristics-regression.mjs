@@ -16,6 +16,7 @@ const tsc = process.platform === 'win32'
 execFileSync(tsc, [
   'src/lib/ocrHeuristics.ts',
   'src/lib/ocrParsing.ts',
+  'src/lib/fileFingerprint.ts',
   '--ignoreConfig',
   '--target', 'ES2022',
   '--module', 'ESNext',
@@ -37,11 +38,14 @@ function findCompiled(name, dir = outDir) {
 
 const heuristicFile = findCompiled('ocrHeuristics.js')
 const parserFile = findCompiled('ocrParsing.js')
+const fingerprintFile = findCompiled('fileFingerprint.js')
 assert.ok(heuristicFile, 'compiled ocrHeuristics.js not found')
 assert.ok(parserFile, 'compiled ocrParsing.js not found')
+assert.ok(fingerprintFile, 'compiled fileFingerprint.js not found')
 
 const mod = await import(pathToFileURL(heuristicFile).href + `?t=${Date.now()}`)
 const parser = await import(pathToFileURL(parserFile).href + `?t=${Date.now()}`)
+const fingerprintModule = await import(pathToFileURL(fingerprintFile).href + `?t=${Date.now()}`)
 const {
   OCR_HEURISTIC_THRESHOLDS,
   bboxOverlapRatio,
@@ -61,6 +65,16 @@ const {
   parseTransactionText,
   stripFieldLabel,
 } = parser
+
+const { sourceFingerprint } = fingerprintModule
+
+const fpA = await sourceFingerprint(new Blob([new Uint8Array([1,2,3,4,5])]))
+const fpB = await sourceFingerprint(new Blob([new Uint8Array([1,2,3,4,5])]))
+const fpChanged = await sourceFingerprint(new Blob([new Uint8Array([1,2,3,4,6])]))
+const fpLonger = await sourceFingerprint(new Blob([new Uint8Array([1,2,3,4,5,0])]))
+assert.equal(fpA, fpB, 'same source must have stable fingerprint')
+assert.notEqual(fpA, fpChanged, 'content changes must alter source fingerprint')
+assert.notEqual(fpA, fpLonger, 'size changes must alter source fingerprint')
 
 function near(actual, expected, tolerance = 1e-6) {
   assert.ok(Math.abs(actual - expected) <= tolerance, `expected ${actual} ≈ ${expected}`)
