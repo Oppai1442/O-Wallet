@@ -16,6 +16,7 @@ import {
   rankOcrTemplates,
   recognizeImageTiled,
 } from '../lib/ocr'
+import { bboxOverlapRatio, canAutoLearnTemplate, isCredibleTemplateMatch, OCR_HEURISTIC_THRESHOLDS } from '../lib/ocrHeuristics'
 import { findMatchingTransactionRule } from '../lib/rules'
 import { selectableCategories } from '../lib/categories'
 import { validateImageBatch } from '../lib/security'
@@ -47,14 +48,6 @@ function candidateCurrency(candidate: ParsedTransactionCandidate) {
   return (candidate as ParsedTransactionCandidate & { currency?: string }).currency
 }
 
-
-function bboxOverlapRatio(left?: { y: number; height: number }, right?: { y: number; height: number }) {
-  if (!left || !right) return 0
-  const start = Math.max(left.y, right.y)
-  const end = Math.min(left.y + left.height, right.y + right.height)
-  const overlap = Math.max(0, end - start)
-  return overlap / Math.max(1, Math.min(left.height, right.height))
-}
 
 function preservedDraft(oldDraft: BatchOcrDraft, freshDraft: BatchOcrDraft): BatchOcrDraft {
   return {
@@ -226,12 +219,8 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
   function blocksForAnalysis(analysis: SourceAnalysis, templates = sessionTemplates) {
     const ranked = rankOcrTemplates(templates, analysis.result, analysis.width, analysis.height, analysis.visual)
     const top = ranked[0]
-    const credibleMatch = Boolean(
-      top
-      && top.score >= 0.40
-      && ((top.anchorScore ?? 0) >= 0.20 || (top.visualScore ?? 0) >= 0.62),
-    )
-    const best = credibleMatch ? top.template : undefined
+    const credibleMatch = isCredibleTemplateMatch(top)
+    const best = credibleMatch && top ? top.template : undefined
     return {
       template: best,
       score: credibleMatch ? top?.score ?? 0 : 0,
@@ -256,7 +245,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
         const overlapOld = exactOld ?? drafts
           .filter((draft) => draft.fileIndex === nextDraft.fileIndex && preserveIds.has(draft.id))
           .map((draft) => ({ draft, overlap: bboxOverlapRatio(draft.sourceBBox, nextDraft.sourceBBox) }))
-          .filter((item) => item.overlap >= 0.55)
+          .filter((item) => item.overlap >= OCR_HEURISTIC_THRESHOLDS.preserveBlockMinOverlap)
           .sort((a, b) => b.overlap - a.overlap)[0]?.draft
         const chosen = preserveReviewed && overlapOld && preserveIds.has(overlapOld.id)
           ? preservedDraft(overlapOld, nextDraft)
@@ -415,10 +404,9 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
   async function learnFromDraft(draft: BatchOcrDraft, preserveIds = reviewedIds) {
     if (!draft.templateId || !activeAnalysis || !activeTemplate || !activeLines.length || !settings) return
-    if ((activeAnalysis.templateScore ?? 0) < 0.45) return
     const mappings = mappingsFromCorrectedDraft(draft, activeLines)
     const mappedFields = Object.values(mappings).filter((field): field is OcrField => Boolean(field))
-    if (mappedFields.length < 2 || (!mappedFields.includes('amount') && !mappedFields.includes('occurredAt'))) return
+    if (!canAutoLearnTemplate(activeAnalysis.templateScore, mappedFields)) return
     const learned = buildPatternTemplate(activeTemplate.name, activeLines, mappings, activeAnalysis.visual, activeTemplate.id)
     const merged = mergePatternTemplateEvidence(activeTemplate, learned)
     const nextTemplates = sessionTemplates.map((template) => template.id === merged.id ? merged : template)
