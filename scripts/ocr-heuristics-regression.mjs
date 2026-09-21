@@ -24,8 +24,24 @@ execFileSync(tsc, [
   '--outDir', outDir,
 ], { cwd: root, stdio: 'inherit' })
 
-const mod = await import(pathToFileURL(path.join(outDir, 'ocrHeuristics.js')).href + `?t=${Date.now()}`)
-const parser = await import(pathToFileURL(path.join(outDir, 'ocrParsing.js')).href + `?t=${Date.now()}`)
+function findCompiled(name, dir = outDir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const target = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      const nested = findCompiled(name, target)
+      if (nested) return nested
+    } else if (entry.name === name) return target
+  }
+  return undefined
+}
+
+const heuristicFile = findCompiled('ocrHeuristics.js')
+const parserFile = findCompiled('ocrParsing.js')
+assert.ok(heuristicFile, 'compiled ocrHeuristics.js not found')
+assert.ok(parserFile, 'compiled ocrParsing.js not found')
+
+const mod = await import(pathToFileURL(heuristicFile).href + `?t=${Date.now()}`)
+const parser = await import(pathToFileURL(parserFile).href + `?t=${Date.now()}`)
 const {
   OCR_HEURISTIC_THRESHOLDS,
   bboxOverlapRatio,
