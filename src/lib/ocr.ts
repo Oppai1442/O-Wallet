@@ -677,7 +677,7 @@ export function rankOcrTemplates(
 ) {
   const text = normalizeLine(result.text).toLocaleLowerCase('vi-VN')
   return templates.map((template) => {
-    if (template.schemaVersion !== 2) return { template, score: 0 }
+    if (template.enabled === false || template.schemaVersion !== 2) return { template, score: 0 }
     const anchors = template.identityAnchors ?? []
     const anchorScore = anchors.length ? anchors.filter((anchor) => text.includes(normalizeLine(anchor).toLocaleLowerCase('vi-VN'))).length / anchors.length : 0
     const longCapture = height > width * 3
