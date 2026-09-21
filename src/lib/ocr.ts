@@ -455,9 +455,11 @@ export function buildPatternTemplate(
     name,
     schemaVersion: 2,
     aspectRatio: visualFingerprint?.aspectRatio,
+    aspectRatios: visualFingerprint ? [visualFingerprint.aspectRatio] : [],
     regions: [],
     fieldPatterns,
     visualFingerprint,
+    visualFingerprints: visualFingerprint ? [visualFingerprint] : [],
     blockPattern: { anchorTexts: identityAnchors.slice(0, 4), repeat: true },
     identityAnchors,
     createdAt: now,
@@ -496,11 +498,36 @@ export function mergePatternTemplateEvidence(existing: OcrTemplate, learned: Ocr
     ...(learned.identityAnchors ?? []),
     ...mergedPatterns.flatMap((pattern) => pattern.anchorTexts ?? (pattern.anchorText ? [pattern.anchorText] : [])),
   ])].filter(Boolean).slice(-16)
+
+  const aspectCandidates = [
+    ...(existing.aspectRatios ?? (existing.aspectRatio ? [existing.aspectRatio] : [])),
+    ...(learned.aspectRatios ?? (learned.aspectRatio ? [learned.aspectRatio] : [])),
+  ].filter((value) => Number.isFinite(value) && value > 0)
+  const aspectRatios: number[] = []
+  for (const value of aspectCandidates) {
+    if (!aspectRatios.some((existingValue) => Math.abs(existingValue - value) <= 0.03)) aspectRatios.push(value)
+  }
+
+  const visualCandidates = [
+    ...(existing.visualFingerprints ?? (existing.visualFingerprint ? [existing.visualFingerprint] : [])),
+    ...(learned.visualFingerprints ?? (learned.visualFingerprint ? [learned.visualFingerprint] : [])),
+  ]
+  const visualFingerprints: OcrVisualFingerprint[] = []
+  for (const fingerprint of visualCandidates) {
+    const duplicate = visualFingerprints.some((known) => colorSimilarity(known, fingerprint) >= 0.95 && Math.abs(known.averageLuma - fingerprint.averageLuma) <= 8)
+    if (!duplicate) visualFingerprints.push(fingerprint)
+  }
+  const cappedVisualFingerprints = visualFingerprints.slice(-6)
+
   return {
     ...existing,
     ...learned,
     id: existing.id,
     createdAt: existing.createdAt,
+    aspectRatio: learned.aspectRatio ?? existing.aspectRatio,
+    aspectRatios: aspectRatios.slice(-8),
+    visualFingerprint: learned.visualFingerprint ?? existing.visualFingerprint,
+    visualFingerprints: cappedVisualFingerprints,
     fieldPatterns: mergedPatterns,
     identityAnchors,
     blockPattern: { anchorTexts: identityAnchors.slice(0, 6), repeat: true },
@@ -529,8 +556,23 @@ export function rankOcrTemplates(
     const anchors = template.identityAnchors ?? []
     const anchorScore = anchors.length ? anchors.filter((anchor) => text.includes(normalizeLine(anchor).toLocaleLowerCase('vi-VN'))).length / anchors.length : 0
     const longCapture = height > width * 3
-    const aspect = longCapture ? 0.5 : template.aspectRatio ? 1 - Math.min(1, Math.abs(template.aspectRatio - width / Math.max(1, height)) / Math.max(0.2, Math.abs(template.aspectRatio))) : 0.5
-    const visualScore = colorSimilarity(template.visualFingerprint, visual)
+    const currentAspect = width / Math.max(1, height)
+    const knownAspects = template.aspectRatios?.length
+      ? template.aspectRatios
+      : template.aspectRatio
+        ? [template.aspectRatio]
+        : []
+    const aspect = longCapture
+      ? 0.5
+      : knownAspects.length
+        ? Math.max(...knownAspects.map((known) => 1 - Math.min(1, Math.abs(known - currentAspect) / Math.max(0.2, Math.abs(known)))))
+        : 0.5
+    const knownVisuals = template.visualFingerprints?.length
+      ? template.visualFingerprints
+      : template.visualFingerprint
+        ? [template.visualFingerprint]
+        : []
+    const visualScore = visual && knownVisuals.length ? Math.max(...knownVisuals.map((known) => colorSimilarity(known, visual))) : 0
     const score = anchorScore * 0.55 + visualScore * 0.30 + aspect * 0.15
     return { template, score, anchorScore, visualScore, aspectScore: aspect }
   }).sort((a, b) => b.score - a.score)
