@@ -108,6 +108,8 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
   const [checkpointAvailable, setCheckpointAvailable] = useState(false)
   const [tileResumeByHash, setTileResumeByHash] = useState<Record<string, OcrTileResumeState>>({})
   const abortRef = useRef<AbortController | undefined>(undefined)
+  const checkpointWriteRef = useRef<Promise<void>>(Promise.resolve())
+  const checkpointGenerationRef = useRef(0)
 
   useEffect(() => setSessionTemplates(settings?.ocrTemplates ?? []), [settings?.ocrTemplates])
 
@@ -200,20 +202,32 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     nextPartialTiles = tileResumeByHash,
   ) {
     if (!repository) return
+    const generation = checkpointGenerationRef.current
+    const payload: ImageImportCheckpoint = {
+      version: 2,
+      updatedAt: new Date().toISOString(),
+      analyses: nextAnalyses,
+      drafts: nextDrafts,
+      reviewedIds: [...nextReviewed],
+      activeId: nextActiveId,
+      partialTiles: nextPartialTiles,
+    }
+    const write = checkpointWriteRef.current.catch(() => undefined).then(async () => {
+      if (generation !== checkpointGenerationRef.current) return
+      await repository.setEncryptedCheckpoint<ImageImportCheckpoint>('image-import-v2', payload)
+      if (generation === checkpointGenerationRef.current) setCheckpointAvailable(true)
+    })
+    checkpointWriteRef.current = write.catch(() => undefined)
     try {
-      await repository.setEncryptedCheckpoint<ImageImportCheckpoint>('image-import-v2', {
-        version: 2,
-        updatedAt: new Date().toISOString(),
-        analyses: nextAnalyses,
-        drafts: nextDrafts,
-        reviewedIds: [...nextReviewed],
-        activeId: nextActiveId,
-        partialTiles: nextPartialTiles,
-      })
-      setCheckpointAvailable(true)
+      await write
     } catch {
       // Checkpoint failure must never block importing or saving transactions.
     }
+  }
+
+  async function invalidateCheckpointWrites() {
+    checkpointGenerationRef.current += 1
+    try { await checkpointWriteRef.current } catch { /* stale writes are ignored */ }
   }
 
   function cancelAnalysis() {
@@ -221,6 +235,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
   }
 
   async function discardCheckpoint() {
+    await invalidateCheckpointWrites()
     await repository?.deleteEncryptedCheckpoint('image-import-v2')
     setTileResumeByHash({})
     setCheckpointAvailable(false)
@@ -702,6 +717,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       })
       pendingRecords = records
       await saveEntities(records)
+      await invalidateCheckpointWrites()
       await repository.deleteEncryptedCheckpoint('image-import-v2')
       setTileResumeByHash({})
       setCheckpointAvailable(false)
