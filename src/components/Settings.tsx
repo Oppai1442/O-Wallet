@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Cloud, Database, Download, ExternalLink, FolderOpen, LockKeyhole, Plus, RefreshCw, Settings2, ShieldCheck, Sparkles, Trash2, Unplug, WalletCards } from 'lucide-react'
+import { Cloud, Copy, Database, Download, ExternalLink, FolderOpen, LockKeyhole, Pencil, Plus, Power, RefreshCw, RotateCcw, Settings2, ShieldCheck, Sparkles, Trash2, Unplug, WalletCards } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { accountDisplayName, UI_LANGUAGES, useI18n, type UiLanguage } from '../i18n'
 import { categoryPath, selectableCategories } from '../lib/categories'
 import { bytesToHuman, formatMoney } from '../lib/format'
 import { findExistingDriveLayout, openDriveFolderUrl } from '../lib/drive'
 import { openTrustedExternalUrl, safeGoogleProfileImageUrl } from '../lib/security'
-import type { AppSettings, BudgetConfig, RememberDuration, ThemeMode, VaultRememberDuration } from '../types'
+import type { AppSettings, BudgetConfig, OcrTemplate, RememberDuration, ThemeMode, VaultRememberDuration } from '../types'
 import { ExternalImport } from './ExternalImport'
 import { AccountManager } from './AccountManager'
 import { AiSettings } from './AiSettings'
@@ -142,6 +142,47 @@ export function Settings() {
   async function addBudget() { if (!settings || !budgetCategoryId || Number(budgetLimit) <= 0) return; const next: BudgetConfig = { id: crypto.randomUUID(), categoryId: budgetCategoryId, monthlyLimit: Number(budgetLimit) }; await updateSettings({ budgets: [...budgets.filter((item) => item.categoryId !== budgetCategoryId), next] }); setBudgetLimit('') }
   async function confirmSwitchAccount() { if (window.confirm(t('settings.switchAccountConfirm'))) await switchLocalAccount() }
 
+  async function patchOcrTemplate(id: string, patch: Partial<OcrTemplate>) {
+    await updateSettings({ ocrTemplates: templates.map((template) => template.id === id ? { ...template, ...patch, updatedAt: new Date().toISOString() } : template) })
+  }
+
+  async function renameOcrTemplate(template: OcrTemplate) {
+    const name = window.prompt(t('settings.ocrRenamePrompt'), template.name)?.trim()
+    if (name && name !== template.name) await patchOcrTemplate(template.id, { name })
+  }
+
+  async function duplicateOcrTemplate(template: OcrTemplate) {
+    const now = new Date().toISOString()
+    const copy: OcrTemplate = {
+      ...structuredClone(template),
+      id: crypto.randomUUID(),
+      name: t('settings.ocrCopyName', { name: template.name }),
+      fieldPatterns: template.fieldPatterns?.map((pattern) => ({ ...pattern, id: crypto.randomUUID() })),
+      createdAt: now,
+      updatedAt: now,
+    }
+    await updateSettings({ ocrTemplates: [...templates, copy] })
+  }
+
+  async function resetOcrTemplateLearning(template: OcrTemplate) {
+    if (!window.confirm(t('settings.ocrResetConfirm'))) return
+    const fieldPatterns = template.fieldPatterns?.map((pattern) => ({
+      ...pattern,
+      anchorTexts: pattern.anchorText ? [pattern.anchorText] : [],
+      sampleShapes: pattern.sampleShape ? [pattern.sampleShape] : [],
+      successes: 1,
+      failures: 0,
+    }))
+    const identityAnchors = [...new Set((fieldPatterns ?? []).map((pattern) => pattern.anchorText).filter((value): value is string => Boolean(value)))].slice(0, 12)
+    await patchOcrTemplate(template.id, {
+      fieldPatterns,
+      identityAnchors,
+      blockPattern: template.schemaVersion === 2 ? { anchorTexts: identityAnchors.slice(0, 4), repeat: true } : template.blockPattern,
+      aspectRatios: template.aspectRatio ? [template.aspectRatio] : [],
+      visualFingerprints: template.visualFingerprint ? [template.visualFingerprint] : [],
+    })
+  }
+
   async function confirmDestroyAllData() {
     if (destroyBusy || destroyPhrase !== 'DELETE') return
     try {
@@ -178,7 +219,7 @@ export function Settings() {
           {walletSection==='rules' && <RuleManager settings={settings} categories={categories} accounts={accounts} onSaveSettings={updateSettings}/>} 
         </div>}
 
-        {section==='input' && <div className="space-y-5"><SectionHeading title={L.inputTitle} text={L.inputText}/><SubNav value={inputSection} onChange={(v)=>setInputSection(v as InputSection)} items={[[ 'voice',L.voice ],['ocr',L.ocr],['ai',L.ai]]}/>{inputSection==='voice' && <VoiceSettings settings={settings} onSaveSettings={updateSettings}/>} {inputSection==='ocr' && <Card className="p-4 sm:p-5"><h2 className="font-bold">{t('settings.ocrTemplates')}</h2><p className="mt-1 text-sm text-stone-500">{t('settings.ocrTemplatesHint')}</p><div className="mt-4 space-y-2">{templates.length===0?<div className="rounded-xl bg-stone-50 p-3 text-sm text-stone-500 dark:bg-stone-950">{t('settings.noOcrTemplates')}</div>:templates.map((template)=><div key={template.id} className="flex items-center gap-3 rounded-xl border border-stone-200 p-3 dark:border-stone-800"><div className="min-w-0 flex-1"><div className="truncate font-bold">{template.name}</div><div className="text-xs text-stone-500">{t('settings.regionCount',{count:template.regions.length})}</div></div><Button variant="ghost" className="px-2 text-rose-500" onClick={()=>void updateSettings({ocrTemplates:templates.filter((item)=>item.id!==template.id)})}><Trash2 size={16}/></Button></div>)}</div></Card>} {inputSection==='ai' && <AiSettings settings={settings} repository={repository} onSaveSettings={updateSettings}/>}</div>}
+        {section==='input' && <div className="space-y-5"><SectionHeading title={L.inputTitle} text={L.inputText}/><SubNav value={inputSection} onChange={(v)=>setInputSection(v as InputSection)} items={[[ 'voice',L.voice ],['ocr',L.ocr],['ai',L.ai]]}/>{inputSection==='voice' && <VoiceSettings settings={settings} onSaveSettings={updateSettings}/>} {inputSection==='ocr' && <Card className="p-4 sm:p-5"><h2 className="font-bold">{t('settings.ocrTemplates')}</h2><p className="mt-1 text-sm text-stone-500">{t('settings.ocrTemplatesHint')}</p><div className="mt-4 space-y-2">{templates.length===0?<div className="rounded-xl bg-stone-50 p-3 text-sm text-stone-500 dark:bg-stone-950">{t('settings.noOcrTemplates')}</div>:templates.map((template)=>{const patternCount=template.fieldPatterns?.length??0;const visualCount=template.visualFingerprints?.length??(template.visualFingerprint?1:0);const anchorCount=template.identityAnchors?.length??0;return <div key={template.id} className={`rounded-xl border p-3 ${template.enabled===false?'border-stone-200 bg-stone-50/60 opacity-70 dark:border-stone-800 dark:bg-stone-950/30':'border-stone-200 dark:border-stone-800'}`}><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><div className="truncate font-bold">{template.name}</div><Badge tone={template.enabled===false?undefined:'green'}>{template.enabled===false?t('settings.ocrDisabled'):t('settings.ocrEnabled')}</Badge><Badge>{template.schemaVersion===2?'v2':'v1'}</Badge></div><div className="mt-1 text-xs text-stone-500">{template.schemaVersion===2?t('settings.ocrPatternStats',{patterns:patternCount,anchors:anchorCount,visuals:visualCount}):t('settings.regionCount',{count:template.regions.length})}</div></div><div className="flex shrink-0 flex-wrap justify-end gap-1"><Button variant="ghost" className="px-2" title={template.enabled===false?t('settings.ocrEnable'):t('settings.ocrDisable')} onClick={()=>void patchOcrTemplate(template.id,{enabled:template.enabled===false?true:false})}><Power size={16}/></Button><Button variant="ghost" className="px-2" title={t('settings.ocrRename')} onClick={()=>void renameOcrTemplate(template)}><Pencil size={16}/></Button><Button variant="ghost" className="px-2" title={t('settings.ocrDuplicate')} onClick={()=>void duplicateOcrTemplate(template)}><Copy size={16}/></Button>{template.schemaVersion===2&&<Button variant="ghost" className="px-2" title={t('settings.ocrResetLearning')} onClick={()=>void resetOcrTemplateLearning(template)}><RotateCcw size={16}/></Button>}<Button variant="ghost" className="px-2 text-rose-500" title={t('common.delete')} onClick={()=>void updateSettings({ocrTemplates:templates.filter((item)=>item.id!==template.id)})}><Trash2 size={16}/></Button></div></div></div>})}</div></Card>} {inputSection==='ai' && <AiSettings settings={settings} repository={repository} onSaveSettings={updateSettings}/>}</div>}
 
         {section==='sync' && <div className="space-y-5"><SectionHeading title={L.syncTitle} text={L.syncText}/><DriveCard/><QuickUnlockSettings/><Card className="p-4 sm:p-5"><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5"><div><Label>{t('settings.autoSync')}</Label><Select value={settings?.autoSync?'on':'off'} onChange={(e)=>void updateSettings({autoSync:e.target.value==='on'})}><option value="on">{t('common.on')}</option><option value="off">{t('common.off')}</option></Select></div><div><Label>{t('settings.driveStorageMode')}</Label><Select value={settings?.driveStorageMode ?? 'visible'} disabled={driveModeBusy || syncBusy || destroyBusy} onChange={(e)=>void changeDriveStorageMode(e.target.value as 'visible'|'hidden')}><option value="visible">{t('settings.driveStorageVisible')}</option><option value="hidden">{t('settings.driveStorageHidden')}</option></Select><p className="mt-1 text-xs leading-5 text-stone-500">{driveModeBusy?t('settings.driveStorageMigrating'):t('settings.driveStorageHint')}</p>{(settings?.sharedWallets?.length ?? 0)>0&&<p className="mt-1 text-xs leading-5 text-amber-600 dark:text-amber-300">{t('settings.driveStorageSharedHint')}</p>}</div><div><Label>{t('settings.googleAutoLogin')}</Label><Select value={devicePreferences.googleAutoLogin?'on':'off'} onChange={(e)=>void changeGoogleAutoLogin(e.target.value==='on')}><option value="on">{t('common.on')}</option><option value="off">{t('common.off')}</option></Select><p className="mt-1 text-xs text-stone-500">{t('settings.googleAutoLoginHint')}</p></div><div><Label>{t('settings.googleRemember')}</Label><RememberSelect value={devicePreferences.googleRemember} onChange={(v)=>void changeRemember('google',v as RememberDuration)} google/></div><div><Label>{t('settings.vaultRemember')}</Label><RememberSelect value={devicePreferences.vaultRemember} onChange={(v)=>void changeRemember('vault',v as VaultRememberDuration)}/></div></div></Card><Card className="p-4 sm:p-5"><h2 className="font-bold">{t('settings.security')}</h2><p className="mt-1 text-sm text-stone-500">{t('settings.securityHint')}</p><div className="mt-4 flex flex-wrap gap-2"><Button variant="secondary" onClick={lock}><LockKeyhole size={17}/>{t('settings.lockVault')}</Button><Button variant="danger" onClick={()=>void confirmSwitchAccount()}>{t('settings.switchAccount')}</Button></div></Card></div>}
         {section==='cloud' && <PersonalCloudSettings/>}
