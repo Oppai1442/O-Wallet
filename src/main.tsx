@@ -18,6 +18,8 @@ if (window.top !== window.self) {
   // GitHub Pages cannot set frame-ancestors/X-Frame-Options itself. Refuse to render
   // inside a third-party frame to reduce clickjacking risk.
   root.textContent = 'O-Wallet cannot run inside another page.'
+} else if (import.meta.env.VITE_OCR_E2E === '1') {
+  void import('./ocrVisualE2E').then(({ runOcrVisualE2E }) => runOcrVisualE2E(root))
 } else {
   createRoot(root).render(
     <StrictMode>
