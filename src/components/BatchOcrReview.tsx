@@ -41,6 +41,7 @@ export interface BatchOcrDraft {
   fieldEvidence?: Partial<Record<OcrField, OcrFieldEvidence>>
   sourceHash?: string
   sourceRowId?: string
+  sourceRowIds?: string[]
   conflict?: BatchOcrConflict
 }
 
