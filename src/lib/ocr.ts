@@ -425,8 +425,9 @@ export async function recognizeImageTiled(
   const texts: string[] = []
   const seen = new Set<string>()
   const visualColors = new Map<string, number>()
-  const visualProfileSum = Array.from({ length: 64 }, () => 0)
-  const visualProfileCount = Array.from({ length: 64 }, () => 0)
+  const profileBuckets = Math.max(64, Math.min(2048, Math.ceil(height / 96)))
+  const visualProfileSum = Array.from({ length: profileBuckets }, () => 0)
+  const visualProfileCount = Array.from({ length: profileBuckets }, () => 0)
   let visualLuma = 0
   let visualCount = 0
 
@@ -443,7 +444,7 @@ export async function recognizeImageTiled(
     const data = context.getImageData(0, 0, sampleWidth, sampleHeight).data
     for (let sy = 0; sy < sampleHeight; sy += 1) {
       const globalY = yOffset + skipTop + ((sy + 0.5) / sampleHeight) * sourceHeight
-      const bucket = Math.max(0, Math.min(63, Math.floor(globalY / Math.max(1, height) * 64)))
+      const bucket = Math.max(0, Math.min(profileBuckets - 1, Math.floor(globalY / Math.max(1, height) * profileBuckets)))
       for (let sx = 0; sx < sampleWidth; sx += 2) {
         const offset = (sy * sampleWidth + sx) * 4
         const r = data[offset], g = data[offset + 1], b = data[offset + 2]
@@ -543,7 +544,7 @@ export async function fingerprintImage(image: Blob): Promise<OcrVisualFingerprin
       }
       rowLuma[y] /= Math.max(1, rowCount[y])
     }
-    const buckets = 64
+    const buckets = Math.max(32, Math.min(128, Math.ceil(bitmap.height / 48)))
     const verticalLumaProfile = Array.from({ length: buckets }, (_, bucket) => {
       const start = Math.floor(bucket * sampleHeight / buckets)
       const end = Math.max(start + 1, Math.floor((bucket + 1) * sampleHeight / buckets))
