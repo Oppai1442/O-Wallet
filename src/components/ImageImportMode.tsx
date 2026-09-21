@@ -111,7 +111,14 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     let cancelled = false
-    void repository?.getEncryptedCheckpoint<ImageImportCheckpoint>('image-import-v2').then((checkpoint) => {
+    void repository?.getEncryptedCheckpoint<ImageImportCheckpoint>('image-import-v2').then(async (checkpoint) => {
+      const age = checkpoint?.updatedAt ? Date.now() - Date.parse(checkpoint.updatedAt) : Number.POSITIVE_INFINITY
+      const stale = !Number.isFinite(age) || age > 7 * 24 * 60 * 60_000
+      if (stale && checkpoint) {
+        await repository.deleteEncryptedCheckpoint('image-import-v2')
+        if (!cancelled) setCheckpointAvailable(false)
+        return
+      }
       if (!cancelled) setCheckpointAvailable(Boolean(checkpoint?.analyses?.length || checkpoint?.drafts?.length))
     })
     return () => {
@@ -201,6 +208,11 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
   function cancelAnalysis() {
     abortRef.current?.abort()
+  }
+
+  async function discardCheckpoint() {
+    await repository?.deleteEncryptedCheckpoint('image-import-v2')
+    setCheckpointAvailable(false)
   }
 
   function exportDiagnostics() {
@@ -509,7 +521,11 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
         merchant: match.transaction.merchant,
       } : undefined
     }
-    setDrafts((current) => current.map((draft) => draft.id === normalizedDraft.id ? { ...normalizedDraft, conflict } : draft))
+    setDrafts((current) => {
+      const next = current.map((draft) => draft.id === normalizedDraft.id ? { ...normalizedDraft, conflict } : draft)
+      void persistCheckpoint(analyses, next, reviewedIds, activeId)
+      return next
+    })
   }
 
   function mappingsFromCorrectedDraft(draft: BatchOcrDraft, lines: OcrDetectedLine[]) {
@@ -678,7 +694,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       {previewUrls.length>0&&<div className="mt-3 flex gap-2 overflow-x-auto pb-1">{previewUrls.map((url,index)=><img key={url} src={url} alt="" className="h-24 w-20 shrink-0 rounded-xl border border-stone-200 object-cover dark:border-stone-700"/>)}</div>}
       {busy&&<><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800"><div className="h-full bg-blue-500 transition-all" style={{width:`${Math.round(progress*100)}%`}}/></div><div className="mt-1 text-xs text-stone-500">{status}</div></>}
       {!busy&&status&&<div className="mt-2 text-xs text-stone-500">{status}</div>}
-      {checkpointAvailable&&<div className="mt-2 text-xs text-stone-500">{t('imageImport.checkpointReady')}</div>}
+      {checkpointAvailable&&<div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500"><span>{t('imageImport.checkpointReady')}</span><button type="button" className="font-semibold text-rose-600 hover:underline dark:text-rose-300" onClick={()=>void discardCheckpoint()}>{t('imageImport.discardCheckpoint')}</button></div>}
       {activeAnalysis?.diagnostics&&<details className="mt-2 text-xs text-stone-500"><summary className="cursor-pointer font-semibold">{t('imageImport.diagnostics')}</summary><div className="mt-1 grid gap-1 sm:grid-cols-2"><span>{t('imageImport.tiles',{count:activeAnalysis.diagnostics.tileCount})}</span><span>{t('imageImport.retries',{count:activeAnalysis.diagnostics.retryCount})}</span><span>tile {activeAnalysis.diagnostics.tileHeight}px</span><span>{Math.round(activeAnalysis.diagnostics.tileDurationsMs.reduce((a,b)=>a+b,0)/Math.max(1,activeAnalysis.diagnostics.tileDurationsMs.length))} ms/tile</span></div><Button variant="ghost" className="mt-2 px-2 py-1 text-xs" onClick={exportDiagnostics}><Download size={14}/>{t('imageImport.exportDiagnostics')}</Button><p className="mt-1 text-[10px] leading-4 opacity-80">{t('imageImport.diagnosticsPrivacy')}</p></details>}
     </div>
 
