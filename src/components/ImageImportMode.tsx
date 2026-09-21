@@ -664,8 +664,9 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
     setSaving(true)
     setError(undefined)
+    const imageIds = new Map<number, string>()
+    let pendingRecords: Transaction[] = []
     try {
-      const imageIds = new Map<number, string>()
       for (const fileIndex of [...new Set(selected.map((draft) => draft.fileIndex))]) {
         const file = files[fileIndex]
         if (file) imageIds.set(fileIndex, (await repository.saveImage(file)).id)
@@ -696,12 +697,34 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
           deleted: false,
         }
       })
+      pendingRecords = records
       await saveEntities(records)
       await repository.deleteEncryptedCheckpoint('image-import-v2')
       setTileResumeByHash({})
       setCheckpointAvailable(false)
       onClose()
     } catch (saveError) {
+      if (imageIds.size && pendingRecords.length) {
+        let verificationFailed = false
+        const persisted: Transaction[] = []
+        for (const record of pendingRecords) {
+          try {
+            const stored = await repository.get<Transaction>(record.id)
+            if (stored && !stored.deleted) persisted.push(stored)
+          } catch {
+            verificationFailed = true
+            break
+          }
+        }
+        if (!verificationFailed) {
+          const referenced = new Set(persisted.flatMap((record) => record.imageIds ?? []))
+          for (const imageId of imageIds.values()) {
+            if (!referenced.has(imageId)) {
+              try { await repository.deleteImage(imageId) } catch { /* cleanup is best effort */ }
+            }
+          }
+        }
+      }
       setError(localizeError(saveError, t, 'modal.errorSave'))
     } finally {
       setSaving(false)
