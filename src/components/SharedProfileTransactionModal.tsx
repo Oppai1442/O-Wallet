@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { Bot, CalendarDays, Images, Mic, Repeat2, ScanText, Sparkles, X } from 'lucide-react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { Bot, CalendarDays, Images, Mic, Repeat2, ScanText, Sparkles, Square, X } from 'lucide-react'
 import type {
   AppSettings,
   OcrDetectedLine,
@@ -106,6 +106,7 @@ export function SharedProfileTransactionModal({
   const [templateId, setTemplateId] = useState('')
   const [templateName, setTemplateName] = useState('')
   const [ocrBusy, setOcrBusy] = useState(false)
+  const ocrAbortRef = useRef<AbortController | undefined>(undefined)
   const [aiBusy, setAiBusy] = useState(false)
   const [ocrProgress, setOcrProgress] = useState(0)
   const [ocrStatus, setOcrStatus] = useState('')
@@ -141,6 +142,8 @@ export function SharedProfileTransactionModal({
     setPreviewUrls([url])
     return () => URL.revokeObjectURL(url)
   }, [files, showRegions])
+
+  useEffect(() => () => ocrAbortRef.current?.abort(), [])
 
   async function chooseImages(selected: File[]) {
     setError(undefined)
@@ -186,6 +189,8 @@ export function SharedProfileTransactionModal({
 
   async function runOcr() {
     if (!files[0]) return
+    const controller = new AbortController()
+    ocrAbortRef.current = controller
     setOcrBusy(true)
     setError(undefined)
     setOcrProgress(0)
@@ -193,7 +198,7 @@ export function SharedProfileTransactionModal({
       const ocr = await recognizeImageTiled(files[0], (progress, status) => {
         setOcrProgress(progress)
         setOcrStatus(status)
-      }, { retries: 1 })
+      }, { retries: 1, signal: controller.signal })
       const result = ocr.result
       const size = { width: ocr.width, height: ocr.height }
       setImageSize(size)
@@ -203,8 +208,9 @@ export function SharedProfileTransactionModal({
       setLineMappings(Object.fromEntries(regions.filter((region) => region.sourceLineId).map((region) => [region.sourceLineId!, region.field])))
       applyParsed(regions.length ? parseTransactionFromRegions(result, regions, size.width, size.height) : parseTransactionFromOcr(result))
     } catch (ocrError) {
-      setError(localizeError(ocrError, t, 'modal.errorOcr'))
+      if ((ocrError as Error)?.name !== 'AbortError') setError(localizeError(ocrError, t, 'modal.errorOcr'))
     } finally {
+      if (ocrAbortRef.current === controller) ocrAbortRef.current = undefined
       setOcrBusy(false)
     }
   }
@@ -282,6 +288,8 @@ export function SharedProfileTransactionModal({
 
   async function runBatchOcr() {
     if (!files.length || editing) return
+    const controller = new AbortController()
+    ocrAbortRef.current = controller
     setOcrBusy(true)
     setError(undefined)
     setBatchDrafts([])
@@ -291,7 +299,7 @@ export function SharedProfileTransactionModal({
       const existingIds = new Set(personalShape.map((item) => item.id))
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index]
-        const ocr = await recognizeImageTiled(file, (progress, status) => { setOcrProgress((index + progress) / files.length); setOcrStatus(`${index + 1}/${files.length} · ${status}`) }, { retries: 1 })
+        const ocr = await recognizeImageTiled(file, (progress, status) => { setOcrProgress((index + progress) / files.length); setOcrStatus(`${index + 1}/${files.length} · ${status}`) }, { retries: 1, signal: controller.signal })
         const result = ocr.result
         const size = { width: ocr.width, height: ocr.height }
         const parsed = regions.length ? parseTransactionFromRegions(result, regions, size.width, size.height) : parseTransactionFromOcr(result)
@@ -330,8 +338,9 @@ export function SharedProfileTransactionModal({
       setActiveBatchId(drafts[0]?.id)
       setOcrProgress(1)
     } catch (ocrError) {
-      setError(localizeError(ocrError, t, 'modal.errorOcr'))
+      if ((ocrError as Error)?.name !== 'AbortError') setError(localizeError(ocrError, t, 'modal.errorOcr'))
     } finally {
+      if (ocrAbortRef.current === controller) ocrAbortRef.current = undefined
       setOcrBusy(false)
     }
   }
@@ -471,7 +480,7 @@ export function SharedProfileTransactionModal({
               <Input className="mt-3" type="file" accept="image/*" multiple disabled={editing} onChange={(event) => void chooseImages(Array.from(event.target.files ?? []))} />
               {files.length > 0 && <div className="mt-3 grid gap-2 sm:grid-cols-2">{files.slice(0, 6).map((file,index) => <div key={`${file.name}-${file.size}-${index}`} className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-700 dark:bg-stone-950/40"><div className="truncate text-xs font-semibold">{file.name}</div><div className="mt-1 text-[11px] text-stone-400">{Math.max(1,Math.round(file.size/1024))} KB</div></div>)}</div>}
               <div className="mt-3 flex flex-wrap gap-2">
-                <Button variant="secondary" disabled={!files[0] || ocrBusy} onClick={() => void runOcr()}><ScanText size={16}/>{ocrBusy ? `${Math.round(ocrProgress * 100)}%` : 'OCR'}</Button>
+                {ocrBusy ? <Button variant="secondary" onClick={() => ocrAbortRef.current?.abort()}><Square size={15}/>{t('imageImport.cancel')}</Button> : <Button variant="secondary" disabled={!files[0]} onClick={() => void runOcr()}><ScanText size={16}/>OCR</Button>}
                 <Button variant="secondary" disabled={!files[0] || aiBusy || !ledger.aiVision?.endpoint || !ledger.aiVision?.model} onClick={() => void runAi()}><Sparkles size={16}/>{aiBusy ? t('ai.analyzing') : 'AI'}</Button>
                 {files.length > 1 && <Button variant="secondary" disabled={ocrBusy} onClick={() => void runBatchOcr()}><Images size={16}/>{t('batch.title')}</Button>}
               </div>
