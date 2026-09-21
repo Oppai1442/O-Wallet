@@ -1,5 +1,6 @@
 import type { OcrBox, OcrTileResumeState } from '../types'
-import { SECURITY_LIMITS } from './security'
+const MAX_OCR_BOXES = 50_000
+const MAX_IMAGES_PER_BATCH = 50
 
 function finite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
@@ -36,7 +37,7 @@ export function sanitizeOcrTileResumeState(value: unknown): OcrTileResumeState |
     || !Array.isArray(state.visualProfileSum) || !Array.isArray(state.visualProfileCount)
     || !Array.isArray(state.tileDurationsMs)
   ) return undefined
-  if (state.boxes.length > SECURITY_LIMITS.maxOcrBoxes || state.texts.length > 10000) return undefined
+  if (state.boxes.length > MAX_OCR_BOXES || state.texts.length > 10000) return undefined
   if (state.visualProfileSum.length !== state.visualProfileCount.length || state.visualProfileSum.length > 4096) return undefined
   if (state.tileDurationsMs.length > 10000) return undefined
   if (!state.boxes.every((box) => saneBox(box, state.width!, state.height!))) return undefined
@@ -67,7 +68,7 @@ export function sanitizeOcrTileResumeState(value: unknown): OcrTileResumeState |
 export function sanitizeOcrTileResumeMap(value: unknown) {
   const result: Record<string, OcrTileResumeState> = {}
   if (!value || typeof value !== 'object' || Array.isArray(value)) return result
-  for (const [key, candidate] of Object.entries(value as Record<string, unknown>).slice(0, SECURITY_LIMITS.maxImagesPerBatch)) {
+  for (const [key, candidate] of Object.entries(value as Record<string, unknown>).slice(0, MAX_IMAGES_PER_BATCH)) {
     if (!/^sample-sha256-v1:\d+:[a-f0-9]{64}$/i.test(key)) continue
     const state = sanitizeOcrTileResumeState(candidate)
     if (state) result[key] = state
