@@ -60,6 +60,14 @@ function candidateCurrency(candidate: ParsedTransactionCandidate) {
   return (candidate as ParsedTransactionCandidate & { currency?: string }).currency
 }
 
+function semanticRowIdentity(candidate: ParsedTransactionCandidate) {
+  const amount = candidate.amount !== undefined ? String(Math.round(candidate.amount * 100) / 100) : ''
+  const time = candidate.occurredAt ?? ''
+  const party = normalized(candidate.merchant ?? candidate.description ?? '').slice(0, 96)
+  if (!amount || (!time && !party)) return undefined
+  return `sig:${candidate.type}:${amount}:${time}:${party}`
+}
+
 
 function preservedDraft(oldDraft: BatchOcrDraft, freshDraft: BatchOcrDraft): BatchOcrDraft {
   return {
@@ -237,6 +245,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     priorTransactions: Transaction[],
     sourceHash: string,
     sourceRowId: string,
+    sourceRowIds: string[],
   ): BatchOcrDraft {
     const parsed = block.candidate
     const parsedType = parsed.type
@@ -269,10 +278,11 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       : undefined
     const amountValue = parsed.amount ? String(parsed.amount) : ''
     const candidateOccurredAt = fromLocalInputDateTime(localOccurredAt)
+    const sourceIdentitySet = new Set(sourceRowIds)
     const sourceDuplicate = priorTransactions.find((tx) =>
       tx.importSource?.adapterId === 'owallet-image-v2'
       && tx.importSource.sourceId === sourceHash
-      && (tx.importSource.sourceRowIds ?? []).includes(sourceRowId),
+      && (tx.importSource.sourceRowIds ?? []).some((id) => sourceIdentitySet.has(id)),
     )
     const conflict = sourceDuplicate
       ? { level: 'exact' as const, transaction: sourceDuplicate, score: 1 }
@@ -313,6 +323,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       fieldEvidence: block.fieldEvidence,
       sourceHash,
       sourceRowId,
+      sourceRowIds,
       conflict: conflict ? {
         level: conflict.level,
         source: transactions.some((item) => item.id === conflict.transaction.id) ? 'existing' : 'batch',
@@ -350,7 +361,9 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       for (let blockIndex = 0; blockIndex < matched.blocks.length; blockIndex += 1) {
         const block = matched.blocks[blockIndex]
         const sourceRowId = `row:${blockIndex}`
-        const nextDraft = resolveDraft(analysis.fileIndex, block, analysis.width, analysis.height, candidates, analysis.sourceHash, sourceRowId)
+        const semanticId = semanticRowIdentity(block.candidate)
+        const sourceRowIds = semanticId ? [sourceRowId, semanticId] : [sourceRowId]
+        const nextDraft = resolveDraft(analysis.fileIndex, block, analysis.width, analysis.height, candidates, analysis.sourceHash, sourceRowId, sourceRowIds)
         const exactOld = drafts.find((draft) => draft.id === nextDraft.id)
         const overlapOld = exactOld ?? drafts
           .filter((draft) => draft.fileIndex === nextDraft.fileIndex && preserveIds.has(draft.id))
@@ -375,7 +388,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
             merchant: chosen.merchant || undefined,
             balanceAfter: chosen.balanceAfter ? Number(chosen.balanceAfter) : undefined,
             description: chosen.description || undefined,
-            importSource: chosen.sourceHash ? { adapterId: 'owallet-image-v2', sourceId: chosen.sourceHash, sourceRowIds: chosen.sourceRowId ? [chosen.sourceRowId] : [] } : undefined,
+            importSource: chosen.sourceHash ? { adapterId: 'owallet-image-v2', sourceId: chosen.sourceHash, sourceRowIds: chosen.sourceRowIds?.length ? chosen.sourceRowIds : chosen.sourceRowId ? [chosen.sourceRowId] : [] } : undefined,
             imageIds: [],
             createdAt: fromLocalInputDateTime(chosen.occurredAt),
             updatedAt: fromLocalInputDateTime(chosen.occurredAt),
@@ -452,8 +465,9 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     }
     const numericAmount = Number(normalizedDraft.amount)
     let conflict: BatchOcrDraft['conflict']
-    const sourceDuplicate = normalizedDraft.sourceHash && normalizedDraft.sourceRowId
-      ? transactions.find((tx) => tx.importSource?.adapterId === 'owallet-image-v2' && tx.importSource.sourceId === normalizedDraft.sourceHash && (tx.importSource.sourceRowIds ?? []).includes(normalizedDraft.sourceRowId!))
+    const sourceIdentitySet = new Set(normalizedDraft.sourceRowIds?.length ? normalizedDraft.sourceRowIds : normalizedDraft.sourceRowId ? [normalizedDraft.sourceRowId] : [])
+    const sourceDuplicate = normalizedDraft.sourceHash && sourceIdentitySet.size
+      ? transactions.find((tx) => tx.importSource?.adapterId === 'owallet-image-v2' && tx.importSource.sourceId === normalizedDraft.sourceHash && (tx.importSource.sourceRowIds ?? []).some((id) => sourceIdentitySet.has(id)))
       : undefined
     if (sourceDuplicate) {
       conflict = { level: 'exact', source: 'existing', transactionId: sourceDuplicate.id, occurredAt: sourceDuplicate.occurredAt, amount: sourceDuplicate.amount, merchant: sourceDuplicate.merchant }
@@ -629,7 +643,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
           merchant: draft.merchant.trim() || undefined,
           balanceAfter: draft.balanceAfter ? Number(draft.balanceAfter) : undefined,
           description: draft.description.trim() || undefined,
-          importSource: draft.sourceHash ? { adapterId: 'owallet-image-v2', sourceId: draft.sourceHash, sourceRowIds: draft.sourceRowId ? [draft.sourceRowId] : [], sourceFileName: files[draft.fileIndex]?.name } : undefined,
+          importSource: draft.sourceHash ? { adapterId: 'owallet-image-v2', sourceId: draft.sourceHash, sourceRowIds: draft.sourceRowIds?.length ? draft.sourceRowIds : draft.sourceRowId ? [draft.sourceRowId] : [], sourceFileName: files[draft.fileIndex]?.name } : undefined,
           batch: batchId ? { id: batchId, mode: 'ocr-batch', index, count: selected.length } : undefined,
           imageIds: imageIds.has(draft.fileIndex) ? [imageIds.get(draft.fileIndex)!] : [],
           createdAt: now,
