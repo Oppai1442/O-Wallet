@@ -38,6 +38,8 @@ export interface BatchOcrDraft {
   templateId?: string
   confidence?: number
   fieldEvidence?: Partial<Record<OcrField, OcrFieldEvidence>>
+  sourceHash?: string
+  sourceRowId?: string
   conflict?: BatchOcrConflict
 }
 
