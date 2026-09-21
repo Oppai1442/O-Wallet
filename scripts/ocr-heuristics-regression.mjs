@@ -50,6 +50,7 @@ const {
   OCR_HEURISTIC_THRESHOLDS,
   bboxOverlapRatio,
   canAutoLearnTemplate,
+  chooseOcrTileHeight,
   dedupeTransactionBlocks,
   isCredibleTemplateMatch,
   isStrongTransactionBlock,
@@ -190,6 +191,14 @@ assert.equal(sampleShape('NGUYEN VAN A 123456'), 'A A A 0')
 assert.equal(sampleShape('Số tiền: 1.250.000 VND'), 'A A: 0.0.0 A')
 assert.ok(shapeSimilarity('A A: 0 A', 'A A: 0 A') > 0.99)
 assert.ok(shapeSimilarity('A A: 0 A', '0-0-0') < 0.35)
+
+// Adaptive tile policy stays bounded and scales down for weak devices/wide/very long images.
+assert.equal(chooseOcrTileHeight(1080, 2400, 2), 1400)
+assert.equal(chooseOcrTileHeight(1080, 2400, 8), 3200)
+assert.ok(chooseOcrTileHeight(2400, 2400, 4) < chooseOcrTileHeight(1080, 2400, 4))
+assert.ok(chooseOcrTileHeight(1080, 80000, 4) < chooseOcrTileHeight(1080, 20000, 4))
+assert.equal(chooseOcrTileHeight(1080, 80000, 4, 500), 900)
+assert.equal(chooseOcrTileHeight(1080, 80000, 4, 9000), 4200)
 
 // Template credibility requires score plus either semantic or strong visual evidence.
 assert.equal(isCredibleTemplateMatch({ score: 0.39, anchorScore: 1, visualScore: 1 }), false)
