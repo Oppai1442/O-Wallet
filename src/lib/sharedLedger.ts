@@ -87,6 +87,7 @@ export function sharedTransactionAsPersonalShape(tx: SharedTransaction): Transac
     note: tx.note,
     tags: tx.tags,
     batch: tx.batch,
+    importSource: tx.importSource,
     imageIds: [],
     createdAt: tx.createdAt,
     updatedAt: tx.updatedAt,
