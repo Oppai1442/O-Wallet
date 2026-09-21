@@ -205,6 +205,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       sourceHeight,
       templateId: block.templateId,
       confidence: block.confidence,
+      fieldEvidence: block.fieldEvidence,
       conflict: conflict ? {
         level: conflict.level,
         source: transactions.some((item) => item.id === conflict.transaction.id) ? 'existing' : 'batch',
