@@ -318,6 +318,10 @@ export function SharedProfileTransactionModal({
           balanceAfter: '',
           description: parsed.description ?? '',
           rawText: parsed.rawText,
+          sourceBBox: { x: 0, y: 0, width: size.width, height: size.height },
+          sourceWidth: size.width,
+          sourceHeight: size.height,
+          confidence: result.boxes.length ? result.boxes.reduce((sum, box) => sum + box.confidence, 0) / result.boxes.length : undefined,
           conflict: conflict ? { level: conflict.level, source: existingIds.has(conflict.transaction.id) ? 'existing' : 'batch', transactionId: conflict.transaction.id, occurredAt: conflict.transaction.occurredAt, amount: conflict.transaction.amount, merchant: conflict.transaction.merchant } : undefined,
         })
         if (parsed.amount) batchCandidates.push({ id, type: parsed.type, amount: parsed.amount, currency, occurredAt: occurredIso, categoryId: resolvedCategory, accountId: resolvedAccount, destinationAccountId: parsed.type === 'transfer' ? activeAccounts.find((item) => item.id !== resolvedAccount)?.id : undefined, merchant: parsed.merchant, description: parsed.description, imageIds: [], createdAt: occurredIso, updatedAt: occurredIso, deleted: false })
