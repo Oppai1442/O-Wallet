@@ -127,7 +127,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
   const [sessionTemplates, setSessionTemplates] = useState<OcrTemplate[]>(settings?.ocrTemplates ?? [])
   const [reviewedIds, setReviewedIds] = useState<Set<string>>(() => new Set())
   const [checkpointAvailable, setCheckpointAvailable] = useState(false)
-  const abortRef = useRef<AbortController>()
+  const abortRef = useRef<AbortController | undefined>(undefined)
 
   useEffect(() => setSessionTemplates(settings?.ocrTemplates ?? []), [settings?.ocrTemplates])
 
