@@ -682,11 +682,22 @@ export function mergePatternTemplateEvidence(existing: OcrTemplate, learned: Ocr
   }
   const cappedVisualFingerprints = visualFingerprints.slice(-6)
 
+  const rollbackSnapshot = {
+    aspectRatio: existing.aspectRatio,
+    aspectRatios: existing.aspectRatios ? [...existing.aspectRatios] : undefined,
+    fieldPatterns: existing.fieldPatterns ? existing.fieldPatterns.map((pattern) => ({ ...pattern, anchorTexts: pattern.anchorTexts ? [...pattern.anchorTexts] : undefined, sampleShapes: pattern.sampleShapes ? [...pattern.sampleShapes] : undefined })) : undefined,
+    visualFingerprint: existing.visualFingerprint ? structuredClone(existing.visualFingerprint) : undefined,
+    visualFingerprints: existing.visualFingerprints ? structuredClone(existing.visualFingerprints) : undefined,
+    blockPattern: existing.blockPattern ? { ...existing.blockPattern, anchorTexts: existing.blockPattern.anchorTexts ? [...existing.blockPattern.anchorTexts] : undefined } : undefined,
+    identityAnchors: existing.identityAnchors ? [...existing.identityAnchors] : undefined,
+  }
+
   return {
     ...existing,
     ...learned,
     id: existing.id,
     createdAt: existing.createdAt,
+    rollbackSnapshot,
     aspectRatio: learned.aspectRatio ?? existing.aspectRatio,
     aspectRatios: aspectRatios.slice(-8),
     visualFingerprint: learned.visualFingerprint ?? existing.visualFingerprint,
