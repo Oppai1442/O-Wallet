@@ -43,6 +43,9 @@ jobs:
       - name: Dependency vulnerability gate
         run: npm audit --audit-level=high
 
+      - name: OCR heuristic regression
+        run: npm run test:ocr
+
       - name: Build
         run: npm run build
         env:
