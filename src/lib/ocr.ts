@@ -14,7 +14,7 @@ import type {
   OcrVisualFingerprint,
   ParsedTransactionCandidate,
 } from '../types'
-import { dedupeTransactionBlocks, isStrongTransactionBlock, sampleShape, shapeSimilarity, visualSeparatorPositions } from './ocrHeuristics'
+import { chooseOcrTileHeight, dedupeTransactionBlocks, isStrongTransactionBlock, sampleShape, shapeSimilarity, visualSeparatorPositions } from './ocrHeuristics'
 import { normalizeOcrLine as normalizeLine, parseDateTimeText, parseMoneyText, parseTransactionText, stripFieldLabel } from './ocrParsing'
 import { readRasterImageDimensions, SECURITY_LIMITS } from './security'
 
@@ -291,17 +291,6 @@ export async function readRasterDimensions(image: Blob) {
   return { width, height }
 }
 
-function adaptiveTileHeight(width: number, height: number, requested?: number) {
-  if (requested) return Math.max(900, Math.min(4200, requested))
-  const memory = typeof navigator !== 'undefined'
-    ? Number((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4)
-    : 4
-  const pixelScale = width >= 2400 ? 0.72 : width >= 1600 ? 0.86 : 1
-  const base = memory <= 2 ? 1400 : memory <= 4 ? 2000 : memory >= 8 ? 3200 : 2500
-  const longPenalty = height > 40_000 ? 0.86 : 1
-  return Math.max(1100, Math.min(3600, Math.round(base * pixelScale * longPenalty)))
-}
-
 export async function recognizeImageTiled(
   image: File | Blob,
   onProgress?: (progress: number, status: string) => void,
@@ -317,7 +306,8 @@ export async function recognizeImageTiled(
 ): Promise<{ result: OcrResult; width: number; height: number; visual: OcrVisualFingerprint; diagnostics: OcrRuntimeDiagnostics }> {
   const startedAt = new Date().toISOString()
   const { width, height } = await readRasterDimensions(image)
-  const tileHeight = adaptiveTileHeight(width, height, options?.tileHeight)
+  const memory = typeof navigator !== 'undefined' ? Number((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4) : 4
+  const tileHeight = chooseOcrTileHeight(width, height, memory, options?.tileHeight)
   const overlap = Math.max(80, Math.min(tileHeight / 3, options?.overlap ?? Math.round(tileHeight * 0.10)))
   const retries = Math.max(0, Math.min(3, options?.retries ?? 1))
   const watchdogMs = Math.max(15_000, options?.watchdogMs ?? (tileHeight >= 3000 ? 65_000 : 45_000))
