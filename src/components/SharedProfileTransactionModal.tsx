@@ -499,7 +499,7 @@ export function SharedProfileTransactionModal({
         </div>
 
         {detectedLines.length > 0 && <div className="mt-5"><OcrTeachingPanel lines={detectedLines} mappings={lineMappings} onMap={mapDetectedLine} /></div>}
-        {batchDrafts.length > 0 && <div className="mt-5"><BatchOcrReview drafts={batchDrafts} previewUrls={previewUrls} files={files} accounts={activeAccounts} categories={activeCategories} catalogues={ledger.accountCatalogues} activeId={activeBatchId} onActiveId={setActiveBatchId} onChange={updateBatchDraft} /><div className="mt-3 flex justify-end"><Button onClick={() => void saveBatch()} disabled={saving}>{saving ? t('modal.saving') : t('batch.saveSelected')}</Button></div></div>}
+        {batchDrafts.length > 0 && <div className="mt-5"><BatchOcrReview drafts={batchDrafts} files={files} accounts={activeAccounts} categories={activeCategories} catalogues={ledger.accountCatalogues} activeId={activeBatchId} onActiveId={setActiveBatchId} onChange={updateBatchDraft} /><div className="mt-3 flex justify-end"><Button onClick={() => void saveBatch()} disabled={saving}>{saving ? t('modal.saving') : t('batch.saveSelected')}</Button></div></div>}
         {error && <div className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</div>}
       </div>
       <div className="flex shrink-0 justify-end gap-2 border-t border-stone-200 px-4 py-3 dark:border-stone-800"><Button variant="ghost" onClick={onClose}>{t('common.cancel')}</Button><Button onClick={() => void save()} disabled={saving || batchDrafts.length > 0}>{saving ? t('modal.saving') : t('common.save')}</Button></div>
