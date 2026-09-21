@@ -6,6 +6,7 @@ import type {
   OcrFieldPattern,
   OcrRegion,
   OcrResult,
+  OcrRuntimeDiagnostics,
   OcrTemplate,
   OcrTransactionBlock,
   OcrVisualFingerprint,
@@ -19,6 +20,29 @@ export { parseDateTimeText, parseMoneyText, stripFieldLabel } from './ocrParsing
 
 let workerPromise: Promise<Worker> | undefined
 let progressSink: ((progress: number, status: string) => void) | undefined
+
+function abortError() {
+  const error = new Error('OCR cancelled')
+  error.name = 'AbortError'
+  return error
+}
+
+async function resetOcrWorker() {
+  const current = workerPromise
+  workerPromise = undefined
+  progressSink = undefined
+  if (!current) return
+  try {
+    const worker = await current
+    await worker.terminate()
+  } catch {
+    // A failed/half-created worker is discarded; the next call recreates it.
+  }
+}
+
+export async function terminateOcrWorker() {
+  await resetOcrWorker()
+}
 
 async function getWorker(onProgress?: (progress: number, status: string) => void) {
   progressSink = onProgress
@@ -79,12 +103,47 @@ function collectWords(blocks: unknown): OcrBox[] {
 export async function recognizeImage(
   image: File | Blob,
   onProgress?: (progress: number, status: string) => void,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<OcrResult> {
+  const signal = options?.signal
+  if (signal?.aborted) throw abortError()
   const worker = await getWorker(onProgress)
-  const result = await worker.recognize(image, {}, { blocks: true })
-  return {
-    text: (result.data.text ?? '').slice(0, SECURITY_LIMITS.maxOcrTextChars),
-    boxes: collectWords(result.data.blocks).slice(0, SECURITY_LIMITS.maxOcrBoxes),
+  if (signal?.aborted) {
+    await resetOcrWorker()
+    throw abortError()
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  let abortHandler: (() => void) | undefined
+  const timeoutMs = Math.max(10_000, options?.timeoutMs ?? 45_000)
+
+  const interruption = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const error = new Error('OCR tile watchdog timeout')
+      error.name = 'TimeoutError'
+      reject(error)
+    }, timeoutMs)
+    if (signal) {
+      abortHandler = () => reject(abortError())
+      signal.addEventListener('abort', abortHandler, { once: true })
+    }
+  })
+
+  try {
+    const result = await Promise.race([
+      worker.recognize(image, {}, { blocks: true }),
+      interruption,
+    ])
+    return {
+      text: (result.data.text ?? '').slice(0, SECURITY_LIMITS.maxOcrTextChars),
+      boxes: collectWords(result.data.blocks).slice(0, SECURITY_LIMITS.maxOcrBoxes),
+    }
+  } catch (error) {
+    if ((error as Error)?.name === 'AbortError' || (error as Error)?.name === 'TimeoutError') await resetOcrWorker()
+    throw error
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler)
   }
 }
 
@@ -230,20 +289,57 @@ export async function readRasterDimensions(image: Blob) {
   return { width, height }
 }
 
+function adaptiveTileHeight(width: number, height: number, requested?: number) {
+  if (requested) return Math.max(900, Math.min(4200, requested))
+  const memory = typeof navigator !== 'undefined'
+    ? Number((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4)
+    : 4
+  const pixelScale = width >= 2400 ? 0.72 : width >= 1600 ? 0.86 : 1
+  const base = memory <= 2 ? 1400 : memory <= 4 ? 2000 : memory >= 8 ? 3200 : 2500
+  const longPenalty = height > 40_000 ? 0.86 : 1
+  return Math.max(1100, Math.min(3600, Math.round(base * pixelScale * longPenalty)))
+}
+
 export async function recognizeImageTiled(
   image: File | Blob,
   onProgress?: (progress: number, status: string) => void,
-  options?: { tileHeight?: number; overlap?: number },
-): Promise<{ result: OcrResult; width: number; height: number; visual: OcrVisualFingerprint }> {
+  options?: { tileHeight?: number; overlap?: number; signal?: AbortSignal; watchdogMs?: number; retries?: number },
+): Promise<{ result: OcrResult; width: number; height: number; visual: OcrVisualFingerprint; diagnostics: OcrRuntimeDiagnostics }> {
+  const startedAt = new Date().toISOString()
   const { width, height } = await readRasterDimensions(image)
-  const tileHeight = Math.max(900, options?.tileHeight ?? 2400)
-  const overlap = Math.max(80, Math.min(tileHeight / 3, options?.overlap ?? 240))
+  const tileHeight = adaptiveTileHeight(width, height, options?.tileHeight)
+  const overlap = Math.max(80, Math.min(tileHeight / 3, options?.overlap ?? Math.round(tileHeight * 0.10)))
+  const retries = Math.max(0, Math.min(3, options?.retries ?? 1))
+  const watchdogMs = Math.max(15_000, options?.watchdogMs ?? (tileHeight >= 3000 ? 65_000 : 45_000))
+  const tileDurationsMs: number[] = []
+  let retryCount = 0
+  if (options?.signal?.aborted) throw abortError()
   if (height <= tileHeight * 1.35) {
-    const [result, visual] = await Promise.all([
-      recognizeImage(image, onProgress),
-      fingerprintImage(image),
-    ])
-    return { result, width, height, visual }
+    const started = performance.now()
+    let result: OcrResult | undefined
+    let lastError: unknown
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        result = await recognizeImage(image, onProgress, { signal: options?.signal, timeoutMs: watchdogMs })
+        break
+      } catch (error) {
+        if ((error as Error)?.name === 'AbortError') throw error
+        lastError = error
+        if (attempt >= retries) throw error
+        retryCount += 1
+        onProgress?.(0, `retry ${attempt + 1}/${retries}`)
+      }
+    }
+    if (!result) throw lastError ?? new Error('modal.errorOcr')
+    const visual = await fingerprintImage(image)
+    tileDurationsMs.push(Math.max(0, performance.now() - started))
+    return {
+      result,
+      width,
+      height,
+      visual,
+      diagnostics: { width, height, tileHeight, overlap, tileCount: 1, retryCount, tileDurationsMs, startedAt, finishedAt: new Date().toISOString() },
+    }
   }
 
   const step = tileHeight - overlap
@@ -303,9 +399,26 @@ export async function recognizeImageTiled(
       context.drawImage(bitmap, 0, 0)
       sampleTileVisual(canvas, y, index === 0 ? 0 : Math.min(overlap, h - 1))
       const tile = await canvasBlob(canvas)
-      const result = await recognizeImage(tile, (progress, status) => {
-        onProgress?.((index + progress) / starts.length, `${index + 1}/${starts.length} · ${status}`)
-      })
+      const tileStarted = performance.now()
+      let result: OcrResult | undefined
+      let lastError: unknown
+      for (let attempt = 0; attempt <= retries; attempt += 1) {
+        if (options?.signal?.aborted) throw abortError()
+        try {
+          result = await recognizeImage(tile, (progress, status) => {
+            onProgress?.((index + progress) / starts.length, `${index + 1}/${starts.length} · ${status}`)
+          }, { signal: options?.signal, timeoutMs: watchdogMs })
+          break
+        } catch (error) {
+          if ((error as Error)?.name === 'AbortError') throw error
+          lastError = error
+          if (attempt >= retries) throw error
+          retryCount += 1
+          onProgress?.(index / starts.length, `${index + 1}/${starts.length} · retry ${attempt + 1}/${retries}`)
+        }
+      }
+      if (!result) throw lastError ?? new Error('modal.errorOcr')
+      tileDurationsMs.push(Math.max(0, performance.now() - tileStarted))
       texts.push(result.text)
       for (const box of result.boxes) {
         const shifted: OcrBox = { ...box, bbox: { ...box.bbox, y0: box.bbox.y0 + y, y1: box.bbox.y1 + y } }
@@ -333,6 +446,17 @@ export async function recognizeImageTiled(
       averageLuma: visualLuma / Math.max(1, visualCount),
       aspectRatio: width / Math.max(1, height),
       verticalLumaProfile,
+    },
+    diagnostics: {
+      width,
+      height,
+      tileHeight,
+      overlap,
+      tileCount: starts.length,
+      retryCount,
+      tileDurationsMs,
+      startedAt,
+      finishedAt: new Date().toISOString(),
     },
   }
 }
