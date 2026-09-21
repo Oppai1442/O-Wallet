@@ -438,9 +438,10 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     setError(undefined)
     setProgress(0)
     setStatus('')
+    const nextAnalyses: SourceAnalysis[] = analyses.filter((analysis) => fileHashes[analysis.fileIndex] === analysis.sourceHash)
+    let nextPartialTiles = { ...tileResumeByHash }
+    let lastTileCheckpointPersistAt = 0
     try {
-      const nextAnalyses: SourceAnalysis[] = analyses.filter((analysis) => fileHashes[analysis.fileIndex] === analysis.sourceHash)
-      let nextPartialTiles = { ...tileResumeByHash }
       for (let index = 0; index < files.length; index += 1) {
         const existing = nextAnalyses.find((analysis) => analysis.sourceHash === fileHashes[index])
         if (existing) {
@@ -459,7 +460,12 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
           onTileCheckpoint: async (state) => {
             nextPartialTiles = { ...nextPartialTiles, [sourceHash]: state }
             setTileResumeByHash(nextPartialTiles)
-            await persistCheckpoint(nextAnalyses, drafts, reviewedIds, activeId, nextPartialTiles)
+            const now = performance.now()
+            const due = state.nextTileIndex % 3 === 0 || now - lastTileCheckpointPersistAt >= 2_500
+            if (due) {
+              lastTileCheckpointPersistAt = now
+              await persistCheckpoint(nextAnalyses, drafts, reviewedIds, activeId, nextPartialTiles)
+            }
           },
         })
         const { [sourceHash]: _completedPartial, ...remainingPartials } = nextPartialTiles
@@ -485,6 +491,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       setStatus('')
     } catch (analysisError) {
       if ((analysisError as Error)?.name === 'AbortError') {
+        await persistCheckpoint(nextAnalyses, drafts, reviewedIds, activeId, nextPartialTiles)
         setStatus(t('imageImport.cancelled'))
       } else {
         setError(localizeError(analysisError, t, 'modal.errorOcr'))
