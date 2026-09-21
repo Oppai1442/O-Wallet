@@ -11,7 +11,7 @@ import type {
   OcrVisualFingerprint,
   ParsedTransactionCandidate,
 } from '../types'
-import { dedupeTransactionBlocks, sampleShape, shapeSimilarity, transactionEvidence, visualSeparatorPositions } from './ocrHeuristics'
+import { dedupeTransactionBlocks, isStrongTransactionBlock, sampleShape, shapeSimilarity, visualSeparatorPositions } from './ocrHeuristics'
 import { normalizeOcrLine as normalizeLine, parseDateTimeText, parseMoneyText, parseTransactionText, stripFieldLabel } from './ocrParsing'
 import { readRasterImageDimensions, SECURITY_LIMITS } from './security'
 
@@ -721,11 +721,7 @@ export function detectTransactionBlocks(
     if (!block) continue
     const candidate = template ? parseTransactionWithTemplate(block.result, template, width, Math.max(1, block.y1 - block.y0)) : parseTransactionFromOcr(block.result)
     const confidence = group.reduce((sum, line) => sum + line.confidence, 0) / Math.max(1, group.length)
-    const evidence = transactionEvidence(candidate)
-    const strongEnough = template
-      ? evidence >= 2 && confidence >= 18
-      : evidence >= 3 && confidence >= 22
-    if (!strongEnough) continue
+    if (!isStrongTransactionBlock(candidate, confidence, Boolean(template))) continue
     detected.push({
       candidate,
       bbox: { x: 0, y: block.y0, width, height: Math.max(1, block.y1 - block.y0) },
