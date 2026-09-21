@@ -48,6 +48,7 @@ const {
   canAutoLearnTemplate,
   dedupeTransactionBlocks,
   isCredibleTemplateMatch,
+  isStrongTransactionBlock,
   sampleShape,
   shapeSimilarity,
   transactionEvidence,
@@ -143,6 +144,13 @@ assert.equal(canAutoLearnTemplate(0.44, ['amount', 'merchant']), false)
 assert.equal(canAutoLearnTemplate(0.80, ['merchant', 'description']), false)
 assert.equal(canAutoLearnTemplate(0.80, ['amount', 'merchant']), true)
 assert.equal(canAutoLearnTemplate(0.80, ['occurredAt', 'description']), true)
+
+// Block acceptance rejects footer/header fragments and low-confidence noise.
+assert.equal(isStrongTransactionBlock({ occurredAt: '2026-09-21T10:00:00.000Z' }, 90, false), false)
+assert.equal(isStrongTransactionBlock({ amount: 100000 }, 90, false), false)
+assert.equal(isStrongTransactionBlock({ amount: 100000, merchant: 'Cafe' }, 30, false), true)
+assert.equal(isStrongTransactionBlock({ amount: 100000 }, 30, true), true)
+assert.equal(isStrongTransactionBlock({ amount: 100000 }, 10, true), false)
 
 // Overlap preservation survives small segmentation drift but rejects unrelated blocks.
 near(bboxOverlapRatio({ y: 100, height: 200 }, { y: 120, height: 190 }), 180 / 190)
