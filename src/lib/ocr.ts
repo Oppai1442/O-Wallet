@@ -906,5 +906,26 @@ export function detectTransactionBlocks(
       templateId: template?.id,
     })
   }
-  return detected
+
+  const deduped: OcrTransactionBlock[] = []
+  for (const block of detected.sort((a, b) => a.bbox.y - b.bbox.y)) {
+    const duplicateIndex = deduped.findIndex((existing) => {
+      const start = Math.max(existing.bbox.y, block.bbox.y)
+      const end = Math.min(existing.bbox.y + existing.bbox.height, block.bbox.y + block.bbox.height)
+      const overlap = Math.max(0, end - start) / Math.max(1, Math.min(existing.bbox.height, block.bbox.height))
+      if (overlap < 0.60) return false
+      const sameAmount = existing.candidate.amount !== undefined
+        && block.candidate.amount !== undefined
+        && Math.abs(existing.candidate.amount - block.candidate.amount) <= 0.01
+      const leftTime = existing.candidate.occurredAt ? Date.parse(existing.candidate.occurredAt) : Number.NaN
+      const rightTime = block.candidate.occurredAt ? Date.parse(block.candidate.occurredAt) : Number.NaN
+      const sameTime = Number.isFinite(leftTime) && Number.isFinite(rightTime)
+        ? Math.abs(leftTime - rightTime) <= 2 * 60_000
+        : !existing.candidate.occurredAt && !block.candidate.occurredAt
+      return sameAmount && sameTime
+    })
+    if (duplicateIndex < 0) deduped.push(block)
+    else if (block.confidence > deduped[duplicateIndex].confidence) deduped[duplicateIndex] = block
+  }
+  return deduped
 }
