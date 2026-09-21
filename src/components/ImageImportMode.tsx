@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { BrainCircuit, ImagePlus, Images, LoaderCircle, ScanText } from 'lucide-react'
-import type { OcrDetectedLine, OcrField, OcrResult, OcrTemplate, OcrTransactionBlock, OcrVisualFingerprint, ParsedTransactionCandidate, Transaction, TransactionType } from '../types'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { BrainCircuit, ImagePlus, Images, LoaderCircle, ScanText, Square } from 'lucide-react'
+import type { OcrDetectedLine, OcrField, OcrResult, OcrRuntimeDiagnostics, OcrTemplate, OcrTransactionBlock, OcrVisualFingerprint, ParsedTransactionCandidate, Transaction, TransactionType } from '../types'
 import { useWallet } from '../WalletContext'
 import { localizeError, useI18n } from '../i18n'
 import { accountCurrencies } from '../lib/accounts'
@@ -34,10 +34,52 @@ interface SourceAnalysis {
   templateScore?: number
   templateAnchorScore?: number
   templateVisualScore?: number
+  sourceHash: string
+  diagnostics?: OcrRuntimeDiagnostics
+}
+
+interface ImageImportCheckpoint {
+  version: 1
+  updatedAt: string
+  analyses: SourceAnalysis[]
+  drafts: BatchOcrDraft[]
+  reviewedIds: string[]
+  activeId?: string
 }
 
 function normalized(value: string) {
   return value.normalize('NFKC').toLocaleLowerCase('vi-VN').replace(/\s+/g, ' ').trim()
+}
+
+async function sourceFingerprint(file: File) {
+  const chunk = 1024 * 1024
+  const points = file.size <= chunk * 3
+    ? [[0, file.size]]
+    : [
+      [0, chunk],
+      [Math.max(0, Math.floor(file.size / 2) - Math.floor(chunk / 2)), Math.min(file.size, Math.floor(file.size / 2) + Math.ceil(chunk / 2))],
+      [Math.max(0, file.size - chunk), file.size],
+    ]
+  const parts: Uint8Array[] = []
+  let total = 16
+  for (const [start, end] of points) {
+    const bytes = new Uint8Array(await file.slice(start, end).arrayBuffer())
+    parts.push(bytes)
+    total += bytes.byteLength
+  }
+  const payload = new Uint8Array(total)
+  const view = new DataView(payload.buffer)
+  view.setBigUint64(0, BigInt(file.size), false)
+  view.setUint32(8, points.length, false)
+  view.setUint32(12, file.type.length, false)
+  let offset = 16
+  for (const part of parts) {
+    payload.set(part, offset)
+    offset += part.byteLength
+  }
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', payload))
+  const hex = [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
+  return `sample-sha256-v1:${file.size}:${hex}`
 }
 
 function draftId(fileIndex: number, block: OcrTransactionBlock) {
@@ -70,6 +112,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
   const { accounts, categories, repository, saveEntity, saveEntities, settings, transactions } = useWallet()
   const { t } = useI18n()
   const [files, setFiles] = useState<File[]>([])
+  const [fileHashes, setFileHashes] = useState<string[]>([])
   const [previewUrls, setPreviewUrls] = useState<string[]>([])
   const [analyses, setAnalyses] = useState<SourceAnalysis[]>([])
   const [drafts, setDrafts] = useState<BatchOcrDraft[]>([])
@@ -83,8 +126,21 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
   const [lineMappings, setLineMappings] = useState<Record<string, OcrField | ''>>({})
   const [sessionTemplates, setSessionTemplates] = useState<OcrTemplate[]>(settings?.ocrTemplates ?? [])
   const [reviewedIds, setReviewedIds] = useState<Set<string>>(() => new Set())
+  const [checkpointAvailable, setCheckpointAvailable] = useState(false)
+  const abortRef = useRef<AbortController>()
 
   useEffect(() => setSessionTemplates(settings?.ocrTemplates ?? []), [settings?.ocrTemplates])
+
+  useEffect(() => {
+    let cancelled = false
+    void repository?.getEncryptedCheckpoint<ImageImportCheckpoint>('image-import-v2').then((checkpoint) => {
+      if (!cancelled) setCheckpointAvailable(Boolean(checkpoint?.analyses?.length || checkpoint?.drafts?.length))
+    })
+    return () => {
+      cancelled = true
+      abortRef.current?.abort()
+    }
+  }, [repository])
 
   useEffect(() => {
     const urls = files.map((file) => URL.createObjectURL(file))
@@ -120,17 +176,53 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     setError(undefined)
     try {
       await validateImageBatch(selected)
+      const hashes: string[] = []
+      for (const file of selected) hashes.push(await sourceFingerprint(file))
       setFiles(selected)
-      setAnalyses([])
-      setDrafts([])
-      setActiveId(undefined)
-      setReviewedIds(new Set())
+      setFileHashes(hashes)
       setProgress(0)
-      setStatus('')
+
+      const checkpoint = await repository?.getEncryptedCheckpoint<ImageImportCheckpoint>('image-import-v2')
+      const indexByHash = new Map(hashes.map((hash, index) => [hash, index]))
+      const restoredAnalyses = (checkpoint?.analyses ?? [])
+        .filter((analysis) => indexByHash.has(analysis.sourceHash))
+        .map((analysis) => ({ ...analysis, fileIndex: indexByHash.get(analysis.sourceHash)! }))
+      const restoredDrafts = (checkpoint?.drafts ?? [])
+        .filter((draft) => Boolean(draft.sourceHash && indexByHash.has(draft.sourceHash)))
+        .map((draft) => ({ ...draft, fileIndex: indexByHash.get(draft.sourceHash!)! }))
+
+      setAnalyses(restoredAnalyses)
+      setDrafts(restoredDrafts)
+      setReviewedIds(new Set((checkpoint?.reviewedIds ?? []).filter((id) => restoredDrafts.some((draft) => draft.id === id))))
+      setActiveId(restoredDrafts.some((draft) => draft.id === checkpoint?.activeId) ? checkpoint?.activeId : restoredDrafts[0]?.id)
+      setCheckpointAvailable(Boolean(restoredAnalyses.length || restoredDrafts.length))
+      setStatus(restoredAnalyses.length ? t('imageImport.resumeRestored',{count:restoredAnalyses.length}) : '')
     } catch (validationError) {
       setFiles([])
+      setFileHashes([])
       setError(localizeError(validationError, t, 'error.imageInvalid'))
     }
+  }
+
+  async function persistCheckpoint(nextAnalyses = analyses, nextDrafts = drafts, nextReviewed = reviewedIds, nextActiveId = activeId) {
+    if (!repository) return
+    try {
+      await repository.setEncryptedCheckpoint<ImageImportCheckpoint>('image-import-v2', {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        analyses: nextAnalyses,
+        drafts: nextDrafts,
+        reviewedIds: [...nextReviewed],
+        activeId: nextActiveId,
+      })
+      setCheckpointAvailable(true)
+    } catch {
+      // Checkpoint failure must never block importing or saving transactions.
+    }
+  }
+
+  function cancelAnalysis() {
+    abortRef.current?.abort()
   }
 
   function resolveDraft(
@@ -139,6 +231,8 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     sourceWidth: number,
     sourceHeight: number,
     priorTransactions: Transaction[],
+    sourceHash: string,
+    sourceRowId: string,
   ): BatchOcrDraft {
     const parsed = block.candidate
     const parsedType = parsed.type
@@ -171,19 +265,26 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       : undefined
     const amountValue = parsed.amount ? String(parsed.amount) : ''
     const candidateOccurredAt = fromLocalInputDateTime(localOccurredAt)
-    const conflict = parsed.amount
-      ? findDuplicateTransaction(
-        {
-          type: parsedType,
-          amount: parsed.amount,
-          occurredAt: candidateOccurredAt,
-          accountId: resolvedAccountId,
-          merchant: parsed.merchant,
-          description: parsed.description,
-        },
-        priorTransactions,
-      )
-      : undefined
+    const sourceDuplicate = priorTransactions.find((tx) =>
+      tx.importSource?.adapterId === 'owallet-image-v2'
+      && tx.importSource.sourceId === sourceHash
+      && (tx.importSource.sourceRowIds ?? []).includes(sourceRowId),
+    )
+    const conflict = sourceDuplicate
+      ? { level: 'exact' as const, transaction: sourceDuplicate, score: 1 }
+      : parsed.amount
+        ? findDuplicateTransaction(
+          {
+            type: parsedType,
+            amount: parsed.amount,
+            occurredAt: candidateOccurredAt,
+            accountId: resolvedAccountId,
+            merchant: parsed.merchant,
+            description: parsed.description,
+          },
+          priorTransactions,
+        )
+        : undefined
 
     return {
       id: draftId(fileIndex, block),
@@ -206,6 +307,8 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       templateId: block.templateId,
       confidence: block.confidence,
       fieldEvidence: block.fieldEvidence,
+      sourceHash,
+      sourceRowId,
       conflict: conflict ? {
         level: conflict.level,
         source: transactions.some((item) => item.id === conflict.transaction.id) ? 'existing' : 'batch',
@@ -240,8 +343,10 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       analysis.templateScore = matched.score
       analysis.templateAnchorScore = matched.anchorScore
       analysis.templateVisualScore = matched.visualScore
-      for (const block of matched.blocks) {
-        const nextDraft = resolveDraft(analysis.fileIndex, block, analysis.width, analysis.height, candidates)
+      for (let blockIndex = 0; blockIndex < matched.blocks.length; blockIndex += 1) {
+        const block = matched.blocks[blockIndex]
+        const sourceRowId = `row:${blockIndex}`
+        const nextDraft = resolveDraft(analysis.fileIndex, block, analysis.width, analysis.height, candidates, analysis.sourceHash, sourceRowId)
         const exactOld = drafts.find((draft) => draft.id === nextDraft.id)
         const overlapOld = exactOld ?? drafts
           .filter((draft) => draft.fileIndex === nextDraft.fileIndex && preserveIds.has(draft.id))
@@ -266,6 +371,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
             merchant: chosen.merchant || undefined,
             balanceAfter: chosen.balanceAfter ? Number(chosen.balanceAfter) : undefined,
             description: chosen.description || undefined,
+            importSource: chosen.sourceHash ? { adapterId: 'owallet-image-v2', sourceId: chosen.sourceHash, sourceRowIds: chosen.sourceRowId ? [chosen.sourceRowId] : [] } : undefined,
             imageIds: [],
             createdAt: fromLocalInputDateTime(chosen.occurredAt),
             updatedAt: fromLocalInputDateTime(chosen.occurredAt),
@@ -282,33 +388,51 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
   async function analyzeImages() {
     if (!files.length || busy) return
+    const controller = new AbortController()
+    abortRef.current = controller
     setBusy(true)
     setError(undefined)
     setProgress(0)
     setStatus('')
-    setReviewedIds(new Set())
     try {
-      const nextAnalyses: SourceAnalysis[] = []
+      const nextAnalyses: SourceAnalysis[] = analyses.filter((analysis) => fileHashes[analysis.fileIndex] === analysis.sourceHash)
       for (let index = 0; index < files.length; index += 1) {
+        const existing = nextAnalyses.find((analysis) => analysis.sourceHash === fileHashes[index])
+        if (existing) {
+          setProgress((index + 1) / files.length)
+          continue
+        }
         const file = files[index]
         const ocr = await recognizeImageTiled(file, (value, text) => {
           setProgress((index + value * 0.98) / files.length)
           setStatus(`${index + 1}/${files.length} · ${text}`)
-        })
+        }, { signal: controller.signal, retries: 1 })
         nextAnalyses.push({
           fileIndex: index,
+          sourceHash: fileHashes[index],
           result: ocr.result,
           width: ocr.width,
           height: ocr.height,
           visual: ocr.visual,
+          diagnostics: ocr.diagnostics,
         })
+        nextAnalyses.sort((a,b)=>a.fileIndex-b.fileIndex)
+        const partialDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true)
+        await persistCheckpoint(nextAnalyses, partialDrafts, reviewedIds, partialDrafts[0]?.id)
       }
-      const nextDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, false)
+      const nextDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true)
+      await persistCheckpoint(nextAnalyses, nextDrafts, reviewedIds, activeId ?? nextDrafts[0]?.id)
       if (!nextDrafts.length) setError(t('imageImport.noDrafts'))
       setProgress(1)
+      setStatus('')
     } catch (analysisError) {
-      setError(localizeError(analysisError, t, 'modal.errorOcr'))
+      if ((analysisError as Error)?.name === 'AbortError') {
+        setStatus(t('imageImport.cancelled'))
+      } else {
+        setError(localizeError(analysisError, t, 'modal.errorOcr'))
+      }
     } finally {
+      abortRef.current = undefined
       setBusy(false)
     }
   }
@@ -324,7 +448,12 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     }
     const numericAmount = Number(normalizedDraft.amount)
     let conflict: BatchOcrDraft['conflict']
-    if (numericAmount > 0 && normalizedDraft.occurredAt && normalizedDraft.accountId) {
+    const sourceDuplicate = normalizedDraft.sourceHash && normalizedDraft.sourceRowId
+      ? transactions.find((tx) => tx.importSource?.adapterId === 'owallet-image-v2' && tx.importSource.sourceId === normalizedDraft.sourceHash && (tx.importSource.sourceRowIds ?? []).includes(normalizedDraft.sourceRowId!))
+      : undefined
+    if (sourceDuplicate) {
+      conflict = { level: 'exact', source: 'existing', transactionId: sourceDuplicate.id, occurredAt: sourceDuplicate.occurredAt, amount: sourceDuplicate.amount, merchant: sourceDuplicate.merchant }
+    } else if (numericAmount > 0 && normalizedDraft.occurredAt && normalizedDraft.accountId) {
       const siblingCandidates: Transaction[] = drafts
         .filter((draft) => draft.id !== normalizedDraft.id && Number(draft.amount) > 0 && draft.occurredAt && draft.accountId)
         .map((draft) => ({
@@ -424,6 +553,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       try { await learnFromDraft(current, nextReviewed) } catch { /* corrections still remain in the draft */ }
     }
     setActiveId(nextId)
+    void persistCheckpoint(analyses, drafts, new Set([...reviewedIds, ...(current ? [current.id] : [])]), nextId)
   }
 
   async function savePattern() {
@@ -495,6 +625,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
           merchant: draft.merchant.trim() || undefined,
           balanceAfter: draft.balanceAfter ? Number(draft.balanceAfter) : undefined,
           description: draft.description.trim() || undefined,
+          importSource: draft.sourceHash ? { adapterId: 'owallet-image-v2', sourceId: draft.sourceHash, sourceRowIds: draft.sourceRowId ? [draft.sourceRowId] : [], sourceFileName: files[draft.fileIndex]?.name } : undefined,
           batch: batchId ? { id: batchId, mode: 'ocr-batch', index, count: selected.length } : undefined,
           imageIds: imageIds.has(draft.fileIndex) ? [imageIds.get(draft.fileIndex)!] : [],
           createdAt: now,
@@ -503,6 +634,8 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
         }
       })
       await saveEntities(records)
+      await repository.deleteEncryptedCheckpoint('image-import-v2')
+      setCheckpointAvailable(false)
       onClose()
     } catch (saveError) {
       setError(localizeError(saveError, t, 'modal.errorSave'))
@@ -522,9 +655,13 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       <div className="mt-4 flex flex-wrap gap-2">
         <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-stone-800 shadow-sm ring-1 ring-stone-200 hover:bg-stone-50 dark:bg-stone-900 dark:text-stone-100 dark:ring-stone-700"><ImagePlus size={17}/>{t('modal.chooseImages')}<input hidden type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple onChange={(event)=>{const selected=Array.from(event.target.files??[]);event.currentTarget.value='';void chooseImages(selected)}}/></label>
         <Button onClick={()=>void analyzeImages()} disabled={!files.length||busy}><ScanText size={17}/>{busy?t('imageImport.analyzing'):t('imageImport.analyze')}</Button>
+        {busy&&<Button variant="secondary" onClick={cancelAnalysis}><Square size={15}/>{t('imageImport.cancel')}</Button>}
       </div>
       {previewUrls.length>0&&<div className="mt-3 flex gap-2 overflow-x-auto pb-1">{previewUrls.map((url,index)=><img key={url} src={url} alt="" className="h-24 w-20 shrink-0 rounded-xl border border-stone-200 object-cover dark:border-stone-700"/>)}</div>}
       {busy&&<><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800"><div className="h-full bg-blue-500 transition-all" style={{width:`${Math.round(progress*100)}%`}}/></div><div className="mt-1 text-xs text-stone-500">{status}</div></>}
+      {!busy&&status&&<div className="mt-2 text-xs text-stone-500">{status}</div>}
+      {checkpointAvailable&&<div className="mt-2 text-xs text-stone-500">{t('imageImport.checkpointReady')}</div>}
+      {activeAnalysis?.diagnostics&&<details className="mt-2 text-xs text-stone-500"><summary className="cursor-pointer font-semibold">{t('imageImport.diagnostics')}</summary><div className="mt-1 grid gap-1 sm:grid-cols-2"><span>{t('imageImport.tiles',{count:activeAnalysis.diagnostics.tileCount})}</span><span>{t('imageImport.retries',{count:activeAnalysis.diagnostics.retryCount})}</span><span>tile {activeAnalysis.diagnostics.tileHeight}px</span><span>{Math.round(activeAnalysis.diagnostics.tileDurationsMs.reduce((a,b)=>a+b,0)/Math.max(1,activeAnalysis.diagnostics.tileDurationsMs.length))} ms/tile</span></div></details>}
     </div>
 
     {drafts.length>0&&<BatchOcrReview drafts={drafts} previewUrls={previewUrls} files={files} accounts={accounts} categories={categories} catalogues={settings?.accountCatalogues??[]} activeId={activeId} onActiveId={(id)=>void changeActive(id)} onChange={updateDraft}/>}
