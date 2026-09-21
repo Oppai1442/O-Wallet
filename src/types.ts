@@ -73,12 +73,16 @@ export interface OcrTemplate {
   /** Missing means legacy coordinate template (schema 1). */
   schemaVersion?: 1 | 2
   aspectRatio?: number
+  /** Alternate aspect ratios learned from crops/devices. */
+  aspectRatios?: number[]
   /** Legacy/fallback regions. Pattern templates may keep this empty. */
   regions: OcrRegion[]
   /** Semantic/relative field extraction for schema 2. */
   fieldPatterns?: OcrFieldPattern[]
-  /** Visual signature used only for template ranking, not as the sole extractor. */
+  /** Latest visual signature, retained for backward compatibility. */
   visualFingerprint?: OcrVisualFingerprint
+  /** Alternate visual signatures learned from light/dark themes and UI variants. */
+  visualFingerprints?: OcrVisualFingerprint[]
   /** How repeated transaction blocks are detected in long/scrolling captures. */
   blockPattern?: OcrBlockPattern
   /** Stable OCR words/phrases that identify this screen/layout. */
