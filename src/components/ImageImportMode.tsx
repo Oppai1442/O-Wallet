@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { BrainCircuit, Download, ImagePlus, Images, LoaderCircle, ScanText, Square } from 'lucide-react'
-import type { OcrDetectedLine, OcrField, OcrResult, OcrRuntimeDiagnostics, OcrTemplate, OcrTransactionBlock, OcrVisualFingerprint, ParsedTransactionCandidate, Transaction, TransactionType } from '../types'
+import type { OcrDetectedLine, OcrField, OcrResult, OcrRuntimeDiagnostics, OcrTemplate, OcrTileResumeState, OcrTransactionBlock, OcrVisualFingerprint, ParsedTransactionCandidate, Transaction, TransactionType } from '../types'
 import { useWallet } from '../WalletContext'
 import { localizeError, useI18n } from '../i18n'
 import { accountCurrencies } from '../lib/accounts'
@@ -46,6 +46,7 @@ interface ImageImportCheckpoint {
   drafts: BatchOcrDraft[]
   reviewedIds: string[]
   activeId?: string
+  partialTiles?: Record<string, OcrTileResumeState>
 }
 
 function normalized(value: string) {
@@ -105,6 +106,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
   const [sessionTemplates, setSessionTemplates] = useState<OcrTemplate[]>(settings?.ocrTemplates ?? [])
   const [reviewedIds, setReviewedIds] = useState<Set<string>>(() => new Set())
   const [checkpointAvailable, setCheckpointAvailable] = useState(false)
+  const [tileResumeByHash, setTileResumeByHash] = useState<Record<string, OcrTileResumeState>>({})
   const abortRef = useRef<AbortController | undefined>(undefined)
 
   useEffect(() => setSessionTemplates(settings?.ocrTemplates ?? []), [settings?.ocrTemplates])
@@ -119,7 +121,10 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
         if (!cancelled) setCheckpointAvailable(false)
         return
       }
-      if (!cancelled) setCheckpointAvailable(Boolean(checkpoint?.analyses?.length || checkpoint?.drafts?.length))
+      if (!cancelled) {
+        setCheckpointAvailable(Boolean(checkpoint?.analyses?.length || checkpoint?.drafts?.length || Object.keys(checkpoint?.partialTiles ?? {}).length))
+        setTileResumeByHash(checkpoint?.partialTiles ?? {})
+      }
     })
     return () => {
       cancelled = true
@@ -176,11 +181,13 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
         .filter((draft) => Boolean(draft.sourceHash && indexByHash.has(draft.sourceHash)))
         .map((draft) => ({ ...draft, fileIndex: indexByHash.get(draft.sourceHash!)! }))
 
+      const restoredPartial = Object.fromEntries(Object.entries(checkpoint?.partialTiles ?? {}).filter(([hash]) => indexByHash.has(hash)))
       setAnalyses(restoredAnalyses)
       setDrafts(restoredDrafts)
+      setTileResumeByHash(restoredPartial)
       setReviewedIds(new Set((checkpoint?.reviewedIds ?? []).filter((id) => restoredDrafts.some((draft) => draft.id === id))))
       setActiveId(restoredDrafts.some((draft) => draft.id === checkpoint?.activeId) ? checkpoint?.activeId : restoredDrafts[0]?.id)
-      setCheckpointAvailable(Boolean(restoredAnalyses.length || restoredDrafts.length))
+      setCheckpointAvailable(Boolean(restoredAnalyses.length || restoredDrafts.length || Object.keys(restoredPartial).length))
       setStatus(restoredAnalyses.length ? t('imageImport.resumeRestored',{count:restoredAnalyses.length}) : '')
     } catch (validationError) {
       setFiles([])
@@ -189,7 +196,13 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     }
   }
 
-  async function persistCheckpoint(nextAnalyses = analyses, nextDrafts = drafts, nextReviewed = reviewedIds, nextActiveId = activeId) {
+  async function persistCheckpoint(
+    nextAnalyses = analyses,
+    nextDrafts = drafts,
+    nextReviewed = reviewedIds,
+    nextActiveId = activeId,
+    nextPartialTiles = tileResumeByHash,
+  ) {
     if (!repository) return
     try {
       await repository.setEncryptedCheckpoint<ImageImportCheckpoint>('image-import-v2', {
@@ -199,6 +212,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
         drafts: nextDrafts,
         reviewedIds: [...nextReviewed],
         activeId: nextActiveId,
+        partialTiles: nextPartialTiles,
       })
       setCheckpointAvailable(true)
     } catch {
@@ -212,6 +226,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
   async function discardCheckpoint() {
     await repository?.deleteEncryptedCheckpoint('image-import-v2')
+    setTileResumeByHash({})
     setCheckpointAvailable(false)
   }
 
@@ -432,13 +447,26 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
           continue
         }
         const file = files[index]
+        const sourceHash = fileHashes[index]
+        let workingPartials = { ...tileResumeByHash }
         const ocr = await recognizeImageTiled(file, (value, text) => {
           setProgress((index + value * 0.98) / files.length)
           setStatus(`${index + 1}/${files.length} · ${text}`)
-        }, { signal: controller.signal, retries: 1 })
+        }, {
+          signal: controller.signal,
+          retries: 1,
+          resumeState: workingPartials[sourceHash],
+          onTileCheckpoint: async (state) => {
+            workingPartials = { ...workingPartials, [sourceHash]: state }
+            setTileResumeByHash(workingPartials)
+            await persistCheckpoint(nextAnalyses, drafts, reviewedIds, activeId, workingPartials)
+          },
+        })
+        delete workingPartials[sourceHash]
+        setTileResumeByHash(workingPartials)
         nextAnalyses.push({
           fileIndex: index,
-          sourceHash: fileHashes[index],
+          sourceHash,
           result: ocr.result,
           width: ocr.width,
           height: ocr.height,
@@ -447,10 +475,10 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
         })
         nextAnalyses.sort((a,b)=>a.fileIndex-b.fileIndex)
         const partialDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true)
-        await persistCheckpoint(nextAnalyses, partialDrafts, reviewedIds, partialDrafts[0]?.id)
+        await persistCheckpoint(nextAnalyses, partialDrafts, reviewedIds, partialDrafts[0]?.id, workingPartials)
       }
       const nextDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true)
-      await persistCheckpoint(nextAnalyses, nextDrafts, reviewedIds, activeId ?? nextDrafts[0]?.id)
+      await persistCheckpoint(nextAnalyses, nextDrafts, reviewedIds, activeId ?? nextDrafts[0]?.id, tileResumeByHash)
       if (!nextDrafts.length) setError(t('imageImport.noDrafts'))
       setProgress(1)
       setStatus('')
@@ -669,6 +697,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       })
       await saveEntities(records)
       await repository.deleteEncryptedCheckpoint('image-import-v2')
+      setTileResumeByHash({})
       setCheckpointAvailable(false)
       onClose()
     } catch (saveError) {
