@@ -92,7 +92,6 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
   const { t } = useI18n()
   const [files, setFiles] = useState<File[]>([])
   const [fileHashes, setFileHashes] = useState<string[]>([])
-  const [previewUrls, setPreviewUrls] = useState<string[]>([])
   const [analyses, setAnalyses] = useState<SourceAnalysis[]>([])
   const [drafts, setDrafts] = useState<BatchOcrDraft[]>([])
   const [activeId, setActiveId] = useState<string>()
@@ -131,12 +130,6 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       abortRef.current?.abort()
     }
   }, [repository])
-
-  useEffect(() => {
-    const urls = files.map((file) => URL.createObjectURL(file))
-    setPreviewUrls(urls)
-    return () => urls.forEach((url) => URL.revokeObjectURL(url))
-  }, [files])
 
   const active = drafts.find((draft) => draft.id === activeId) ?? drafts[0]
   const activeAnalysis = active ? analyses.find((item) => item.fileIndex === active.fileIndex) : undefined
@@ -728,14 +721,14 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
         <Button onClick={()=>void analyzeImages()} disabled={!files.length||busy}><ScanText size={17}/>{busy?t('imageImport.analyzing'):t('imageImport.analyze')}</Button>
         {busy&&<Button variant="secondary" onClick={cancelAnalysis}><Square size={15}/>{t('imageImport.cancel')}</Button>}
       </div>
-      {previewUrls.length>0&&<div className="mt-3 flex gap-2 overflow-x-auto pb-1">{previewUrls.map((url,index)=><img key={url} src={url} alt="" className="h-24 w-20 shrink-0 rounded-xl border border-stone-200 object-cover dark:border-stone-700"/>)}</div>}
+      {files.length>0&&<div className="mt-3 flex gap-2 overflow-x-auto pb-1">{files.map((file,index)=><div key={`${file.name}-${file.size}-${index}`} className="w-40 shrink-0 rounded-xl border border-stone-200 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-900"><div className="truncate text-xs font-semibold text-stone-700 dark:text-stone-200">{file.name}</div><div className="mt-1 text-[11px] text-stone-400">{Math.max(1,Math.round(file.size/1024))} KB</div></div>)}</div>}
       {busy&&<><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800"><div className="h-full bg-blue-500 transition-all" style={{width:`${Math.round(progress*100)}%`}}/></div><div className="mt-1 text-xs text-stone-500">{status}</div></>}
       {!busy&&status&&<div className="mt-2 text-xs text-stone-500">{status}</div>}
       {checkpointAvailable&&<div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500"><span>{t('imageImport.checkpointReady')}</span><button type="button" className="font-semibold text-rose-600 hover:underline dark:text-rose-300" onClick={()=>void discardCheckpoint()}>{t('imageImport.discardCheckpoint')}</button></div>}
       {activeAnalysis?.diagnostics&&<details className="mt-2 text-xs text-stone-500"><summary className="cursor-pointer font-semibold">{t('imageImport.diagnostics')}</summary><div className="mt-1 grid gap-1 sm:grid-cols-2"><span>{t('imageImport.tiles',{count:activeAnalysis.diagnostics.tileCount})}</span><span>{t('imageImport.retries',{count:activeAnalysis.diagnostics.retryCount})}</span><span>tile {activeAnalysis.diagnostics.tileHeight}px</span><span>{Math.round(activeAnalysis.diagnostics.tileDurationsMs.reduce((a,b)=>a+b,0)/Math.max(1,activeAnalysis.diagnostics.tileDurationsMs.length))} ms/tile</span></div><Button variant="ghost" className="mt-2 px-2 py-1 text-xs" onClick={exportDiagnostics}><Download size={14}/>{t('imageImport.exportDiagnostics')}</Button><p className="mt-1 text-[10px] leading-4 opacity-80">{t('imageImport.diagnosticsPrivacy')}</p></details>}
     </div>
 
-    {drafts.length>0&&<BatchOcrReview drafts={drafts} previewUrls={previewUrls} files={files} accounts={accounts} categories={categories} catalogues={settings?.accountCatalogues??[]} activeId={activeId} onActiveId={(id)=>void changeActive(id)} onChange={updateDraft}/>}
+    {drafts.length>0&&<BatchOcrReview drafts={drafts} files={files} accounts={accounts} categories={categories} catalogues={settings?.accountCatalogues??[]} activeId={activeId} onActiveId={(id)=>void changeActive(id)} onChange={updateDraft}/>}
 
     {active&&activeAnalysis&&<details className="rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
       <summary className="cursor-pointer list-none"><div className="flex items-center gap-2 font-bold text-stone-800 dark:text-stone-100"><BrainCircuit size={18} className="text-blue-500"/>{t('imageImport.patternTitle')}</div><p className="mt-1 text-xs leading-5 text-stone-500">{activeTemplate?t('imageImport.templateMatched',{name:activeTemplate.name}):t('imageImport.templateNone')}</p></summary>
