@@ -229,7 +229,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     const credibleMatch = Boolean(
       top
       && top.score >= 0.40
-      && (top.anchorScore >= 0.20 || top.visualScore >= 0.62),
+      && ((top.anchorScore ?? 0) >= 0.20 || (top.visualScore ?? 0) >= 0.62),
     )
     const best = credibleMatch ? top.template : undefined
     return {
