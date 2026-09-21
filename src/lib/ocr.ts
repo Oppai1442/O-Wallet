@@ -3,6 +3,7 @@ import type {
   OcrBox,
   OcrDetectedLine,
   OcrField,
+  OcrFieldEvidence,
   OcrFieldPattern,
   OcrRegion,
   OcrResult,
@@ -768,6 +769,73 @@ export function parseTransactionWithTemplate(
   }
 }
 
+function normalizedFieldText(value?: string) {
+  return normalizeLine(value ?? '').toLocaleLowerCase('vi-VN')
+}
+
+function buildFieldEvidence(
+  result: OcrResult,
+  candidate: ParsedTransactionCandidate,
+  width: number,
+  height: number,
+  sourceY: number,
+  template?: OcrTemplate,
+): Partial<Record<OcrField, OcrFieldEvidence>> {
+  const lines = buildDetectedLines(result, width, height)
+  const evidence: Partial<Record<OcrField, OcrFieldEvidence>> = {}
+
+  const add = (field: OcrField, line: OcrDetectedLine | undefined, method: OcrFieldEvidence['method']) => {
+    if (!line || field === 'generic' || field === 'ignore') return
+    evidence[field] = {
+      field,
+      text: line.text,
+      confidence: Math.max(0, Math.min(1, line.confidence / 100)),
+      bbox: {
+        x: line.x * width,
+        y: sourceY + line.y * height,
+        width: line.width * width,
+        height: Math.max(1, line.height * height),
+      },
+      method,
+    }
+  }
+
+  if (template?.schemaVersion === 2) {
+    for (const pattern of template.fieldPatterns ?? []) {
+      const line = findPatternLine(lines, pattern)
+      if (line) add(pattern.field, line, 'template')
+    }
+  }
+
+  const findAmount = (value: number | undefined) => value === undefined ? undefined : lines.find((line) => {
+    const parsed = parseMoneyText(line.text)
+    return parsed !== undefined && Math.abs(parsed - value) <= 0.01
+  })
+  const findTime = (value: string | undefined) => {
+    if (!value) return undefined
+    const expected = Date.parse(value)
+    return lines.find((line) => {
+      const parsed = parseDateTimeText(line.text)
+      return parsed && Number.isFinite(expected) && Math.abs(Date.parse(parsed) - expected) <= 60_000
+    })
+  }
+  const findText = (value: string | undefined) => {
+    const target = normalizedFieldText(value)
+    if (!target) return undefined
+    return lines.find((line) => {
+      const text = normalizedFieldText(line.text)
+      return text.includes(target) || target.includes(text)
+    })
+  }
+
+  if (!evidence.amount) add('amount', findAmount(candidate.amount), 'value-match')
+  if (!evidence.occurredAt) add('occurredAt', findTime(candidate.occurredAt), 'value-match')
+  if (!evidence.merchant) add('merchant', findText(candidate.merchant), 'value-match')
+  if (!evidence.balanceAfter) add('balanceAfter', findAmount(candidate.balanceAfter), 'value-match')
+  if (!evidence.description) add('description', findText(candidate.description), 'value-match')
+  return evidence
+}
+
 function blockResultFromLines(lines: OcrDetectedLine[], result: OcrResult, width: number, height: number) {
   if (!lines.length) return undefined
   const y0 = Math.max(0, Math.min(...lines.map((line) => line.y)) * height)
@@ -846,11 +914,13 @@ export function detectTransactionBlocks(
     const candidate = template ? parseTransactionWithTemplate(block.result, template, width, Math.max(1, block.y1 - block.y0)) : parseTransactionFromOcr(block.result)
     const confidence = group.reduce((sum, line) => sum + line.confidence, 0) / Math.max(1, group.length)
     if (!isStrongTransactionBlock(candidate, confidence, Boolean(template))) continue
+    const blockHeight = Math.max(1, block.y1 - block.y0)
     detected.push({
       candidate,
-      bbox: { x: 0, y: block.y0, width, height: Math.max(1, block.y1 - block.y0) },
+      bbox: { x: 0, y: block.y0, width, height: blockHeight },
       confidence,
       templateId: template?.id,
+      fieldEvidence: buildFieldEvidence(block.result, candidate, width, blockHeight, block.y0, template),
     })
   }
 
