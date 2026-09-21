@@ -119,16 +119,56 @@ function extractLabeledValue(lines: string[], index: number, field: OcrField) {
   return next ? stripFieldLabel(next, field) : undefined
 }
 
+interface MoneyCandidate {
+  value: number
+  line: string
+  index: number
+  raw: string
+  hasCurrency: boolean
+  hasSign: boolean
+  hasSeparator: boolean
+  looksLikeIdentifier: boolean
+}
+
 function findMoneyCandidates(lines: string[]) {
-  const out: Array<{ value: number; line: string; index: number }> = []
+  const out: MoneyCandidate[] = []
   const moneyRegex = /[-+]?\s*\d[\d.,\s]{2,}(?:\s*(?:VND|VNĐ|₫|đ))?/gi
   lines.forEach((line, index) => {
     for (const match of line.matchAll(moneyRegex)) {
-      const value = parseMoneyText(match[0])
-      if (value && value >= 100) out.push({ value, line, index })
+      const raw = match[0].trim()
+      const value = parseMoneyText(raw)
+      if (!value || value < 100) continue
+      const compactDigits = raw.replace(/\D/g, '')
+      const hasCurrency = /(?:VND|VNĐ|₫|đ)/i.test(raw)
+      const hasSign = /^[-+]/.test(raw.replace(/^\s+/, ''))
+      const hasSeparator = /[.,]/.test(raw)
+      const looksLikeIdentifier = !hasCurrency && !hasSign && !hasSeparator && compactDigits.length >= 8
+      out.push({ value, line, index, raw, hasCurrency, hasSign, hasSeparator, looksLikeIdentifier })
     }
   })
   return out
+}
+
+function moneyCandidateScore(candidate: MoneyCandidate, labelIndex?: number) {
+  let score = 0
+  if (candidate.hasCurrency) score += 30
+  if (candidate.hasSeparator) score += 12
+  if (candidate.hasSign) score += 8
+  if (candidate.looksLikeIdentifier) score -= 45
+  if (labelIndex !== undefined) {
+    const delta = candidate.index - labelIndex
+    score += Math.max(-30, 30 - Math.abs(delta) * 18)
+    if (delta >= 0) score += 6
+    if (delta === 0) score += 8
+  }
+  return score
+}
+
+function bestMoneyCandidate(candidates: MoneyCandidate[], labelIndex?: number, excluded?: MoneyCandidate) {
+  return candidates
+    .filter((candidate) => candidate !== excluded)
+    .map((candidate) => ({ candidate, score: moneyCandidateScore(candidate, labelIndex) }))
+    .sort((a, b) => b.score - a.score || a.candidate.index - b.candidate.index)[0]?.candidate
 }
 
 export function parseTransactionText(text: string): ParsedTransactionCandidate {
@@ -138,14 +178,14 @@ export function parseTransactionText(text: string): ParsedTransactionCandidate {
 
   const balanceIndex = lower.findIndex((line) => /số dư|so du|balance|available balance/.test(line))
   const balanceMoney = balanceIndex >= 0
-    ? money.find((candidate) => Math.abs(candidate.index - balanceIndex) <= 1)
+    ? bestMoneyCandidate(money.filter((candidate) => Math.abs(candidate.index - balanceIndex) <= 2), balanceIndex)
     : undefined
 
   const amountKeywordIndex = lower.findIndex((line) => /số tiền|so tien|amount|giá trị|gia tri|thanh toán|thanh toan/.test(line))
   let amountCandidate = amountKeywordIndex >= 0
-    ? money.find((candidate) => Math.abs(candidate.index - amountKeywordIndex) <= 1 && candidate !== balanceMoney)
+    ? bestMoneyCandidate(money.filter((candidate) => Math.abs(candidate.index - amountKeywordIndex) <= 2), amountKeywordIndex, balanceMoney)
     : undefined
-  if (!amountCandidate) amountCandidate = money.find((candidate) => candidate !== balanceMoney)
+  if (!amountCandidate) amountCandidate = bestMoneyCandidate(money, undefined, balanceMoney)
 
   const expenseHints = /thanh toán|thanh toan|chuyển tiền|chuyen tien|debit|trừ|tru|payment|purchase|chi tiêu|chi tieu/
   const incomeHints = /nhận tiền|nhan tien|credit|cộng|cong|incoming|received|thu nhập|thu nhap/
