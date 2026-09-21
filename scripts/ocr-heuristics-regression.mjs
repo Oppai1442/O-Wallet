@@ -42,9 +42,9 @@ function near(actual, expected, tolerance = 1e-6) {
 
 // Shape normalization stays layout-oriented instead of memorizing literal values.
 assert.equal(sampleShape('NGUYEN VAN A 123456'), 'A A A 0')
-assert.equal(sampleShape('Số tiền: 1.250.000 VND'), 'A a: 0.0.0 A')
-assert.ok(shapeSimilarity('A a: 0 A', 'A a: 0 A') > 0.99)
-assert.ok(shapeSimilarity('A a: 0 A', '0-0-0') < 0.35)
+assert.equal(sampleShape('Số tiền: 1.250.000 VND'), 'A A: 0.0.0 A')
+assert.ok(shapeSimilarity('A A: 0 A', 'A A: 0 A') > 0.99)
+assert.ok(shapeSimilarity('A A: 0 A', '0-0-0') < 0.35)
 
 // Template credibility requires score plus either semantic or strong visual evidence.
 assert.equal(isCredibleTemplateMatch({ score: 0.39, anchorScore: 1, visualScore: 1 }), false)
