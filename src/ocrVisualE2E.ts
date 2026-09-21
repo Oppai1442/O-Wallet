@@ -120,7 +120,16 @@ async function runScenario(name: string, cards: number, dark: boolean, jitter: n
 
 export async function runOcrVisualE2E(root: HTMLElement) {
   window.__OWALLET_OCR_E2E__ = { status: 'running' }
-  root.innerHTML = '<main style="font-family:system-ui;padding:24px"><h1>O-Wallet OCR visual E2E</h1><p id="status">Running synthetic OCR…</p></main>'
+  const main = document.createElement('main')
+  main.style.fontFamily = 'system-ui'
+  main.style.padding = '24px'
+  const title = document.createElement('h1')
+  title.textContent = 'O-Wallet OCR visual E2E'
+  const statusNode = document.createElement('p')
+  statusNode.id = 'status'
+  statusNode.textContent = 'Running synthetic OCR…'
+  main.append(title, statusNode)
+  root.replaceChildren(main)
   try {
     const scenarios = []
     scenarios.push(await runScenario('long-light', 6, false, 26))
