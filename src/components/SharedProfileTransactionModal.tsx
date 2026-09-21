@@ -19,7 +19,7 @@ import { AI_OPENROUTER_KEY_SECRET, analyzeTransactionImage } from '../lib/ai'
 import { selectableCategories } from '../lib/categories'
 import { findDuplicateTransaction } from '../lib/duplicates'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
-import { buildDetectedLines, parseTransactionFromOcr, parseTransactionFromRegions, recognizeImage } from '../lib/ocr'
+import { buildDetectedLines, parseTransactionFromOcr, parseTransactionFromRegions, recognizeImageTiled } from '../lib/ocr'
 import { findMatchingTransactionRule } from '../lib/rules'
 import { combineLocalDateAndTime, localDateKeyFromInputDateTime, localTimeFromInputDateTime, localWeekday, recurringDateKeys } from '../lib/scheduling'
 import { validateImageBatch } from '../lib/security'
@@ -160,26 +160,6 @@ export function SharedProfileTransactionModal({
     }
   }
 
-  async function readImageSize(file: File) {
-    if ('createImageBitmap' in window) {
-      const bitmap = await createImageBitmap(file)
-      const size = { width: bitmap.width, height: bitmap.height }
-      bitmap.close()
-      return size
-    }
-    const url = URL.createObjectURL(file)
-    try {
-      return await new Promise<{ width: number; height: number }>((resolve, reject) => {
-        const image = new Image()
-        image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight })
-        image.onerror = () => reject(new Error('modal.errorOcr'))
-        image.src = url
-      })
-    } finally {
-      URL.revokeObjectURL(url)
-    }
-  }
-
   function applyRule(parsedType: TransactionType, parsed: { amount?: number; merchant?: string; description?: string }) {
     const rule = findMatchingTransactionRule({ type: parsedType, amount: parsed.amount, merchant: parsed.merchant, description: parsed.description }, ledger.transactionRules)
     if (rule?.categoryId && selectableCategories(activeCategories, parsedType).some((item) => item.id === rule.categoryId)) setCategoryId(rule.categoryId)
@@ -210,10 +190,12 @@ export function SharedProfileTransactionModal({
     setError(undefined)
     setOcrProgress(0)
     try {
-      const [result, size] = await Promise.all([
-        recognizeImage(files[0], (progress, status) => { setOcrProgress(progress); setOcrStatus(status) }),
-        readImageSize(files[0]),
-      ])
+      const ocr = await recognizeImageTiled(files[0], (progress, status) => {
+        setOcrProgress(progress)
+        setOcrStatus(status)
+      }, { retries: 1 })
+      const result = ocr.result
+      const size = { width: ocr.width, height: ocr.height }
       setImageSize(size)
       setOcrResult(result)
       const lines = buildDetectedLines(result, size.width, size.height)
@@ -309,10 +291,9 @@ export function SharedProfileTransactionModal({
       const existingIds = new Set(personalShape.map((item) => item.id))
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index]
-        const [result, size] = await Promise.all([
-          recognizeImage(file, (progress, status) => { setOcrProgress((index + progress) / files.length); setOcrStatus(`${index + 1}/${files.length} · ${status}`) }),
-          readImageSize(file),
-        ])
+        const ocr = await recognizeImageTiled(file, (progress, status) => { setOcrProgress((index + progress) / files.length); setOcrStatus(`${index + 1}/${files.length} · ${status}`) }, { retries: 1 })
+        const result = ocr.result
+        const size = { width: ocr.width, height: ocr.height }
         const parsed = regions.length ? parseTransactionFromRegions(result, regions, size.width, size.height) : parseTransactionFromOcr(result)
         const local = parsed.occurredAt ? toLocalInputDateTime(parsed.occurredAt) : occurredAt
         const compatible = selectableCategories(activeCategories, parsed.type)
