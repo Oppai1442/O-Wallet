@@ -70,6 +70,8 @@ export interface OcrBlockPattern {
 export interface OcrTemplate {
   id: string
   name: string
+  /** Missing/true means enabled; false keeps the template but excludes it from matching. */
+  enabled?: boolean
   /** Missing means legacy coordinate template (schema 1). */
   schemaVersion?: 1 | 2
   aspectRatio?: number
