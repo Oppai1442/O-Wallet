@@ -15,6 +15,7 @@ const tsc = process.platform === 'win32'
 
 execFileSync(tsc, [
   'src/lib/ocrHeuristics.ts',
+  '--ignoreConfig',
   '--target', 'ES2022',
   '--module', 'ESNext',
   '--moduleResolution', 'Bundler',
