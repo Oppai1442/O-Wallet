@@ -67,6 +67,16 @@ export interface OcrBlockPattern {
   repeat: boolean
 }
 
+export interface OcrTemplateLearningSnapshot {
+  aspectRatio?: number
+  aspectRatios?: number[]
+  fieldPatterns?: OcrFieldPattern[]
+  visualFingerprint?: OcrVisualFingerprint
+  visualFingerprints?: OcrVisualFingerprint[]
+  blockPattern?: OcrBlockPattern
+  identityAnchors?: string[]
+}
+
 export interface OcrTemplate {
   id: string
   name: string
@@ -89,6 +99,8 @@ export interface OcrTemplate {
   blockPattern?: OcrBlockPattern
   /** Stable OCR words/phrases that identify this screen/layout. */
   identityAnchors?: string[]
+  /** One-step rollback state captured before the most recent learning merge. */
+  rollbackSnapshot?: OcrTemplateLearningSnapshot
   createdAt: string
   updatedAt: string
 }
