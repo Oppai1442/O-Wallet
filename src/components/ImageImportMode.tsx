@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { BrainCircuit, Download, ImagePlus, Images, LoaderCircle, ScanText, Square } from 'lucide-react'
-import type { OcrDetectedLine, OcrField, OcrResult, OcrRuntimeDiagnostics, OcrTemplate, OcrTileResumeState, OcrTransactionBlock, OcrVisualFingerprint, ParsedTransactionCandidate, Transaction, TransactionType } from '../types'
+import type { Account, AccountCatalogue, AppSettings, Category, OcrDetectedLine, OcrField, OcrResult, OcrRuntimeDiagnostics, OcrTemplate, OcrTileResumeState, OcrTransactionBlock, OcrVisualFingerprint, ParsedTransactionCandidate, Transaction, TransactionType } from '../types'
 import { useWallet } from '../WalletContext'
 import { localizeError, useI18n } from '../i18n'
 import { accountCurrencies } from '../lib/accounts'
@@ -88,8 +88,38 @@ function preservedDraft(oldDraft: BatchOcrDraft, freshDraft: BatchOcrDraft): Bat
   }
 }
 
-export function ImageImportMode({ onClose }: { onClose: () => void }) {
-  const { accounts, categories, repository, saveEntity, saveEntities, settings, transactions } = useWallet()
+export interface ImageImportModeProps {
+  onClose: () => void
+  accountsOverride?: Account[]
+  categoriesOverride?: Category[]
+  cataloguesOverride?: AccountCatalogue[]
+  settingsOverride?: AppSettings
+  transactionsOverride?: Transaction[]
+  checkpointKey?: string
+  onSaveTemplates?: (templates: OcrTemplate[]) => Promise<void>
+  onSaveDrafts?: (drafts: BatchOcrDraft[], files: File[]) => Promise<void>
+}
+
+export function ImageImportMode({
+  onClose,
+  accountsOverride,
+  categoriesOverride,
+  cataloguesOverride,
+  settingsOverride,
+  transactionsOverride,
+  checkpointKey = 'image-import-v2',
+  onSaveTemplates,
+  onSaveDrafts,
+}: ImageImportModeProps) {
+  const wallet = useWallet()
+  const repository = wallet.repository
+  const saveEntity = wallet.saveEntity
+  const saveEntities = wallet.saveEntities
+  const accounts = accountsOverride ?? wallet.accounts
+  const categories = categoriesOverride ?? wallet.categories
+  const settings = settingsOverride ?? wallet.settings
+  const transactions = transactionsOverride ?? wallet.transactions
+  const catalogues = cataloguesOverride ?? settings?.accountCatalogues ?? []
   const { t } = useI18n()
   const [files, setFiles] = useState<File[]>([])
   const [fileHashes, setFileHashes] = useState<string[]>([])
@@ -115,11 +145,11 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     let cancelled = false
-    void repository?.getEncryptedCheckpoint<ImageImportCheckpoint>('image-import-v2').then(async (checkpoint) => {
+    void repository?.getEncryptedCheckpoint<ImageImportCheckpoint>(checkpointKey).then(async (checkpoint) => {
       const age = checkpoint?.updatedAt ? Date.now() - Date.parse(checkpoint.updatedAt) : Number.POSITIVE_INFINITY
       const stale = !Number.isFinite(age) || age > 7 * 24 * 60 * 60_000
       if (stale && checkpoint) {
-        await repository.deleteEncryptedCheckpoint('image-import-v2')
+        await repository.deleteEncryptedCheckpoint(checkpointKey)
         if (!cancelled) setCheckpointAvailable(false)
         return
       }
@@ -133,7 +163,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       cancelled = true
       abortRef.current?.abort()
     }
-  }, [repository])
+  }, [checkpointKey, repository])
 
   const active = drafts.find((draft) => draft.id === activeId) ?? drafts[0]
   const activeAnalysis = active ? analyses.find((item) => item.fileIndex === active.fileIndex) : undefined
@@ -169,7 +199,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       setFileHashes(hashes)
       setProgress(0)
 
-      const checkpoint = await repository?.getEncryptedCheckpoint<ImageImportCheckpoint>('image-import-v2')
+      const checkpoint = await repository?.getEncryptedCheckpoint<ImageImportCheckpoint>(checkpointKey)
       const indexByHash = new Map(hashes.map((hash, index) => [hash, index]))
       const restoredAnalyses = (checkpoint?.analyses ?? [])
         .filter((analysis) => indexByHash.has(analysis.sourceHash))
@@ -214,7 +244,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     }
     const write = checkpointWriteRef.current.catch(() => undefined).then(async () => {
       if (generation !== checkpointGenerationRef.current) return
-      await repository.setEncryptedCheckpoint<ImageImportCheckpoint>('image-import-v2', payload)
+      await repository.setEncryptedCheckpoint<ImageImportCheckpoint>(checkpointKey, payload)
       if (generation === checkpointGenerationRef.current) setCheckpointAvailable(true)
     })
     checkpointWriteRef.current = write.catch(() => undefined)
@@ -236,7 +266,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
   async function discardCheckpoint() {
     await invalidateCheckpointWrites()
-    await repository?.deleteEncryptedCheckpoint('image-import-v2')
+    await repository?.deleteEncryptedCheckpoint(checkpointKey)
     setTileResumeByHash({})
     setCheckpointAvailable(false)
   }
@@ -608,8 +638,12 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
   async function persistTemplates(next: OcrTemplate[]) {
     if (!settings) return
-    const now = new Date().toISOString()
-    await saveEntity({ ...settings, ocrTemplates: next, updatedAt: now })
+    if (onSaveTemplates) {
+      await onSaveTemplates(next)
+    } else {
+      const now = new Date().toISOString()
+      await saveEntity({ ...settings, ocrTemplates: next, updatedAt: now })
+    }
     setSessionTemplates(next)
   }
 
@@ -682,6 +716,22 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
     setSaving(true)
     setError(undefined)
+    if (onSaveDrafts) {
+      try {
+        await onSaveDrafts(selected, files)
+        await invalidateCheckpointWrites()
+        await repository.deleteEncryptedCheckpoint(checkpointKey)
+        setTileResumeByHash({})
+        setCheckpointAvailable(false)
+        onClose()
+      } catch (saveError) {
+        setError(localizeError(saveError, t, 'modal.errorSave'))
+      } finally {
+        setSaving(false)
+      }
+      return
+    }
+
     const imageIds = new Map<number, string>()
     let pendingRecords: Transaction[] = []
     try {
@@ -718,7 +768,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       pendingRecords = records
       await saveEntities(records)
       await invalidateCheckpointWrites()
-      await repository.deleteEncryptedCheckpoint('image-import-v2')
+      await repository.deleteEncryptedCheckpoint(checkpointKey)
       setTileResumeByHash({})
       setCheckpointAvailable(false)
       onClose()
@@ -770,7 +820,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       {activeAnalysis?.diagnostics&&<details className="mt-2 text-xs text-stone-500"><summary className="cursor-pointer font-semibold">{t('imageImport.diagnostics')}</summary><div className="mt-1 grid gap-1 sm:grid-cols-2"><span>{t('imageImport.tiles',{count:activeAnalysis.diagnostics.tileCount})}</span><span>{t('imageImport.retries',{count:activeAnalysis.diagnostics.retryCount})}</span><span>tile {activeAnalysis.diagnostics.tileHeight}px</span><span>{Math.round(activeAnalysis.diagnostics.tileDurationsMs.reduce((a,b)=>a+b,0)/Math.max(1,activeAnalysis.diagnostics.tileDurationsMs.length))} ms/tile</span></div><Button variant="ghost" className="mt-2 px-2 py-1 text-xs" onClick={exportDiagnostics}><Download size={14}/>{t('imageImport.exportDiagnostics')}</Button><p className="mt-1 text-[10px] leading-4 opacity-80">{t('imageImport.diagnosticsPrivacy')}</p></details>}
     </div>
 
-    {drafts.length>0&&<BatchOcrReview drafts={drafts} files={files} accounts={accounts} categories={categories} catalogues={settings?.accountCatalogues??[]} activeId={activeId} onActiveId={(id)=>void changeActive(id)} onChange={updateDraft}/>}
+    {drafts.length>0&&<BatchOcrReview drafts={drafts} files={files} accounts={accounts} categories={categories} catalogues={catalogues} activeId={activeId} onActiveId={(id)=>void changeActive(id)} onChange={updateDraft}/>}
 
     {active&&activeAnalysis&&<details className="rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
       <summary className="cursor-pointer list-none"><div className="flex items-center gap-2 font-bold text-stone-800 dark:text-stone-100"><BrainCircuit size={18} className="text-blue-500"/>{t('imageImport.patternTitle')}</div><p className="mt-1 text-xs leading-5 text-stone-500">{activeTemplate?t('imageImport.templateMatched',{name:activeTemplate.name}):t('imageImport.templateNone')}</p></summary>
