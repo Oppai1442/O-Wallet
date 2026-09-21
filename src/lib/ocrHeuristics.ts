@@ -8,6 +8,10 @@ export const OCR_HEURISTIC_THRESHOLDS = {
   visualSeparatorMinDelta: 8,
   visualSeparatorStdDevMultiplier: 1.25,
   visualSeparatorMinSpacing: 0.03,
+  templateBlockMinEvidence: 2,
+  templateBlockMinConfidence: 18,
+  genericBlockMinEvidence: 3,
+  genericBlockMinConfidence: 22,
 } as const
 
 export interface HeuristicFingerprint {
@@ -79,6 +83,13 @@ export function transactionEvidence(candidate: HeuristicCandidate) {
   if (candidate.description) score += 1
   if (candidate.balanceAfter !== undefined) score += 1
   return score
+}
+
+export function isStrongTransactionBlock(candidate: HeuristicCandidate, confidence: number, hasTemplate: boolean) {
+  const evidence = transactionEvidence(candidate)
+  return hasTemplate
+    ? evidence >= OCR_HEURISTIC_THRESHOLDS.templateBlockMinEvidence && confidence >= OCR_HEURISTIC_THRESHOLDS.templateBlockMinConfidence
+    : evidence >= OCR_HEURISTIC_THRESHOLDS.genericBlockMinEvidence && confidence >= OCR_HEURISTIC_THRESHOLDS.genericBlockMinConfidence
 }
 
 export function bboxOverlapRatio(left?: { y: number; height: number }, right?: { y: number; height: number }) {
