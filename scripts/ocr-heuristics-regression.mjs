@@ -94,7 +94,7 @@ assert.equal(transfer.merchant, 'NGUYEN VAN A')
 assert.equal(transfer.description, 'tien an')
 assert.equal(transfer.balanceAfter, 8750000)
 assert.ok(transfer.occurredAt)
-assert.ok(['expense', 'transfer'].includes(transfer.type))
+assert.equal(transfer.type, 'transfer')
 
 const income = parseTransactionText(`
 Incoming transfer
@@ -107,6 +107,24 @@ assert.equal(income.amount, 500000)
 assert.equal(income.merchant, 'JOHN DOE')
 assert.equal(income.description, 'refund')
 assert.equal(income.type, 'income')
+
+const accountNearAmount = parseTransactionText(`
+Người nhận: TEST USER
+Số tài khoản: 012345678901
+Số tiền
+250.000 VND
+Thời gian: 21/09/2026 10:30
+Nội dung: test
+`)
+assert.equal(accountNearAmount.amount, 250000, 'account number must not become transaction amount')
+
+const referenceBeforeAmount = parseTransactionText(`
+Reference: 987654321012345
+Amount: + 75,000 VND
+Date & Time: 21 Sep 2026 11:30
+Description: payment
+`)
+assert.equal(referenceBeforeAmount.amount, 75000, 'reference ID must not outrank signed/currency amount')
 
 // Shape normalization stays layout-oriented instead of memorizing literal values.
 assert.equal(sampleShape('NGUYEN VAN A 123456'), 'A A A 0')
