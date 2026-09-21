@@ -22,6 +22,7 @@ export const SECURITY_LIMITS = {
   maxVaultConfigBytes: 512 * 1024,
   maxOcrTextChars: 200_000,
   maxOcrBoxes: 50_000,
+  maxOcrCheckpointBytes: 12 * 1024 * 1024,
   maxAiResponseChars: 100_000,
   maxAiApiKeyChars: 4_096,
   maxAiModelChars: 256,
