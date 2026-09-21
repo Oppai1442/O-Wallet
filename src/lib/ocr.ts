@@ -12,6 +12,7 @@ import type {
   ParsedTransactionCandidate,
   TransactionType,
 } from '../types'
+import { dedupeTransactionBlocks, sampleShape, shapeSimilarity, transactionEvidence, visualSeparatorPositions } from './ocrHeuristics'
 import { readRasterImageDimensions, SECURITY_LIMITS } from './security'
 
 let workerPromise: Promise<Worker> | undefined
@@ -575,17 +576,6 @@ function lineLooksLikeValue(line: string, type: OcrFieldPattern['valueType']) {
   return line.trim().length >= 2
 }
 
-function sampleShape(text: string) {
-  return normalizeLine(text)
-    .replace(/[A-ZÀ-Ỹ]/g, 'A')
-    .replace(/[a-zà-ỹ]/g, 'a')
-    .replace(/\d/g, '0')
-    .replace(/A+/g, 'A')
-    .replace(/a+/g, 'a')
-    .replace(/0+/g, '0')
-    .slice(0, 80)
-}
-
 function inferAnchor(lines: OcrDetectedLine[], index: number, field: OcrField) {
   const line = lines[index]
   const stripped = stripFieldLabel(line.text, field)
@@ -715,16 +705,6 @@ export function rankOcrTemplates(
   }).sort((a, b) => b.score - a.score)
 }
 
-function shapeSimilarity(left: string, right: string) {
-  if (!left || !right) return 0
-  const max = Math.max(left.length, right.length)
-  if (!max) return 1
-  let same = 0
-  const min = Math.min(left.length, right.length)
-  for (let index = 0; index < min; index += 1) if (left[index] === right[index]) same += 1
-  return same / max
-}
-
 function patternShapeScore(line: string, pattern: OcrFieldPattern) {
   const target = sampleShape(line)
   const shapes = pattern.sampleShapes?.length ? pattern.sampleShapes : pattern.sampleShape ? [pattern.sampleShape] : []
@@ -800,32 +780,6 @@ function blockResultFromLines(lines: OcrDetectedLine[], result: OcrResult, width
     return cy >= y0 && cy <= y1
   }).map((box) => ({ ...box, bbox: { ...box.bbox, y0: box.bbox.y0 - y0, y1: box.bbox.y1 - y0 } }))
   return { result: { text: textFromBoxes(boxes), boxes }, y0, y1 }
-}
-
-function visualSeparatorPositions(visual: OcrVisualFingerprint | undefined) {
-  const profile = visual?.verticalLumaProfile
-  if (!profile || profile.length < 8) return [] as number[]
-  const deltas = profile.slice(1).map((value, index) => Math.abs(value - profile[index]))
-  const mean = deltas.reduce((sum, value) => sum + value, 0) / Math.max(1, deltas.length)
-  const variance = deltas.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, deltas.length)
-  const threshold = mean + Math.sqrt(variance) * 1.25
-  const candidates: number[] = []
-  for (let index = 1; index < profile.length; index += 1) {
-    if (deltas[index - 1] < Math.max(8, threshold)) continue
-    const normalizedY = index / profile.length
-    if (normalizedY > 0.03 && normalizedY < 0.97) candidates.push(normalizedY)
-  }
-  return candidates.filter((value, index, all) => index === 0 || value - all[index - 1] > 0.03)
-}
-
-function transactionEvidence(candidate: ParsedTransactionCandidate) {
-  let score = 0
-  if (candidate.amount !== undefined) score += 2
-  if (candidate.occurredAt) score += 2
-  if (candidate.merchant) score += 1
-  if (candidate.description) score += 1
-  if (candidate.balanceAfter !== undefined) score += 1
-  return score
 }
 
 export function detectTransactionBlocks(
@@ -907,25 +861,5 @@ export function detectTransactionBlocks(
     })
   }
 
-  const deduped: OcrTransactionBlock[] = []
-  for (const block of detected.sort((a, b) => a.bbox.y - b.bbox.y)) {
-    const duplicateIndex = deduped.findIndex((existing) => {
-      const start = Math.max(existing.bbox.y, block.bbox.y)
-      const end = Math.min(existing.bbox.y + existing.bbox.height, block.bbox.y + block.bbox.height)
-      const overlap = Math.max(0, end - start) / Math.max(1, Math.min(existing.bbox.height, block.bbox.height))
-      if (overlap < 0.60) return false
-      const sameAmount = existing.candidate.amount !== undefined
-        && block.candidate.amount !== undefined
-        && Math.abs(existing.candidate.amount - block.candidate.amount) <= 0.01
-      const leftTime = existing.candidate.occurredAt ? Date.parse(existing.candidate.occurredAt) : Number.NaN
-      const rightTime = block.candidate.occurredAt ? Date.parse(block.candidate.occurredAt) : Number.NaN
-      const sameTime = Number.isFinite(leftTime) && Number.isFinite(rightTime)
-        ? Math.abs(leftTime - rightTime) <= 2 * 60_000
-        : !existing.candidate.occurredAt && !block.candidate.occurredAt
-      return sameAmount && sameTime
-    })
-    if (duplicateIndex < 0) deduped.push(block)
-    else if (block.confidence > deduped[duplicateIndex].confidence) deduped[duplicateIndex] = block
-  }
-  return deduped
+  return dedupeTransactionBlocks(detected)
 }
