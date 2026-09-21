@@ -12,7 +12,7 @@ import type {
   ParsedTransactionCandidate,
   TransactionType,
 } from '../types'
-import { SECURITY_LIMITS } from './security'
+import { readRasterImageDimensions, SECURITY_LIMITS } from './security'
 
 let workerPromise: Promise<Worker> | undefined
 let progressSink: ((progress: number, status: string) => void) | undefined
@@ -394,20 +394,24 @@ function canvasBlob(canvas: HTMLCanvasElement, type = 'image/png') {
 }
 
 export async function readRasterDimensions(image: Blob) {
-  const bitmap = await createImageBitmap(image)
-  try { return { width: bitmap.width, height: bitmap.height } } finally { bitmap.close() }
+  const { width, height } = await readRasterImageDimensions(image)
+  return { width, height }
 }
 
 export async function recognizeImageTiled(
   image: File | Blob,
   onProgress?: (progress: number, status: string) => void,
   options?: { tileHeight?: number; overlap?: number },
-): Promise<{ result: OcrResult; width: number; height: number }> {
+): Promise<{ result: OcrResult; width: number; height: number; visual: OcrVisualFingerprint }> {
   const { width, height } = await readRasterDimensions(image)
   const tileHeight = Math.max(900, options?.tileHeight ?? 2400)
   const overlap = Math.max(80, Math.min(tileHeight / 3, options?.overlap ?? 240))
   if (height <= tileHeight * 1.35) {
-    return { result: await recognizeImage(image, onProgress), width, height }
+    const [result, visual] = await Promise.all([
+      recognizeImage(image, onProgress),
+      fingerprintImage(image),
+    ])
+    return { result, width, height, visual }
   }
 
   const step = tileHeight - overlap
@@ -420,6 +424,39 @@ export async function recognizeImageTiled(
   const boxes: OcrBox[] = []
   const texts: string[] = []
   const seen = new Set<string>()
+  const visualColors = new Map<string, number>()
+  const visualProfileSum = Array.from({ length: 64 }, () => 0)
+  const visualProfileCount = Array.from({ length: 64 }, () => 0)
+  let visualLuma = 0
+  let visualCount = 0
+
+  const sampleTileVisual = (canvas: HTMLCanvasElement, yOffset: number, skipTop: number) => {
+    const sourceHeight = Math.max(1, canvas.height - skipTop)
+    const sampleWidth = Math.min(72, canvas.width)
+    const sampleHeight = Math.max(12, Math.min(96, Math.round(sourceHeight * sampleWidth / Math.max(1, canvas.width))))
+    const sample = document.createElement('canvas')
+    sample.width = sampleWidth
+    sample.height = sampleHeight
+    const context = sample.getContext('2d', { willReadFrequently: true })
+    if (!context) return
+    context.drawImage(canvas, 0, skipTop, canvas.width, sourceHeight, 0, 0, sampleWidth, sampleHeight)
+    const data = context.getImageData(0, 0, sampleWidth, sampleHeight).data
+    for (let sy = 0; sy < sampleHeight; sy += 1) {
+      const globalY = yOffset + skipTop + ((sy + 0.5) / sampleHeight) * sourceHeight
+      const bucket = Math.max(0, Math.min(63, Math.floor(globalY / Math.max(1, height) * 64)))
+      for (let sx = 0; sx < sampleWidth; sx += 2) {
+        const offset = (sy * sampleWidth + sx) * 4
+        const r = data[offset], g = data[offset + 1], b = data[offset + 2]
+        const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        visualLuma += luma
+        visualCount += 1
+        visualProfileSum[bucket] += luma
+        visualProfileCount[bucket] += 1
+        const key = quantizedColor(r, g, b)
+        visualColors.set(key, (visualColors.get(key) ?? 0) + 1)
+      }
+    }
+  }
   for (let index = 0; index < starts.length; index += 1) {
     const y = starts[index]
     const h = Math.min(tileHeight, height - y)
@@ -431,6 +468,7 @@ export async function recognizeImageTiled(
       const context = canvas.getContext('2d', { alpha: false })
       if (!context) throw new Error('modal.errorOcr')
       context.drawImage(bitmap, 0, 0)
+      sampleTileVisual(canvas, y, index === 0 ? 0 : Math.min(overlap, h - 1))
       const tile = await canvasBlob(canvas)
       const result = await recognizeImage(tile, (progress, status) => {
         onProgress?.((index + progress) / starts.length, `${index + 1}/${starts.length} · ${status}`)
@@ -448,10 +486,21 @@ export async function recognizeImageTiled(
     }
   }
   const stitched = textFromBoxes(boxes)
+  const colors = [...visualColors.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([rgb, amount]) => ({ rgb, weight: amount / Math.max(1, visualCount) }))
+  const verticalLumaProfile = visualProfileSum.map((sum, index) => sum / Math.max(1, visualProfileCount[index]))
   return {
     result: { text: stitched || texts.join('\n'), boxes: boxes.slice(0, SECURITY_LIMITS.maxOcrBoxes) },
     width,
     height,
+    visual: {
+      colors,
+      averageLuma: visualLuma / Math.max(1, visualCount),
+      aspectRatio: width / Math.max(1, height),
+      verticalLumaProfile,
+    },
   }
 }
 
