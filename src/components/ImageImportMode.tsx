@@ -6,6 +6,7 @@ import { localizeError, useI18n } from '../i18n'
 import { accountCurrencies } from '../lib/accounts'
 import { findDuplicateTransaction } from '../lib/duplicates'
 import { sourceFingerprint } from '../lib/fileFingerprint'
+import { sanitizeOcrTileResumeMap } from '../lib/ocrCheckpoint'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
 import {
   buildDetectedLines,
@@ -40,7 +41,7 @@ interface SourceAnalysis {
 }
 
 interface ImageImportCheckpoint {
-  version: 1
+  version: 1 | 2
   updatedAt: string
   analyses: SourceAnalysis[]
   drafts: BatchOcrDraft[]
@@ -121,8 +122,9 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
         return
       }
       if (!cancelled) {
-        setCheckpointAvailable(Boolean(checkpoint?.analyses?.length || checkpoint?.drafts?.length || Object.keys(checkpoint?.partialTiles ?? {}).length))
-        setTileResumeByHash(checkpoint?.partialTiles ?? {})
+        const partialTiles = sanitizeOcrTileResumeMap(checkpoint?.partialTiles)
+        setCheckpointAvailable(Boolean(checkpoint?.analyses?.length || checkpoint?.drafts?.length || Object.keys(partialTiles).length))
+        setTileResumeByHash(partialTiles)
       }
     })
     return () => {
@@ -174,7 +176,8 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
         .filter((draft) => Boolean(draft.sourceHash && indexByHash.has(draft.sourceHash)))
         .map((draft) => ({ ...draft, fileIndex: indexByHash.get(draft.sourceHash!)! }))
 
-      const restoredPartial = Object.fromEntries(Object.entries(checkpoint?.partialTiles ?? {}).filter(([hash]) => indexByHash.has(hash)))
+      const sanitizedPartial = sanitizeOcrTileResumeMap(checkpoint?.partialTiles)
+      const restoredPartial = Object.fromEntries(Object.entries(sanitizedPartial).filter(([hash]) => indexByHash.has(hash)))
       setAnalyses(restoredAnalyses)
       setDrafts(restoredDrafts)
       setTileResumeByHash(restoredPartial)
@@ -199,7 +202,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     if (!repository) return
     try {
       await repository.setEncryptedCheckpoint<ImageImportCheckpoint>('image-import-v2', {
-        version: 1,
+        version: 2,
         updatedAt: new Date().toISOString(),
         analyses: nextAnalyses,
         drafts: nextDrafts,
