@@ -74,6 +74,31 @@ export class WalletRepository {
     await deleteKv(`local-secret:${name}`)
   }
 
+  async setEncryptedCheckpoint<T>(name: string, value: T) {
+    if (!name || name.length > 128) throw new Error('error.invalidLocalSecret')
+    const clearBytes = new TextEncoder().encode(JSON.stringify(value))
+    if (clearBytes.byteLength > SECURITY_LIMITS.maxOcrCheckpointBytes) throw new Error('error.payloadTooLarge')
+    const payload = await encryptJson(this.key, value, `checkpoint:${name}`)
+    await setKv(`encrypted-checkpoint:${name}`, payload)
+  }
+
+  async getEncryptedCheckpoint<T>(name: string): Promise<T | undefined> {
+    if (!name || name.length > 128) return undefined
+    const payload = await getKv<EncryptedPayload>(`encrypted-checkpoint:${name}`)
+    if (!payload) return undefined
+    try {
+      return await decryptJson<T>(this.key, payload, `checkpoint:${name}`)
+    } catch (error) {
+      reportDiagnostic(`checkpoint:${name}`, error)
+      await deleteKv(`encrypted-checkpoint:${name}`)
+      return undefined
+    }
+  }
+
+  async deleteEncryptedCheckpoint(name: string) {
+    await deleteKv(`encrypted-checkpoint:${name}`)
+  }
+
   async getAll<T extends WalletEntity>(kind: RecordKind, includeDeleted = false): Promise<T[]> {
     const rows = await db.records.where('kind').equals(kind).toArray()
     const result: T[] = []
