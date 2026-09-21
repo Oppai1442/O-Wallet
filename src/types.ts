@@ -569,12 +569,35 @@ export interface ParsedTransactionCandidate {
   rawText: string
 }
 
+export interface OcrFieldEvidence {
+  field: OcrField
+  text: string
+  /** 0..1 confidence derived from the OCR line that supplied this field. */
+  confidence: number
+  /** Source-image coordinates in pixels. */
+  bbox: { x: number; y: number; width: number; height: number }
+  method: 'template' | 'value-match' | 'fallback'
+}
+
+export interface OcrRuntimeDiagnostics {
+  width: number
+  height: number
+  tileHeight: number
+  overlap: number
+  tileCount: number
+  retryCount: number
+  tileDurationsMs: number[]
+  startedAt: string
+  finishedAt: string
+}
+
 export interface OcrTransactionBlock {
   candidate: ParsedTransactionCandidate
   /** Source-image coordinates in pixels, retained so review can focus the exact row/card. */
   bbox: { x: number; y: number; width: number; height: number }
   confidence: number
   templateId?: string
+  fieldEvidence?: Partial<Record<OcrField, OcrFieldEvidence>>
 }
 
 export type SyncProgressStep = 'prepare' | 'index' | 'bootstrap' | 'records' | 'images' | 'done'
