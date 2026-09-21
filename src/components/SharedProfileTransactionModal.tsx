@@ -133,10 +133,14 @@ export function SharedProfileTransactionModal({
   }, [eligibleCategories, categoryId])
 
   useEffect(() => {
-    const urls = files.map((file) => URL.createObjectURL(file))
-    setPreviewUrls(urls)
-    return () => urls.forEach((url) => URL.revokeObjectURL(url))
-  }, [files])
+    if (!showRegions || !files[0]) {
+      setPreviewUrls([])
+      return
+    }
+    const url = URL.createObjectURL(files[0])
+    setPreviewUrls([url])
+    return () => URL.revokeObjectURL(url)
+  }, [files, showRegions])
 
   async function chooseImages(selected: File[]) {
     setError(undefined)
@@ -480,7 +484,7 @@ export function SharedProfileTransactionModal({
               <div className="flex items-center gap-2 font-semibold"><Images size={17} />{imagesTitle}</div>
               <p className="mt-1 text-xs leading-5 text-stone-500">{transientHint}</p>
               <Input className="mt-3" type="file" accept="image/*" multiple disabled={editing} onChange={(event) => void chooseImages(Array.from(event.target.files ?? []))} />
-              {previewUrls.length > 0 && <div className="mt-3 grid grid-cols-3 gap-2">{previewUrls.slice(0, 6).map((url) => <img key={url} src={url} alt="" className="h-24 w-full rounded-xl object-cover" />)}</div>}
+              {files.length > 0 && <div className="mt-3 grid gap-2 sm:grid-cols-2">{files.slice(0, 6).map((file,index) => <div key={`${file.name}-${file.size}-${index}`} className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-700 dark:bg-stone-950/40"><div className="truncate text-xs font-semibold">{file.name}</div><div className="mt-1 text-[11px] text-stone-400">{Math.max(1,Math.round(file.size/1024))} KB</div></div>)}</div>}
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button variant="secondary" disabled={!files[0] || ocrBusy} onClick={() => void runOcr()}><ScanText size={16}/>{ocrBusy ? `${Math.round(ocrProgress * 100)}%` : 'OCR'}</Button>
                 <Button variant="secondary" disabled={!files[0] || aiBusy || !ledger.aiVision?.endpoint || !ledger.aiVision?.model} onClick={() => void runAi()}><Sparkles size={16}/>{aiBusy ? t('ai.analyzing') : 'AI'}</Button>
