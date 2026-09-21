@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Bot, CalendarDays, CopyPlus, ImagePlus, Images, LoaderCircle, Mic, Repeat2, ScanText, Sparkles, X } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { localizeError, useI18n } from '../i18n'
-import { buildDetectedLines, parseTransactionFromOcr, parseTransactionFromRegions, recognizeImage } from '../lib/ocr'
+import { buildDetectedLines, parseTransactionFromOcr, parseTransactionFromRegions, recognizeImageTiled } from '../lib/ocr'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
 import { combineLocalDateAndTime, localDateKeyFromInputDateTime, localTimeFromInputDateTime, localWeekday, recurringDateKeys } from '../lib/scheduling'
 import { accountCurrencies } from '../lib/accounts'
@@ -178,20 +178,14 @@ export function TransactionModal({ onClose, transaction, duplicateFrom, initialV
     if (rule?.accountId && accounts.some((account) => account.id === rule.accountId)) setAccountId(rule.accountId)
   }
 
-  async function readImageSize(file: File) {
-    if ('createImageBitmap' in window) { const bitmap = await createImageBitmap(file); const value = { width: bitmap.width, height: bitmap.height }; bitmap.close(); return value }
-    const url = URL.createObjectURL(file)
-    try { return await new Promise<{ width: number; height: number }>((resolve, reject) => { const image = new window.Image(); image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight }); image.onerror = () => reject(new Error('modal.errorOcr')); image.src = url }) } finally { URL.revokeObjectURL(url) }
-  }
-
-  async function ensureImageSize(file: File) { if (imageSize) return imageSize; const value = await readImageSize(file); setImageSize(value); return value }
-
   async function runOcr() {
     if (!files[0]) return
     setOcrBusy(true); setError(undefined); setOcrProgress(0)
     try {
-      const [result, size] = await Promise.all([recognizeImage(files[0], (progress, status) => { setOcrProgress(progress); setOcrStatus(status) }), ensureImageSize(files[0])])
-      setOcrResult(result); setDetectedLines(buildDetectedLines(result, size.width, size.height)); setLineMappings(Object.fromEntries(regions.filter((region) => region.sourceLineId).map((region) => [region.sourceLineId!, region.field])))
+      const ocr = await recognizeImageTiled(files[0], (progress, status) => { setOcrProgress(progress); setOcrStatus(status) }, { retries: 1 })
+      const result = ocr.result
+      const size = { width: ocr.width, height: ocr.height }
+      setImageSize(size); setOcrResult(result); setDetectedLines(buildDetectedLines(result, size.width, size.height)); setLineMappings(Object.fromEntries(regions.filter((region) => region.sourceLineId).map((region) => [region.sourceLineId!, region.field])))
       applyParsedCandidate(regions.length ? parseTransactionFromRegions(result, regions, size.width, size.height) : parseTransactionFromOcr(result))
     } catch (e) { setError(localizeError(e, t, 'modal.errorOcr')) } finally { setOcrBusy(false) }
   }
@@ -231,7 +225,9 @@ export function TransactionModal({ onClose, transaction, duplicateFrom, initialV
       const drafts: BatchOcrDraft[] = []; const batchCandidates: Transaction[] = []; const existingIds = new Set(transactions.map((item) => item.id))
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index]
-        const [result, size] = await Promise.all([recognizeImage(file, (progress, status) => { setOcrProgress((index + progress) / files.length); setOcrStatus(`${index + 1}/${files.length} · ${status}`) }), readImageSize(file)])
+        const ocr = await recognizeImageTiled(file, (progress, status) => { setOcrProgress((index + progress) / files.length); setOcrStatus(`${index + 1}/${files.length} · ${status}`) }, { retries: 1 })
+        const result = ocr.result
+        const size = { width: ocr.width, height: ocr.height }
         const parsed = regions.length ? parseTransactionFromRegions(result, regions, size.width, size.height) : parseTransactionFromOcr(result)
         const localOccurredAt = parsed.occurredAt ? toLocalInputDateTime(parsed.occurredAt) : occurredAt; const parsedType = parsed.type; const compatibleCategories = selectableCategories(categories, parsedType)
         const matchedRule = findMatchingTransactionRule({ type: parsedType, amount: parsed.amount, merchant: parsed.merchant, description: parsed.description }, settings?.transactionRules ?? [])
