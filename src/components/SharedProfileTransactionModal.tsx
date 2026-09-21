@@ -23,12 +23,13 @@ import { buildDetectedLines, parseTransactionFromOcr, parseTransactionFromRegion
 import { findMatchingTransactionRule } from '../lib/rules'
 import { combineLocalDateAndTime, localDateKeyFromInputDateTime, localTimeFromInputDateTime, localWeekday, recurringDateKeys } from '../lib/scheduling'
 import { validateImageBatch } from '../lib/security'
-import { saveSharedTransaction } from '../lib/sharedWallet'
+import { saveSharedTransaction, saveSharedTransactions } from '../lib/sharedWallet'
 import { sharedTransactionsAsPersonalShape } from '../lib/sharedLedger'
 import { AccountSelect } from './AccountSelect'
 import { BatchOcrReview, type BatchOcrDraft } from './BatchOcrReview'
 import { Button, Input, Label, Select, Textarea } from './ui'
 import { CategoryPicker } from './CategoryPicker'
+import { ImageImportMode } from './ImageImportMode'
 import { MultiDatePicker } from './MultiDatePicker'
 import { OcrTeachingPanel } from './OcrTeachingPanel'
 import { VoiceEntry, type VoiceEntryDraft } from './VoiceEntry'
@@ -116,6 +117,7 @@ export function SharedProfileTransactionModal({
   const [batchDrafts, setBatchDrafts] = useState<BatchOcrDraft[]>([])
   const [activeBatchId, setActiveBatchId] = useState<string>()
   const [showVoice, setShowVoice] = useState(initialVoice)
+  const [addMode, setAddMode] = useState<'manual' | 'image'>('manual')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const templates = ledger.ocrTemplates ?? []
@@ -423,6 +425,36 @@ export function SharedProfileTransactionModal({
     } finally { setSaving(false) }
   }
 
+  async function saveImageImportDrafts(drafts: BatchOcrDraft[], sourceFiles: File[]) {
+    if (!googleSession) throw new Error('error.sharedSaveFailed')
+    const now = new Date().toISOString()
+    const batchId = drafts.length > 1 ? crypto.randomUUID() : undefined
+    await saveSharedTransactions(googleSession.accessToken, membership, drafts.map((draft, index) => ({
+      id: crypto.randomUUID(),
+      type: draft.type,
+      amount: Number(draft.amount),
+      currency: draft.currency || ledger.defaultCurrency,
+      occurredAt: fromLocalInputDateTime(draft.occurredAt),
+      accountId: draft.accountId,
+      destinationAccountId: draft.type === 'transfer' ? draft.destinationAccountId : undefined,
+      categoryId: draft.categoryId || undefined,
+      merchant: draft.merchant.trim() || undefined,
+      balanceAfter: draft.balanceAfter ? Number(draft.balanceAfter) : undefined,
+      description: draft.description.trim() || undefined,
+      note: note.trim() || undefined,
+      tags: uniqueTags(tags),
+      batch: batchId ? { id: batchId, mode: 'ocr-batch', index, count: drafts.length } : undefined,
+      importSource: draft.sourceHash ? {
+        adapterId: 'owallet-image-v2',
+        sourceId: draft.sourceHash,
+        sourceRowIds: draft.sourceRowIds?.length ? draft.sourceRowIds : draft.sourceRowId ? [draft.sourceRowId] : [],
+        sourceFileName: sourceFiles[draft.fileIndex]?.name,
+      } : undefined,
+      createdAt: now,
+    })))
+    onSaved()
+  }
+
   const voiceDraft: VoiceEntryDraft = {
     type,
     amount,
@@ -446,6 +478,19 @@ export function SharedProfileTransactionModal({
         <div><div className="text-lg font-semibold">{editing ? t('shared.editTransaction') : t('shared.addTransaction')}</div><div className="text-xs text-stone-500">{locale === 'vi' ? 'Shared Profile · cùng luồng nhập như Personal Wallet' : 'Shared Profile · same entry workflow as Personal Wallet'}</div></div>
         <div className="flex gap-1"><Button variant="ghost" onClick={() => setShowVoice(true)}><Mic size={17} /></Button><Button variant="ghost" onClick={onClose}><X size={18} /></Button></div>
       </div>
+      {!editing&&<div className="shrink-0 border-b border-stone-200 bg-white px-4 py-2 dark:border-stone-800 dark:bg-stone-900 sm:px-5"><div className="grid max-w-md grid-cols-2 gap-1 rounded-xl bg-stone-100 p-1 dark:bg-stone-800"><button type="button" onClick={()=>setAddMode('manual')} className={`rounded-lg px-3 py-2 text-sm font-bold transition ${addMode==='manual'?'bg-white text-stone-900 shadow-sm dark:bg-stone-950 dark:text-white':'text-stone-500 dark:text-stone-400'}`}>{t('imageImport.modeManual')}</button><button type="button" onClick={()=>setAddMode('image')} className={`rounded-lg px-3 py-2 text-sm font-bold transition ${addMode==='image'?'bg-white text-stone-900 shadow-sm dark:bg-stone-950 dark:text-white':'text-stone-500 dark:text-stone-400'}`}>{t('imageImport.modeImage')}</button></div></div>}
+      {!editing&&addMode==='image'?<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain"><ImageImportMode
+        onClose={onClose}
+        accountsOverride={activeAccounts}
+        categoriesOverride={activeCategories}
+        cataloguesOverride={ledger.accountCatalogues}
+        settingsOverride={adaptedSettings}
+        transactionsOverride={personalShape}
+        checkpointKey={`image-import-v2:shared:${membership.groupId}`}
+        onSaveTemplates={async (nextTemplates)=>{ await onSaveLedger({ ...ledger, ocrTemplates: nextTemplates }) }}
+        onSaveDrafts={saveImageImportDrafts}
+      /></div>:<>
+
       <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
         {!editing && <div className="mb-4 flex flex-wrap gap-2">
           <Button variant={creationMode === 'single' ? 'secondary' : 'ghost'} onClick={() => setCreationMode('single')}>{t('schedule.single')}</Button>
@@ -501,6 +546,7 @@ export function SharedProfileTransactionModal({
         {error && <div className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{error}</div>}
       </div>
       <div className="flex shrink-0 justify-end gap-2 border-t border-stone-200 px-4 py-3 dark:border-stone-800"><Button variant="ghost" onClick={onClose}>{t('common.cancel')}</Button><Button onClick={() => void save()} disabled={saving || batchDrafts.length > 0}>{saving ? t('modal.saving') : t('common.save')}</Button></div>
+      </>}
     </div>
 
     {showVoice && <VoiceEntry
