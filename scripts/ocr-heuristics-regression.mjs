@@ -127,6 +127,50 @@ Description: payment
 `)
 assert.equal(referenceBeforeAmount.amount, 75000, 'reference ID must not outrank signed/currency amount')
 
+// Deterministic parser fuzz: common bank formatting variants must converge.
+const moneyVariants = [
+  ['1.000 VND', 1000],
+  ['1,000 VND', 1000],
+  ['1 000 VND', 1000],
+  ['250.000 VNĐ', 250000],
+  ['250,000 đ', 250000],
+  ['+ 1.250.000 VND', 1250000],
+  ['-1,250,000 VND', 1250000],
+]
+for (const [text, expected] of moneyVariants) assert.equal(parseMoneyText(String(text)), expected)
+
+const labelVariants = [
+  'Số tiền: 250.000 VND',
+  'So tien - 250.000 VND',
+  'Amount: 250,000 VND',
+  'Transaction amount 250,000 VND',
+]
+for (const line of labelVariants) {
+  const parsed = parseTransactionText(`${line}\nThời gian: 21/09/2026 10:30\nNgười nhận: TEST`)
+  assert.equal(parsed.amount, 250000, `amount variant failed: ${line}`)
+}
+
+const dateVariants = [
+  '21/09/2026 10:30',
+  '21-09-2026 10:30',
+  '10:30 21/09/2026',
+  '21 thg 9, 2026 10:30',
+  '21 Sep 2026 10:30',
+  'September 21, 2026 10:30',
+]
+for (const value of dateVariants) assert.ok(parseDateTimeText(value), `date variant failed: ${value}`)
+
+for (const whitespace of [' ', '  ', '\t']) {
+  const parsed = parseTransactionText(`Số tiền:${whitespace}99.000 VND\nNgười nhận:${whitespace}ABC\nThời gian:${whitespace}21/09/2026 10:30`)
+  assert.equal(parsed.amount, 99000)
+  assert.equal(parsed.merchant, 'ABC')
+}
+
+for (const identifier of ['012345678901', '987654321012345', '0000111122223333']) {
+  const parsed = parseTransactionText(`Reference: ${identifier}\nAmount: 88,000 VND\nDate & Time: 21 Sep 2026 11:30\nDescription: test`)
+  assert.equal(parsed.amount, 88000, `identifier confused with amount: ${identifier}`)
+}
+
 // Shape normalization stays layout-oriented instead of memorizing literal values.
 assert.equal(sampleShape('NGUYEN VAN A 123456'), 'A A A 0')
 assert.equal(sampleShape('Số tiền: 1.250.000 VND'), 'A A: 0.0.0 A')
