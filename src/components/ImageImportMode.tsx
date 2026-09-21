@@ -371,6 +371,12 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
   async function saveSelected() {
     if (!repository || saving) return
+    if (active) {
+      const nextReviewed = new Set(reviewedIds)
+      nextReviewed.add(active.id)
+      setReviewedIds(nextReviewed)
+      try { await learnFromDraft(active, nextReviewed) } catch { /* saving the corrected draft remains authoritative */ }
+    }
     const selected = drafts.filter((draft) => draft.selected)
     if (!selected.length) {
       setError(t('batch.errorNoneSelected'))
