@@ -38,6 +38,15 @@ export interface TemplateRankEvidence {
   visualScore?: number
 }
 
+export function chooseOcrTileHeight(width: number, height: number, deviceMemory = 4, requested?: number) {
+  if (requested !== undefined) return Math.max(900, Math.min(4200, Math.round(requested)))
+  const memory = Number.isFinite(deviceMemory) && deviceMemory > 0 ? deviceMemory : 4
+  const pixelScale = width >= 2400 ? 0.72 : width >= 1600 ? 0.86 : 1
+  const base = memory <= 2 ? 1400 : memory <= 4 ? 2000 : memory >= 8 ? 3200 : 2500
+  const longPenalty = height > 40_000 ? 0.86 : 1
+  return Math.max(1100, Math.min(3600, Math.round(base * pixelScale * longPenalty)))
+}
+
 export function sampleShape(text: string) {
   return text
     .normalize('NFD')
