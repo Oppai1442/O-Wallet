@@ -36,14 +36,12 @@ export interface TemplateRankEvidence {
 
 export function sampleShape(text: string) {
   return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-    .replace(/[A-ZÀ-Ỹ]/g, 'A')
-    .replace(/[a-zà-ỹ]/g, 'a')
-    .replace(/\d/g, '0')
-    .replace(/A+/g, 'A')
-    .replace(/a+/g, 'a')
-    .replace(/0+/g, '0')
+    .replace(/[A-Za-z]+/g, 'A')
+    .replace(/\d+/g, '0')
     .slice(0, 80)
 }
 
