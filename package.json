@@ -10,7 +10,8 @@
     "deploy": "npx wrangler@4.45.0 deploy",
     "security:check": "node scripts/security-check.mjs && node scripts/crypto-smoke.mjs",
     "security:dist": "node scripts/dist-security-check.mjs",
-    "check": "npm run security:check && npm run build && npm run security:dist"
+    "test:ocr": "node scripts/ocr-heuristics-regression.mjs",
+    "check": "npm run security:check && npm run test:ocr && npm run build && npm run security:dist"
   },
   "cloudflare": {
     "bindings": {
