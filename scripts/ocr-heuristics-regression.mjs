@@ -17,6 +17,8 @@ execFileSync(tsc, [
   'src/lib/ocrHeuristics.ts',
   'src/lib/ocrParsing.ts',
   'src/lib/fileFingerprint.ts',
+  'src/lib/ocrCheckpoint.ts',
+  'src/lib/security.ts',
   '--ignoreConfig',
   '--target', 'ES2022',
   '--module', 'ESNext',
@@ -39,13 +41,16 @@ function findCompiled(name, dir = outDir) {
 const heuristicFile = findCompiled('ocrHeuristics.js')
 const parserFile = findCompiled('ocrParsing.js')
 const fingerprintFile = findCompiled('fileFingerprint.js')
+const checkpointFile = findCompiled('ocrCheckpoint.js')
 assert.ok(heuristicFile, 'compiled ocrHeuristics.js not found')
 assert.ok(parserFile, 'compiled ocrParsing.js not found')
 assert.ok(fingerprintFile, 'compiled fileFingerprint.js not found')
+assert.ok(checkpointFile, 'compiled ocrCheckpoint.js not found')
 
 const mod = await import(pathToFileURL(heuristicFile).href + `?t=${Date.now()}`)
 const parser = await import(pathToFileURL(parserFile).href + `?t=${Date.now()}`)
 const fingerprintModule = await import(pathToFileURL(fingerprintFile).href + `?t=${Date.now()}`)
+const checkpointModule = await import(pathToFileURL(checkpointFile).href + `?t=${Date.now()}`)
 const {
   OCR_HEURISTIC_THRESHOLDS,
   bboxOverlapRatio,
@@ -68,6 +73,24 @@ const {
 } = parser
 
 const { sourceFingerprint } = fingerprintModule
+const { sanitizeOcrTileResumeState, sanitizeOcrTileResumeMap } = checkpointModule
+
+const validResume = {
+  width:1080,height:80000,tileHeight:2000,overlap:200,nextTileIndex:3,
+  boxes:[{text:'100.000 VND',confidence:90,bbox:{x0:10,y0:100,x1:300,y1:140}}],
+  texts:['100.000 VND'],
+  visualColors:[['32,32,32',12]],
+  visualProfileSum:Array(834).fill(10),
+  visualProfileCount:Array(834).fill(1),
+  visualLuma:1200,visualCount:10,retryCount:0,tileDurationsMs:[1000,1100,900],startedAt:'2026-09-21T00:00:00.000Z'
+}
+assert.ok(sanitizeOcrTileResumeState(validResume), 'valid resume state should survive sanitization')
+assert.equal(sanitizeOcrTileResumeState({...validResume,visualProfileCount:[1]}), undefined, 'profile length mismatch must be rejected')
+assert.equal(sanitizeOcrTileResumeState({...validResume,boxes:[{...validResume.boxes[0],bbox:{x0:0,y0:0,x1:Number.NaN,y1:20}}]}), undefined, 'NaN bbox must be rejected')
+assert.equal(sanitizeOcrTileResumeState({...validResume,boxes:[{...validResume.boxes[0],bbox:{x0:0,y0:0,x1:999999,y1:20}}]}), undefined, 'extreme bbox must be rejected')
+const goodKey='sample-sha256-v1:123:'+ 'a'.repeat(64)
+assert.deepEqual(Object.keys(sanitizeOcrTileResumeMap({[goodKey]:validResume})), [goodKey])
+assert.equal(Object.keys(sanitizeOcrTileResumeMap({'not-a-source-key':validResume})).length, 0)
 
 const fpA = await sourceFingerprint(new Blob([new Uint8Array([1,2,3,4,5])]))
 const fpB = await sourceFingerprint(new Blob([new Uint8Array([1,2,3,4,5])]))
