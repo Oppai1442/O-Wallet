@@ -593,6 +593,24 @@ export interface OcrRuntimeDiagnostics {
   finishedAt: string
 }
 
+export interface OcrTileResumeState {
+  width: number
+  height: number
+  tileHeight: number
+  overlap: number
+  nextTileIndex: number
+  boxes: OcrBox[]
+  texts: string[]
+  visualColors: Array<[string, number]>
+  visualProfileSum: number[]
+  visualProfileCount: number[]
+  visualLuma: number
+  visualCount: number
+  retryCount: number
+  tileDurationsMs: number[]
+  startedAt: string
+}
+
 export interface OcrTransactionBlock {
   candidate: ParsedTransactionCandidate
   /** Source-image coordinates in pixels, retained so review can focus the exact row/card. */
