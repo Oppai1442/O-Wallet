@@ -18,8 +18,6 @@ execFileSync(tsc, [
   'src/lib/ocrParsing.ts',
   'src/lib/fileFingerprint.ts',
   'src/lib/ocrCheckpoint.ts',
-  'src/lib/security.ts',
-  'src/vite-env.d.ts',
   '--ignoreConfig',
   '--target', 'ES2022',
   '--module', 'ESNext',
