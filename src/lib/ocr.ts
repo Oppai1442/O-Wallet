@@ -8,6 +8,7 @@ import type {
   OcrRegion,
   OcrResult,
   OcrRuntimeDiagnostics,
+  OcrTileResumeState,
   OcrTemplate,
   OcrTransactionBlock,
   OcrVisualFingerprint,
@@ -304,7 +305,15 @@ function adaptiveTileHeight(width: number, height: number, requested?: number) {
 export async function recognizeImageTiled(
   image: File | Blob,
   onProgress?: (progress: number, status: string) => void,
-  options?: { tileHeight?: number; overlap?: number; signal?: AbortSignal; watchdogMs?: number; retries?: number },
+  options?: {
+    tileHeight?: number
+    overlap?: number
+    signal?: AbortSignal
+    watchdogMs?: number
+    retries?: number
+    resumeState?: OcrTileResumeState
+    onTileCheckpoint?: (state: OcrTileResumeState) => void | Promise<void>
+  },
 ): Promise<{ result: OcrResult; width: number; height: number; visual: OcrVisualFingerprint; diagnostics: OcrRuntimeDiagnostics }> {
   const startedAt = new Date().toISOString()
   const { width, height } = await readRasterDimensions(image)
@@ -350,15 +359,34 @@ export async function recognizeImageTiled(
     if (y + tileHeight >= height) break
   }
 
-  const boxes: OcrBox[] = []
-  const texts: string[] = []
-  const seen = new Set<string>()
-  const visualColors = new Map<string, number>()
   const profileBuckets = Math.max(64, Math.min(2048, Math.ceil(height / 96)))
-  const visualProfileSum = Array.from({ length: profileBuckets }, () => 0)
-  const visualProfileCount = Array.from({ length: profileBuckets }, () => 0)
-  let visualLuma = 0
-  let visualCount = 0
+  const resume = options?.resumeState
+  const resumeCompatible = Boolean(
+    resume
+    && resume.width === width
+    && resume.height === height
+    && resume.tileHeight === tileHeight
+    && resume.overlap === overlap
+    && resume.nextTileIndex >= 0
+    && resume.nextTileIndex <= starts.length
+    && resume.visualProfileSum.length === profileBuckets
+    && resume.visualProfileCount.length === profileBuckets,
+  )
+  const boxes: OcrBox[] = resumeCompatible ? [...resume!.boxes] : []
+  const texts: string[] = resumeCompatible ? [...resume!.texts] : []
+  const seen = new Set<string>()
+  for (const box of boxes) {
+    seen.add(`${normalizeLine(box.text).toLocaleLowerCase('vi-VN')}|${Math.round(box.bbox.x0 / 6)}|${Math.round(box.bbox.y0 / 6)}`)
+  }
+  const visualColors = new Map<string, number>(resumeCompatible ? resume!.visualColors : [])
+  const visualProfileSum = resumeCompatible ? [...resume!.visualProfileSum] : Array.from({ length: profileBuckets }, () => 0)
+  const visualProfileCount = resumeCompatible ? [...resume!.visualProfileCount] : Array.from({ length: profileBuckets }, () => 0)
+  let visualLuma = resumeCompatible ? resume!.visualLuma : 0
+  let visualCount = resumeCompatible ? resume!.visualCount : 0
+  if (resumeCompatible) {
+    retryCount = resume!.retryCount
+    tileDurationsMs.push(...resume!.tileDurationsMs)
+  }
 
   const sampleTileVisual = (canvas: HTMLCanvasElement, yOffset: number, skipTop: number) => {
     const sourceHeight = Math.max(1, canvas.height - skipTop)
@@ -387,7 +415,8 @@ export async function recognizeImageTiled(
       }
     }
   }
-  for (let index = 0; index < starts.length; index += 1) {
+  const resumeTileIndex = resumeCompatible ? resume!.nextTileIndex : 0
+  for (let index = resumeTileIndex; index < starts.length; index += 1) {
     const y = starts[index]
     const h = Math.min(tileHeight, height - y)
     const bitmap = await createImageBitmap(image, 0, y, width, h)
@@ -428,6 +457,25 @@ export async function recognizeImageTiled(
         seen.add(key)
         boxes.push(shifted)
       }
+      if (options?.onTileCheckpoint) {
+        await options.onTileCheckpoint({
+          width,
+          height,
+          tileHeight,
+          overlap,
+          nextTileIndex: index + 1,
+          boxes: boxes.slice(0, SECURITY_LIMITS.maxOcrBoxes),
+          texts: [...texts],
+          visualColors: [...visualColors.entries()],
+          visualProfileSum: [...visualProfileSum],
+          visualProfileCount: [...visualProfileCount],
+          visualLuma,
+          visualCount,
+          retryCount,
+          tileDurationsMs: [...tileDurationsMs],
+          startedAt: resumeCompatible ? resume!.startedAt : startedAt,
+        })
+      }
     } finally {
       bitmap.close()
     }
@@ -456,7 +504,7 @@ export async function recognizeImageTiled(
       tileCount: starts.length,
       retryCount,
       tileDurationsMs,
-      startedAt,
+      startedAt: resumeCompatible ? resume!.startedAt : startedAt,
       finishedAt: new Date().toISOString(),
     },
   }
