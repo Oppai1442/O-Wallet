@@ -440,6 +440,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     setStatus('')
     try {
       const nextAnalyses: SourceAnalysis[] = analyses.filter((analysis) => fileHashes[analysis.fileIndex] === analysis.sourceHash)
+      let nextPartialTiles = { ...tileResumeByHash }
       for (let index = 0; index < files.length; index += 1) {
         const existing = nextAnalyses.find((analysis) => analysis.sourceHash === fileHashes[index])
         if (existing) {
@@ -448,22 +449,22 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
         }
         const file = files[index]
         const sourceHash = fileHashes[index]
-        let workingPartials = { ...tileResumeByHash }
         const ocr = await recognizeImageTiled(file, (value, text) => {
           setProgress((index + value * 0.98) / files.length)
           setStatus(`${index + 1}/${files.length} · ${text}`)
         }, {
           signal: controller.signal,
           retries: 1,
-          resumeState: workingPartials[sourceHash],
+          resumeState: nextPartialTiles[sourceHash],
           onTileCheckpoint: async (state) => {
-            workingPartials = { ...workingPartials, [sourceHash]: state }
-            setTileResumeByHash(workingPartials)
-            await persistCheckpoint(nextAnalyses, drafts, reviewedIds, activeId, workingPartials)
+            nextPartialTiles = { ...nextPartialTiles, [sourceHash]: state }
+            setTileResumeByHash(nextPartialTiles)
+            await persistCheckpoint(nextAnalyses, drafts, reviewedIds, activeId, nextPartialTiles)
           },
         })
-        delete workingPartials[sourceHash]
-        setTileResumeByHash(workingPartials)
+        const { [sourceHash]: _completedPartial, ...remainingPartials } = nextPartialTiles
+        nextPartialTiles = remainingPartials
+        setTileResumeByHash(nextPartialTiles)
         nextAnalyses.push({
           fileIndex: index,
           sourceHash,
@@ -475,10 +476,10 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
         })
         nextAnalyses.sort((a,b)=>a.fileIndex-b.fileIndex)
         const partialDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true)
-        await persistCheckpoint(nextAnalyses, partialDrafts, reviewedIds, partialDrafts[0]?.id, workingPartials)
+        await persistCheckpoint(nextAnalyses, partialDrafts, reviewedIds, partialDrafts[0]?.id, nextPartialTiles)
       }
       const nextDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true)
-      await persistCheckpoint(nextAnalyses, nextDrafts, reviewedIds, activeId ?? nextDrafts[0]?.id, tileResumeByHash)
+      await persistCheckpoint(nextAnalyses, nextDrafts, reviewedIds, activeId ?? nextDrafts[0]?.id, nextPartialTiles)
       if (!nextDrafts.length) setError(t('imageImport.noDrafts'))
       setProgress(1)
       setStatus('')
