@@ -45,9 +45,8 @@ export interface BatchOcrDraft {
   conflict?: BatchOcrConflict
 }
 
-export function BatchOcrReview({ drafts, previewUrls, files, accounts, categories, catalogues, activeId, onActiveId, onChange }: {
+export function BatchOcrReview({ drafts, files, accounts, categories, catalogues, activeId, onActiveId, onChange }: {
   drafts: BatchOcrDraft[]
-  previewUrls: string[]
   files: File[]
   accounts: Account[]
   categories: Category[]
