@@ -31,6 +31,8 @@ interface SourceAnalysis {
   visual: OcrVisualFingerprint
   templateId?: string
   templateScore?: number
+  templateAnchorScore?: number
+  templateVisualScore?: number
 }
 
 function normalized(value: string) {
@@ -43,6 +45,32 @@ function draftId(fileIndex: number, block: OcrTransactionBlock) {
 
 function candidateCurrency(candidate: ParsedTransactionCandidate) {
   return (candidate as ParsedTransactionCandidate & { currency?: string }).currency
+}
+
+
+function bboxOverlapRatio(left?: { y: number; height: number }, right?: { y: number; height: number }) {
+  if (!left || !right) return 0
+  const start = Math.max(left.y, right.y)
+  const end = Math.min(left.y + left.height, right.y + right.height)
+  const overlap = Math.max(0, end - start)
+  return overlap / Math.max(1, Math.min(left.height, right.height))
+}
+
+function preservedDraft(oldDraft: BatchOcrDraft, freshDraft: BatchOcrDraft): BatchOcrDraft {
+  return {
+    ...freshDraft,
+    selected: oldDraft.selected,
+    type: oldDraft.type,
+    amount: oldDraft.amount,
+    currency: oldDraft.currency,
+    occurredAt: oldDraft.occurredAt,
+    categoryId: oldDraft.categoryId,
+    accountId: oldDraft.accountId,
+    destinationAccountId: oldDraft.destinationAccountId,
+    merchant: oldDraft.merchant,
+    balanceAfter: oldDraft.balanceAfter,
+    description: oldDraft.description,
+  }
 }
 
 export function ImageImportMode({ onClose }: { onClose: () => void }) {
@@ -197,10 +225,18 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
   function blocksForAnalysis(analysis: SourceAnalysis, templates = sessionTemplates) {
     const ranked = rankOcrTemplates(templates, analysis.result, analysis.width, analysis.height, analysis.visual)
-    const best = ranked[0]?.score >= 0.34 ? ranked[0].template : undefined
+    const top = ranked[0]
+    const credibleMatch = Boolean(
+      top
+      && top.score >= 0.40
+      && (top.anchorScore >= 0.20 || top.visualScore >= 0.62),
+    )
+    const best = credibleMatch ? top.template : undefined
     return {
       template: best,
-      score: ranked[0]?.score ?? 0,
+      score: credibleMatch ? top?.score ?? 0 : 0,
+      anchorScore: credibleMatch ? top?.anchorScore ?? 0 : 0,
+      visualScore: credibleMatch ? top?.visualScore ?? 0 : 0,
       blocks: detectTransactionBlocks(analysis.result, analysis.width, analysis.height, best, analysis.visual),
     }
   }
@@ -212,10 +248,19 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       const matched = blocksForAnalysis(analysis, templates)
       analysis.templateId = matched.template?.id
       analysis.templateScore = matched.score
+      analysis.templateAnchorScore = matched.anchorScore
+      analysis.templateVisualScore = matched.visualScore
       for (const block of matched.blocks) {
         const nextDraft = resolveDraft(analysis.fileIndex, block, analysis.width, analysis.height, candidates)
-        const old = drafts.find((draft) => draft.id === nextDraft.id)
-        const chosen = preserveReviewed && old && preserveIds.has(old.id) ? old : nextDraft
+        const exactOld = drafts.find((draft) => draft.id === nextDraft.id)
+        const overlapOld = exactOld ?? drafts
+          .filter((draft) => draft.fileIndex === nextDraft.fileIndex && preserveIds.has(draft.id))
+          .map((draft) => ({ draft, overlap: bboxOverlapRatio(draft.sourceBBox, nextDraft.sourceBBox) }))
+          .filter((item) => item.overlap >= 0.55)
+          .sort((a, b) => b.overlap - a.overlap)[0]?.draft
+        const chosen = preserveReviewed && overlapOld && preserveIds.has(overlapOld.id)
+          ? preservedDraft(overlapOld, nextDraft)
+          : nextDraft
         next.push(chosen)
         const numericAmount = Number(chosen.amount)
         if (numericAmount > 0) {
@@ -282,12 +327,52 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     const compatibleCategories = selectableCategories(categories, next.type)
     const account = accounts.find((item) => item.id === next.accountId)
     const allowedCurrencies = account ? accountCurrencies(account) : []
-    const normalizedDraft = {
+    const normalizedDraft: BatchOcrDraft = {
       ...next,
       categoryId: compatibleCategories.some((category) => category.id === next.categoryId) ? next.categoryId : compatibleCategories[0]?.id ?? next.categoryId,
       currency: allowedCurrencies.includes(next.currency) ? next.currency : allowedCurrencies[0] ?? next.currency,
     }
-    setDrafts((current) => current.map((draft) => draft.id === normalizedDraft.id ? normalizedDraft : draft))
+    const numericAmount = Number(normalizedDraft.amount)
+    let conflict: BatchOcrDraft['conflict']
+    if (numericAmount > 0 && normalizedDraft.occurredAt && normalizedDraft.accountId) {
+      const siblingCandidates: Transaction[] = drafts
+        .filter((draft) => draft.id !== normalizedDraft.id && Number(draft.amount) > 0 && draft.occurredAt && draft.accountId)
+        .map((draft) => ({
+          id: draft.id,
+          type: draft.type,
+          amount: Number(draft.amount),
+          currency: draft.currency,
+          occurredAt: fromLocalInputDateTime(draft.occurredAt),
+          categoryId: draft.categoryId,
+          accountId: draft.accountId,
+          destinationAccountId: draft.destinationAccountId,
+          merchant: draft.merchant || undefined,
+          balanceAfter: draft.balanceAfter ? Number(draft.balanceAfter) : undefined,
+          description: draft.description || undefined,
+          imageIds: [],
+          createdAt: fromLocalInputDateTime(draft.occurredAt),
+          updatedAt: fromLocalInputDateTime(draft.occurredAt),
+          deleted: false,
+        }))
+      const existingIds = new Set(transactions.map((item) => item.id))
+      const match = findDuplicateTransaction({
+        type: normalizedDraft.type,
+        amount: numericAmount,
+        occurredAt: fromLocalInputDateTime(normalizedDraft.occurredAt),
+        accountId: normalizedDraft.accountId,
+        merchant: normalizedDraft.merchant,
+        description: normalizedDraft.description,
+      }, [...transactions, ...siblingCandidates])
+      conflict = match ? {
+        level: match.level,
+        source: existingIds.has(match.transaction.id) ? 'existing' : 'batch',
+        transactionId: match.transaction.id,
+        occurredAt: match.transaction.occurredAt,
+        amount: match.transaction.amount,
+        merchant: match.transaction.merchant,
+      } : undefined
+    }
+    setDrafts((current) => current.map((draft) => draft.id === normalizedDraft.id ? { ...normalizedDraft, conflict } : draft))
   }
 
   function mappingsFromCorrectedDraft(draft: BatchOcrDraft, lines: OcrDetectedLine[]) {
@@ -330,8 +415,10 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
   async function learnFromDraft(draft: BatchOcrDraft, preserveIds = reviewedIds) {
     if (!draft.templateId || !activeAnalysis || !activeTemplate || !activeLines.length || !settings) return
+    if ((activeAnalysis.templateScore ?? 0) < 0.45) return
     const mappings = mappingsFromCorrectedDraft(draft, activeLines)
-    if (Object.values(mappings).filter(Boolean).length < 2) return
+    const mappedFields = Object.values(mappings).filter((field): field is OcrField => Boolean(field))
+    if (mappedFields.length < 2 || (!mappedFields.includes('amount') && !mappedFields.includes('occurredAt'))) return
     const learned = buildPatternTemplate(activeTemplate.name, activeLines, mappings, activeAnalysis.visual, activeTemplate.id)
     const merged = mergePatternTemplateEvidence(activeTemplate, learned)
     const nextTemplates = sessionTemplates.map((template) => template.id === merged.id ? merged : template)
