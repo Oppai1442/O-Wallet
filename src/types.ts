@@ -270,6 +270,7 @@ export interface SharedTransaction {
   note?: string
   tags?: string[]
   batch?: TransactionBatchInfo
+  importSource?: ExternalImportTrace
   createdByMemberId: string
   /** Provenance retained when an archived wallet is reopened as a new wallet. */
   sourceCreatedByMemberId?: string
