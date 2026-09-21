@@ -178,6 +178,8 @@ export async function clearLocalWalletData() {
     await db.sharedRecords.clear()
     await db.kv.delete('sync-v2-state')
     await db.kv.where('key').startsWith('local-secret:').delete()
+    await db.kv.where('key').startsWith('encrypted-checkpoint:').delete()
+    await db.kv.where('key').startsWith('encrypted-checkpoint:').delete()
   })
 }
 
