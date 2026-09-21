@@ -362,22 +362,23 @@ export function SharedProfileTransactionModal({
     }
     setSaving(true)
     try {
-      for (const draft of selected) {
-        await saveSharedTransaction(googleSession.accessToken, membership, {
-          id: crypto.randomUUID(),
-          type: draft.type,
-          amount: Number(draft.amount),
-          currency: draft.currency || ledger.defaultCurrency,
-          occurredAt: fromLocalInputDateTime(draft.occurredAt),
-          accountId: draft.accountId,
-          destinationAccountId: draft.type === 'transfer' ? draft.destinationAccountId : undefined,
-          categoryId: draft.categoryId || undefined,
-          merchant: draft.merchant.trim() || undefined,
-          description: draft.description.trim() || undefined,
-          note: note.trim() || undefined,
-          tags: uniqueTags(tags),
-        })
-      }
+      const batchId = selected.length > 1 ? crypto.randomUUID() : undefined
+      await saveSharedTransactions(googleSession.accessToken, membership, selected.map((draft,index) => ({
+        id: crypto.randomUUID(),
+        type: draft.type,
+        amount: Number(draft.amount),
+        currency: draft.currency || ledger.defaultCurrency,
+        occurredAt: fromLocalInputDateTime(draft.occurredAt),
+        accountId: draft.accountId,
+        destinationAccountId: draft.type === 'transfer' ? draft.destinationAccountId : undefined,
+        categoryId: draft.categoryId || undefined,
+        merchant: draft.merchant.trim() || undefined,
+        balanceAfter: draft.balanceAfter ? Number(draft.balanceAfter) : undefined,
+        description: draft.description.trim() || undefined,
+        note: note.trim() || undefined,
+        tags: uniqueTags(tags),
+        batch: batchId ? { id: batchId, mode: 'ocr-batch', index, count: selected.length } : undefined,
+      })))
       onSaved(); onClose()
     } catch (saveError) {
       setError(localizeError(saveError, t, 'error.sharedSaveFailed'))
