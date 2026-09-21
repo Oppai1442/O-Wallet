@@ -10,7 +10,6 @@ import {
   buildDetectedLines,
   buildPatternTemplate,
   detectTransactionBlocks,
-  fingerprintImage,
   mergePatternTemplateEvidence,
   parseDateTimeText,
   parseMoneyText,
@@ -206,7 +205,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     }
   }
 
-  function buildDraftsFromAnalyses(nextAnalyses: SourceAnalysis[], templates = sessionTemplates, preserveReviewed = true) {
+  function buildDraftsFromAnalyses(nextAnalyses: SourceAnalysis[], templates = sessionTemplates, preserveReviewed = true, preserveIds = reviewedIds) {
     const next: BatchOcrDraft[] = []
     const candidates: Transaction[] = [...transactions]
     for (const analysis of nextAnalyses) {
@@ -216,7 +215,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       for (const block of matched.blocks) {
         const nextDraft = resolveDraft(analysis.fileIndex, block, analysis.width, analysis.height, candidates)
         const old = drafts.find((draft) => draft.id === nextDraft.id)
-        const chosen = preserveReviewed && old && reviewedIds.has(old.id) ? old : nextDraft
+        const chosen = preserveReviewed && old && preserveIds.has(old.id) ? old : nextDraft
         next.push(chosen)
         const numericAmount = Number(chosen.amount)
         if (numericAmount > 0) {
@@ -258,18 +257,15 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index]
         const ocr = await recognizeImageTiled(file, (value, text) => {
-          setProgress((index + value * 0.88) / files.length)
+          setProgress((index + value * 0.98) / files.length)
           setStatus(`${index + 1}/${files.length} · ${text}`)
         })
-        setStatus(`${index + 1}/${files.length} · visual analysis`)
-        const visual = await fingerprintImage(file)
-        setProgress((index + 0.98) / files.length)
         nextAnalyses.push({
           fileIndex: index,
           result: ocr.result,
           width: ocr.width,
           height: ocr.height,
-          visual,
+          visual: ocr.visual,
         })
       }
       const nextDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, false)
@@ -332,7 +328,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     setSessionTemplates(next)
   }
 
-  async function learnFromDraft(draft: BatchOcrDraft) {
+  async function learnFromDraft(draft: BatchOcrDraft, preserveIds = reviewedIds) {
     if (!draft.templateId || !activeAnalysis || !activeTemplate || !activeLines.length || !settings) return
     const mappings = mappingsFromCorrectedDraft(draft, activeLines)
     if (Object.values(mappings).filter(Boolean).length < 2) return
@@ -340,14 +336,16 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
     const merged = mergePatternTemplateEvidence(activeTemplate, learned)
     const nextTemplates = sessionTemplates.map((template) => template.id === merged.id ? merged : template)
     await persistTemplates(nextTemplates)
-    buildDraftsFromAnalyses(analyses, nextTemplates, true)
+    buildDraftsFromAnalyses(analyses, nextTemplates, true, preserveIds)
   }
 
   async function changeActive(nextId: string) {
     const current = drafts.find((draft) => draft.id === activeId)
     if (current) {
-      setReviewedIds((ids) => new Set(ids).add(current.id))
-      try { await learnFromDraft(current) } catch { /* corrections still remain in the draft */ }
+      const nextReviewed = new Set(reviewedIds)
+      nextReviewed.add(current.id)
+      setReviewedIds(nextReviewed)
+      try { await learnFromDraft(current, nextReviewed) } catch { /* corrections still remain in the draft */ }
     }
     setActiveId(nextId)
   }
