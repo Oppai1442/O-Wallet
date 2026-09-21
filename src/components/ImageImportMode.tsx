@@ -5,6 +5,7 @@ import { useWallet } from '../WalletContext'
 import { localizeError, useI18n } from '../i18n'
 import { accountCurrencies } from '../lib/accounts'
 import { findDuplicateTransaction } from '../lib/duplicates'
+import { sourceFingerprint } from '../lib/fileFingerprint'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
 import {
   buildDetectedLines,
@@ -49,37 +50,6 @@ interface ImageImportCheckpoint {
 
 function normalized(value: string) {
   return value.normalize('NFKC').toLocaleLowerCase('vi-VN').replace(/\s+/g, ' ').trim()
-}
-
-async function sourceFingerprint(file: File) {
-  const chunk = 1024 * 1024
-  const points = file.size <= chunk * 3
-    ? [[0, file.size]]
-    : [
-      [0, chunk],
-      [Math.max(0, Math.floor(file.size / 2) - Math.floor(chunk / 2)), Math.min(file.size, Math.floor(file.size / 2) + Math.ceil(chunk / 2))],
-      [Math.max(0, file.size - chunk), file.size],
-    ]
-  const parts: Uint8Array[] = []
-  let total = 16
-  for (const [start, end] of points) {
-    const bytes = new Uint8Array(await file.slice(start, end).arrayBuffer())
-    parts.push(bytes)
-    total += bytes.byteLength
-  }
-  const payload = new Uint8Array(total)
-  const view = new DataView(payload.buffer)
-  view.setBigUint64(0, BigInt(file.size), false)
-  view.setUint32(8, points.length, false)
-  view.setUint32(12, file.type.length, false)
-  let offset = 16
-  for (const part of parts) {
-    payload.set(part, offset)
-    offset += part.byteLength
-  }
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', payload))
-  const hex = [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
-  return `sample-sha256-v1:${file.size}:${hex}`
 }
 
 function draftId(fileIndex: number, block: OcrTransactionBlock) {
