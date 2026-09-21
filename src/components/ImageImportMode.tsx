@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { BrainCircuit, ImagePlus, Images, LoaderCircle, ScanText, Square } from 'lucide-react'
+import { BrainCircuit, Download, ImagePlus, Images, LoaderCircle, ScanText, Square } from 'lucide-react'
 import type { OcrDetectedLine, OcrField, OcrResult, OcrRuntimeDiagnostics, OcrTemplate, OcrTransactionBlock, OcrVisualFingerprint, ParsedTransactionCandidate, Transaction, TransactionType } from '../types'
 import { useWallet } from '../WalletContext'
 import { localizeError, useI18n } from '../i18n'
@@ -223,6 +223,40 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
 
   function cancelAnalysis() {
     abortRef.current?.abort()
+  }
+
+  function exportDiagnostics() {
+    const payload = {
+      schema: 'o-wallet-ocr-diagnostics-v1',
+      generatedAt: new Date().toISOString(),
+      sources: analyses.map((analysis) => ({
+        fileIndex: analysis.fileIndex,
+        sourceFingerprintPrefix: analysis.sourceHash.slice(0, 36),
+        width: analysis.width,
+        height: analysis.height,
+        templateId: analysis.templateId,
+        templateScore: analysis.templateScore,
+        templateAnchorScore: analysis.templateAnchorScore,
+        templateVisualScore: analysis.templateVisualScore,
+        diagnostics: analysis.diagnostics,
+      })),
+      blocks: drafts.map((draft) => ({
+        fileIndex: draft.fileIndex,
+        sourceBBox: draft.sourceBBox,
+        templateId: draft.templateId,
+        blockConfidence: draft.confidence,
+        conflictLevel: draft.conflict?.level,
+        selected: draft.selected,
+        fieldConfidence: Object.fromEntries(Object.entries(draft.fieldEvidence ?? {}).map(([field, evidence]) => [field, evidence?.confidence])),
+      })),
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `o-wallet-ocr-diagnostics-${new Date().toISOString().replace(/[:.]/g,'-')}.json`
+    link.click()
+    URL.revokeObjectURL(url)
   }
 
   function resolveDraft(
@@ -661,7 +695,7 @@ export function ImageImportMode({ onClose }: { onClose: () => void }) {
       {busy&&<><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800"><div className="h-full bg-blue-500 transition-all" style={{width:`${Math.round(progress*100)}%`}}/></div><div className="mt-1 text-xs text-stone-500">{status}</div></>}
       {!busy&&status&&<div className="mt-2 text-xs text-stone-500">{status}</div>}
       {checkpointAvailable&&<div className="mt-2 text-xs text-stone-500">{t('imageImport.checkpointReady')}</div>}
-      {activeAnalysis?.diagnostics&&<details className="mt-2 text-xs text-stone-500"><summary className="cursor-pointer font-semibold">{t('imageImport.diagnostics')}</summary><div className="mt-1 grid gap-1 sm:grid-cols-2"><span>{t('imageImport.tiles',{count:activeAnalysis.diagnostics.tileCount})}</span><span>{t('imageImport.retries',{count:activeAnalysis.diagnostics.retryCount})}</span><span>tile {activeAnalysis.diagnostics.tileHeight}px</span><span>{Math.round(activeAnalysis.diagnostics.tileDurationsMs.reduce((a,b)=>a+b,0)/Math.max(1,activeAnalysis.diagnostics.tileDurationsMs.length))} ms/tile</span></div></details>}
+      {activeAnalysis?.diagnostics&&<details className="mt-2 text-xs text-stone-500"><summary className="cursor-pointer font-semibold">{t('imageImport.diagnostics')}</summary><div className="mt-1 grid gap-1 sm:grid-cols-2"><span>{t('imageImport.tiles',{count:activeAnalysis.diagnostics.tileCount})}</span><span>{t('imageImport.retries',{count:activeAnalysis.diagnostics.retryCount})}</span><span>tile {activeAnalysis.diagnostics.tileHeight}px</span><span>{Math.round(activeAnalysis.diagnostics.tileDurationsMs.reduce((a,b)=>a+b,0)/Math.max(1,activeAnalysis.diagnostics.tileDurationsMs.length))} ms/tile</span></div><Button variant="ghost" className="mt-2 px-2 py-1 text-xs" onClick={exportDiagnostics}><Download size={14}/>{t('imageImport.exportDiagnostics')}</Button><p className="mt-1 text-[10px] leading-4 opacity-80">{t('imageImport.diagnosticsPrivacy')}</p></details>}
     </div>
 
     {drafts.length>0&&<BatchOcrReview drafts={drafts} previewUrls={previewUrls} files={files} accounts={accounts} categories={categories} catalogues={settings?.accountCatalogues??[]} activeId={activeId} onActiveId={(id)=>void changeActive(id)} onChange={updateDraft}/>}
