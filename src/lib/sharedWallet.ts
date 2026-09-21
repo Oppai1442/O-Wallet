@@ -982,13 +982,38 @@ async function currentWritableMembership(membership: SharedWalletMembership) {
   return effective
 }
 
-export async function saveSharedTransaction(
-  token: string,
-  membership: SharedWalletMembership,
-  input: Omit<SharedTransaction, 'groupId' | 'createdByMemberId' | 'createdAt' | 'updatedAt' | 'deleted'> & { createdAt?: string },
-) {
-  const effectiveMembership = await currentWritableMembership(membership)
-  const feed = await loadOwnFeed(token, effectiveMembership)
+export type SharedTransactionInput = Omit<SharedTransaction, 'groupId' | 'createdByMemberId' | 'createdAt' | 'updatedAt' | 'deleted'> & { createdAt?: string }
+
+function sanitizeSharedImportSource(source: SharedTransaction['importSource']) {
+  if (!source) return undefined
+  const adapterId = cleanSharedText(source.adapterId, 80)
+  const sourceId = cleanSharedText(source.sourceId, 256)
+  if (!adapterId || !sourceId) return undefined
+  const sourceRowIds = Array.isArray(source.sourceRowIds)
+    ? [...new Set(source.sourceRowIds.map((item) => cleanSharedText(item, 256)).filter((item): item is string => Boolean(item)))].slice(0, 16)
+    : undefined
+  return {
+    adapterId,
+    sourceId,
+    sourceRowIds,
+    sourceFileName: cleanSharedText(source.sourceFileName, 320),
+  }
+}
+
+function sanitizeSharedBatch(batch: SharedTransaction['batch']) {
+  if (!batch) return undefined
+  const id = cleanSharedText(batch.id, 160)
+  if (!id || !['multi-date','recurring','ocr-batch'].includes(batch.mode)) return undefined
+  if (!Number.isInteger(batch.index) || !Number.isInteger(batch.count) || batch.index < 0 || batch.count < 1 || batch.index >= batch.count || batch.count > MAX_SHARED_TRANSACTIONS_PER_FEED) return undefined
+  return { id, mode: batch.mode, index: batch.index, count: batch.count }
+}
+
+function buildSharedTransaction(
+  input: SharedTransactionInput,
+  effectiveMembership: SharedWalletMembership,
+  existing: SharedTransaction | undefined,
+  now: string,
+): SharedTransaction {
   const id = typeof input.id === 'string' ? input.id.slice(0, 160) : ''
   if (!id || (input.type !== 'expense' && input.type !== 'income' && input.type !== 'transfer')) throw new Error('error.sharedSaveFailed')
   if (input.type === 'transfer' && (!input.accountId || !input.destinationAccountId || input.accountId === input.destinationAccountId)) throw new Error('error.sharedSaveFailed')
@@ -996,13 +1021,9 @@ export async function saveSharedTransaction(
   if (!validIso(input.occurredAt)) throw new Error('error.sharedSaveFailed')
   const currency = cleanSharedText(input.currency, 12)
   if (!currency) throw new Error('error.sharedSaveFailed')
-
-  const existing = feed.transactions.find((tx) => tx.id === id)
   if (existing && existing.createdByMemberId !== effectiveMembership.memberId) throw new Error('error.sharedOwnRecordsOnly')
-  if (!existing && feed.transactions.length >= MAX_SHARED_TRANSACTIONS_PER_FEED) throw new Error('error.sharedFeedLimit')
 
-  const now = new Date().toISOString()
-  const tx: SharedTransaction = {
+  return {
     id,
     groupId: effectiveMembership.groupId,
     type: input.type,
@@ -1014,11 +1035,14 @@ export async function saveSharedTransaction(
     categoryId: cleanSharedText(input.categoryId, 160),
     category: cleanSharedText(input.category, 512),
     merchant: cleanSharedText(input.merchant),
+    balanceAfter: typeof input.balanceAfter === 'number' && Number.isFinite(input.balanceAfter) ? input.balanceAfter : undefined,
     description: cleanSharedText(input.description),
     note: cleanSharedText(input.note, 16_384),
     tags: Array.isArray(input.tags)
       ? input.tags.slice(0, MAX_SHARED_TAGS).map((tag) => cleanSharedText(tag, MAX_SHARED_TAG_LENGTH)).filter((tag): tag is string => Boolean(tag))
       : undefined,
+    batch: sanitizeSharedBatch(input.batch),
+    importSource: sanitizeSharedImportSource(input.importSource),
     createdByMemberId: effectiveMembership.memberId,
     sourceCreatedByMemberId: cleanSharedText(input.sourceCreatedByMemberId, 160),
     sourceCreatedByName: cleanSharedText(input.sourceCreatedByName, 320),
@@ -1026,12 +1050,45 @@ export async function saveSharedTransaction(
     updatedAt: now,
     deleted: false,
   }
-  feed.transactions = [...feed.transactions.filter((item) => item.id !== tx.id), tx]
+}
+
+export async function saveSharedTransactions(
+  token: string,
+  membership: SharedWalletMembership,
+  inputs: SharedTransactionInput[],
+) {
+  if (!inputs.length) return [] as SharedTransaction[]
+  const effectiveMembership = await currentWritableMembership(membership)
+  const feed = await loadOwnFeed(token, effectiveMembership)
+  const existingById = new Map(feed.transactions.map((tx) => [tx.id, tx]))
+  const seen = new Set<string>()
+  const newIds = new Set<string>()
+  for (const input of inputs) {
+    const id = typeof input.id === 'string' ? input.id.slice(0, 160) : ''
+    if (!id || seen.has(id)) throw new Error('error.sharedSaveFailed')
+    seen.add(id)
+    if (!existingById.has(id)) newIds.add(id)
+  }
+  if (feed.transactions.length + newIds.size > MAX_SHARED_TRANSACTIONS_PER_FEED) throw new Error('error.sharedFeedLimit')
+
+  const now = new Date().toISOString()
+  const records = inputs.map((input) => buildSharedTransaction(input, effectiveMembership, existingById.get(input.id), now))
+  const replacing = new Set(records.map((tx) => tx.id))
+  feed.transactions = [...feed.transactions.filter((tx) => !replacing.has(tx.id)), ...records]
   feed.revision += 1
   feed.keyVersion = effectiveMembership.keyVersion
   feed.updatedAt = now
   await writeOwnFeed(token, effectiveMembership, feed)
-  return tx
+  return records
+}
+
+export async function saveSharedTransaction(
+  token: string,
+  membership: SharedWalletMembership,
+  input: SharedTransactionInput,
+) {
+  const [record] = await saveSharedTransactions(token, membership, [input])
+  return record
 }
 
 export async function deleteSharedTransaction(token: string, membership: SharedWalletMembership, id: string) {
