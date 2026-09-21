@@ -710,7 +710,8 @@ export function rankOcrTemplates(
     const longCapture = height > width * 3
     const aspect = longCapture ? 0.5 : template.aspectRatio ? 1 - Math.min(1, Math.abs(template.aspectRatio - width / Math.max(1, height)) / Math.max(0.2, Math.abs(template.aspectRatio))) : 0.5
     const visualScore = colorSimilarity(template.visualFingerprint, visual)
-    return { template, score: anchorScore * 0.55 + visualScore * 0.30 + aspect * 0.15 }
+    const score = anchorScore * 0.55 + visualScore * 0.30 + aspect * 0.15
+    return { template, score, anchorScore, visualScore, aspectScore: aspect }
   }).sort((a, b) => b.score - a.score)
 }
 
