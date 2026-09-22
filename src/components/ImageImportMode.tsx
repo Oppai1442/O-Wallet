@@ -841,7 +841,7 @@ export function ImageImportMode({
         }
         const now = new Date().toISOString()
         const batchId = freshSelected.length > 1 ? crypto.randomUUID() : undefined
-        const records: Transaction[] = await Promise.all(freshSelected.map(async (draft, index) => {
+        const records = await Promise.all(freshSelected.map(async (draft, index): Promise<Transaction> => {
           const numericAmount = Number(draft.amount)
           const sourceRowIds = draft.sourceRowIds?.length ? draft.sourceRowIds : draft.sourceRowId ? [draft.sourceRowId] : []
           return {
