@@ -63,7 +63,12 @@ try {
   }
 } catch (error) {
   console.error(error)
-  try { await fs.writeFile('ocr-visual-e2e-result.json', JSON.stringify({ status: 'runner-fail', error: String(error) }, null, 2)) } catch {}
+  try {
+    const state = browser ? await browser.contexts()[0]?.pages()[0]?.evaluate(() => window.__OWALLET_OCR_E2E__).catch(() => undefined) : undefined
+    const page = browser?.contexts()[0]?.pages()[0]
+    if (page) await page.screenshot({ path: 'ocr-visual-e2e-failure.png', fullPage: true }).catch(() => undefined)
+    await fs.writeFile('ocr-visual-e2e-result.json', JSON.stringify({ status: 'runner-fail', error: String(error), state }, null, 2))
+  } catch {}
   process.exitCode = 1
 } finally {
   await browser?.close().catch(() => undefined)
