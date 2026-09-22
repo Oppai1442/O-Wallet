@@ -17,6 +17,7 @@ on:
       - 'src/components/SharedProfileSettings.tsx'
       - 'src/ocrVisualE2E.ts'
       - 'src/main.tsx'
+      - 'vite.config.ts'
       - 'scripts/ocr-visual-e2e.mjs'
       - 'package.json'
       - '.github/workflows/ocr-visual-e2e.yml'
