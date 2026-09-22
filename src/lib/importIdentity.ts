@@ -22,7 +22,10 @@ export function buildImageImportSemanticRowId(input: {
 import type { ExternalImportTrace } from '../types'
 
 function sourceIdAliases(sourceId: string) {
-  return new Set(sourceId.split('|').map((value) => value.trim()).filter(Boolean))
+  const parts = sourceId.split('|').map((value) => value.trim()).filter(Boolean)
+  const fingerprint = /^(?:sample-sha256-v1|sha256-v2):\d+:[a-f0-9]{64}$/i
+  if (parts.length > 1 && parts.every((value) => fingerprint.test(value))) return new Set(parts)
+  return new Set([sourceId])
 }
 
 export function sourceIdsMatch(left: string, right: string) {
