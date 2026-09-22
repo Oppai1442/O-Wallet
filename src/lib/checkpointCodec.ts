@@ -36,15 +36,15 @@ async function readStreamLimited(stream: ReadableStream<Uint8Array>, maxBytes: n
   return concat(parts, total)
 }
 
-async function gzip(bytes: Uint8Array) {
+async function gzip(bytes: Uint8Array, maxBytes: number) {
   if (typeof CompressionStream === 'undefined') return undefined
-  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'))
-  return readStreamLimited(stream, Math.max(bytes.byteLength, 1))
+  const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new CompressionStream('gzip'))
+  return readStreamLimited(stream, maxBytes)
 }
 
 async function gunzip(bytes: Uint8Array, maxClearBytes: number) {
   if (typeof DecompressionStream === 'undefined') throw new Error('error.checkpointCompressionUnsupported')
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
+  const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream('gzip'))
   return readStreamLimited(stream, maxClearBytes)
 }
 
@@ -57,7 +57,8 @@ export async function encodeCheckpointValue<T>(
   if (clear.byteLength > maxClearBytes) throw new Error('error.payloadTooLarge')
 
   if (clear.byteLength >= COMPRESS_THRESHOLD) {
-    const compressed = await gzip(clear)
+    const compressionLimit = Math.max(maxStoredBytes + 64 * 1024, clear.byteLength + 64 * 1024)
+    const compressed = await gzip(clear, compressionLimit).catch(() => undefined)
     if (compressed && compressed.byteLength + MAGIC.byteLength < clear.byteLength) {
       const packed = new Uint8Array(MAGIC.byteLength + compressed.byteLength)
       packed.set(MAGIC, 0)
