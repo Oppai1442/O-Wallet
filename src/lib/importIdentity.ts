@@ -102,11 +102,11 @@ function canonicalSourceId(sourceId: string) {
 }
 
 function canonicalRowId(rowIds: string[]) {
-  const blocks = rowIds.filter((id) => id.startsWith('blk:')).sort()
-  if (blocks.length) return blocks[0]
   const semantic = rowIds.filter((id) => id.startsWith('sig:')).sort()
   const occurrence = rowIds.filter((id) => id.startsWith('occ:')).sort()
   if (semantic.length) return occurrence.length ? `${semantic[0]}|${occurrence[0]}` : semantic[0]
+  const blocks = rowIds.filter((id) => id.startsWith('blk:')).sort()
+  if (blocks.length) return blocks[0]
   return [...rowIds].filter((id) => !id.startsWith('occ:')).sort()[0] ?? 'row:unknown'
 }
 
