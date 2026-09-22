@@ -166,6 +166,7 @@ export function ImageImportMode({
   const reviewedIdsRef = useRef<Set<string>>(new Set())
   const learningQueueRef = useRef<Promise<void>>(Promise.resolve())
   const learningRevisionRef = useRef<Map<string, number>>(new Map())
+  const saveGuardRef = useRef(false)
 
   useEffect(() => {
     const nextTemplates = settings?.ocrTemplates ?? []
@@ -833,16 +834,7 @@ export function ImageImportMode({
   }
 
   async function saveSelected() {
-    if (!repository || saving) return
-    if (active && !reviewedIdsRef.current.has(active.id)) {
-      const nextReviewed = new Set(reviewedIdsRef.current)
-      nextReviewed.add(active.id)
-      reviewedIdsRef.current = nextReviewed
-      setReviewedIds(nextReviewed)
-      try { await enqueueLearnFromDraft(active, nextReviewed) } catch { /* saving the corrected draft remains authoritative */ }
-    } else {
-      await learningQueueRef.current.catch(() => undefined)
-    }
+    if (!repository || saving || saveGuardRef.current) return
     const selected = drafts.filter((draft) => draft.selected)
     if (!selected.length) {
       setError(t('batch.errorNoneSelected'))
@@ -859,8 +851,18 @@ export function ImageImportMode({
       }
     }
 
+    saveGuardRef.current = true
     setSaving(true)
     setError(undefined)
+    if (active && !reviewedIdsRef.current.has(active.id)) {
+      const nextReviewed = new Set(reviewedIdsRef.current)
+      nextReviewed.add(active.id)
+      reviewedIdsRef.current = nextReviewed
+      setReviewedIds(nextReviewed)
+      try { await enqueueLearnFromDraft(active, nextReviewed) } catch { /* saving the corrected draft remains authoritative */ }
+    } else {
+      await learningQueueRef.current.catch(() => undefined)
+    }
     if (onSaveDrafts) {
       try {
         await onSaveDrafts(selected, files)
@@ -872,6 +874,7 @@ export function ImageImportMode({
       } catch (saveError) {
         setError(localizeError(saveError, t, 'modal.errorSave'))
       } finally {
+        saveGuardRef.current = false
         setSaving(false)
       }
       return
@@ -954,6 +957,7 @@ export function ImageImportMode({
       }
       setError(localizeError(saveError, t, 'modal.errorSave'))
     } finally {
+      saveGuardRef.current = false
       setSaving(false)
     }
   }
