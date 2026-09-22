@@ -653,7 +653,7 @@ export function ImageImportMode({
     const mappedFields = Object.values(mappings).filter((field): field is OcrField => Boolean(field))
     if (!canAutoLearnTemplate(activeAnalysis.templateScore, mappedFields)) return
     const learned = buildPatternTemplate(activeTemplate.name, activeLines, mappings, activeAnalysis.visual, activeTemplate.id)
-    const merged = mergePatternTemplateEvidence(activeTemplate, learned)
+    const merged = mergePatternTemplateEvidence(activeTemplate, learned, { lines: activeLines, mappings })
     const nextTemplates = sessionTemplates.map((template) => template.id === merged.id ? merged : template)
     await persistTemplates(nextTemplates)
     buildDraftsFromAnalyses(analyses, nextTemplates, true, preserveIds)
