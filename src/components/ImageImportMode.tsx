@@ -166,6 +166,7 @@ export function ImageImportMode({
   const reviewedIdsRef = useRef<Set<string>>(new Set())
   const learningQueueRef = useRef<Promise<void>>(Promise.resolve())
   const learningRevisionRef = useRef<Map<string, number>>(new Map())
+  const learningGenerationRef = useRef(0)
   const saveGuardRef = useRef(false)
 
   useEffect(() => {
@@ -196,6 +197,7 @@ export function ImageImportMode({
     })
     return () => {
       cancelled = true
+      learningGenerationRef.current += 1
       abortRef.current?.abort()
     }
   }, [checkpointKey, repository])
@@ -228,6 +230,7 @@ export function ImageImportMode({
       for (const file of selected) hashes.push(await sourceFingerprint(file))
       setFiles(selected)
       setFileHashes(hashes)
+      learningGenerationRef.current += 1
       learningRevisionRef.current.clear()
       setProgress(0)
 
@@ -757,9 +760,11 @@ export function ImageImportMode({
 
   function enqueueLearnFromDraft(draft: BatchOcrDraft, preserveIds: Set<string>) {
     const revision = learningRevisionRef.current.get(draft.id) ?? 0
+    const generation = learningGenerationRef.current
     const task = learningQueueRef.current
       .catch(() => undefined)
       .then(() => {
+        if (learningGenerationRef.current !== generation) return
         if ((learningRevisionRef.current.get(draft.id) ?? 0) !== revision) return
         return learnFromDraft(draft, preserveIds)
       })
