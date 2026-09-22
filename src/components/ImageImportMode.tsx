@@ -555,8 +555,19 @@ export function ImageImportMode({
       currency: allowedCurrencies.includes(next.currency) ? next.currency : allowedCurrencies[0] ?? next.currency,
     }
     const numericAmount = Number(normalizedDraft.amount)
+    const ordinalSourceIds = (normalizedDraft.sourceRowIds?.length ? normalizedDraft.sourceRowIds : normalizedDraft.sourceRowId ? [normalizedDraft.sourceRowId] : []).filter((id) => !id.startsWith('sig:'))
+    const correctedSemanticId = semanticRowIdentity({
+      type: normalizedDraft.type,
+      amount: numericAmount > 0 ? numericAmount : undefined,
+      occurredAt: normalizedDraft.occurredAt ? fromLocalInputDateTime(normalizedDraft.occurredAt) : undefined,
+      merchant: normalizedDraft.merchant.trim() || undefined,
+      description: normalizedDraft.description.trim() || undefined,
+      rawText: normalizedDraft.rawText,
+    })
+    const sourceRowIds = correctedSemanticId ? [...ordinalSourceIds, correctedSemanticId] : ordinalSourceIds
+    normalizedDraft.sourceRowIds = sourceRowIds
+    normalizedDraft.sourceRowId = ordinalSourceIds[0] ?? normalizedDraft.sourceRowId
     let conflict: BatchOcrDraft['conflict']
-    const sourceRowIds = normalizedDraft.sourceRowIds?.length ? normalizedDraft.sourceRowIds : normalizedDraft.sourceRowId ? [normalizedDraft.sourceRowId] : []
     const sourceDuplicate = normalizedDraft.sourceHash && sourceRowIds.length
       ? transactions.find((tx) => importSourcesMatch(tx.importSource, { adapterId: 'owallet-image-v2', sourceId: normalizedDraft.sourceHash!, sourceRowIds }))
       : undefined
