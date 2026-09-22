@@ -46,8 +46,16 @@ export function importSourcesMatch(left?: ExternalImportTrace, right?: ExternalI
   const leftSemantic = leftRows.filter((id) => id.startsWith('sig:'))
   const rightSemantic = rightRows.filter((id) => id.startsWith('sig:'))
   if (leftSemantic.length && rightSemantic.length) {
-    const rightSet = new Set(rightSemantic)
-    return leftSemantic.some((id) => rightSet.has(id))
+    const rightSemanticSet = new Set(rightSemantic)
+    if (!leftSemantic.some((id) => rightSemanticSet.has(id))) return false
+
+    const leftOccurrences = leftRows.filter((id) => id.startsWith('occ:'))
+    const rightOccurrences = rightRows.filter((id) => id.startsWith('occ:'))
+    if (leftOccurrences.length && rightOccurrences.length) {
+      const rightOccurrenceSet = new Set(rightOccurrences)
+      return leftOccurrences.some((id) => rightOccurrenceSet.has(id))
+    }
+    return true
   }
 
   const rightSet = new Set(rightRows)
@@ -64,8 +72,9 @@ function canonicalSourceId(sourceId: string) {
 
 function canonicalRowId(rowIds: string[]) {
   const semantic = rowIds.filter((id) => id.startsWith('sig:')).sort()
-  if (semantic.length) return semantic[0]
-  return [...rowIds].sort()[0] ?? 'row:unknown'
+  const occurrence = rowIds.filter((id) => id.startsWith('occ:')).sort()
+  if (semantic.length) return occurrence.length ? `${semantic[0]}|${occurrence[0]}` : semantic[0]
+  return [...rowIds].filter((id) => !id.startsWith('occ:')).sort()[0] ?? 'row:unknown'
 }
 
 export async function imageImportRecordId(sourceId: string, rowIds: string[]) {
