@@ -58,6 +58,7 @@ const {
   dedupeTransactionBlocks,
   isCredibleTemplateMatch,
   isStrongTransactionBlock,
+  ocrPatternReliability,
   sampleShape,
   shapeSimilarity,
   transactionEvidence,
@@ -213,6 +214,13 @@ assert.equal(sampleShape('NGUYEN VAN A 123456'), 'A A A 0')
 assert.equal(sampleShape('Số tiền: 1.250.000 VND'), 'A A: 0.0.0 A')
 assert.ok(shapeSimilarity('A A: 0 A', 'A A: 0 A') > 0.99)
 assert.ok(shapeSimilarity('A A: 0 A', '0-0-0') < 0.35)
+
+// Pattern reliability uses smoothed success/failure evidence and stays bounded.
+near(ocrPatternReliability(0, 0), 0.5)
+assert.ok(ocrPatternReliability(12, 1) > ocrPatternReliability(1, 12))
+assert.ok(ocrPatternReliability(100, 0) < 1)
+assert.ok(ocrPatternReliability(0, 100) > 0)
+near(ocrPatternReliability(Number.NaN, -5), 0.5)
 
 // Adaptive tile policy stays bounded and scales down for weak devices/wide/very long images.
 assert.equal(chooseOcrTileHeight(1080, 2400, 2), 1400)
