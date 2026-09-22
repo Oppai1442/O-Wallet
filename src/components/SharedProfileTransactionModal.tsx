@@ -30,24 +30,20 @@ import { AccountSelect } from './AccountSelect'
 import { BatchOcrReview, type BatchOcrDraft } from './BatchOcrReview'
 import { Button, Input, Label, Select, Textarea } from './ui'
 import { CategoryPicker } from './CategoryPicker'
-import { ImageImportMode } from './ImageImportMode'
+import { ImageImportMode, type ImageImportSettings } from './ImageImportMode'
 import { MultiDatePicker } from './MultiDatePicker'
 import { OcrTeachingPanel } from './OcrTeachingPanel'
 import { VoiceEntry, type VoiceEntryDraft } from './VoiceEntry'
 
 const OcrRegionEditor = lazy(() => import('./OcrRegionEditor').then((module) => ({ default: module.OcrRegionEditor })))
 
-function profileSettings(ledger: SharedWalletLedger, personal?: AppSettings): AppSettings | undefined {
-  if (!personal) return undefined
+function profileSettings(ledger: SharedWalletLedger, personal?: AppSettings): ImageImportSettings {
   return {
-    ...personal,
     defaultCurrency: ledger.defaultCurrency,
-    budgets: ledger.budgets,
+    transactionCurrency: personal?.transactionCurrency ?? ledger.defaultCurrency,
     accountCatalogues: ledger.accountCatalogues,
     transactionRules: ledger.transactionRules,
     ocrTemplates: ledger.ocrTemplates ?? [],
-    aiVision: ledger.aiVision,
-    voiceInput: ledger.voiceInput ?? personal.voiceInput,
     transactionDefaults: ledger.transactionDefaults,
   }
 }
