@@ -25,12 +25,16 @@ function sourceIdAliases(sourceId: string) {
   return new Set(sourceId.split('|').map((value) => value.trim()).filter(Boolean))
 }
 
+export function sourceIdsMatch(left: string, right: string) {
+  const leftSources = sourceIdAliases(left)
+  const rightSources = sourceIdAliases(right)
+  return [...leftSources].some((source) => rightSources.has(source))
+}
+
 export function importSourcesMatch(left?: ExternalImportTrace, right?: ExternalImportTrace) {
   if (!left || !right) return false
   if (left.adapterId !== right.adapterId) return false
-  const leftSources = sourceIdAliases(left.sourceId)
-  const rightSources = sourceIdAliases(right.sourceId)
-  if (![...leftSources].some((source) => rightSources.has(source))) return false
+  if (!sourceIdsMatch(left.sourceId, right.sourceId)) return false
 
   const leftRows = left.sourceRowIds ?? []
   const rightRows = right.sourceRowIds ?? []
