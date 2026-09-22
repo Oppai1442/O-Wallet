@@ -55,15 +55,17 @@ async function getWorker(
   onProgress?: (progress: number, status: string) => void,
   languages: string[] = ['vie', 'eng'],
   initTimeoutMs = 60_000,
+  langPath?: string,
 ) {
   progressSink = onProgress
   const normalizedLanguages = [...new Set(languages.map((language) => language.trim()).filter(Boolean))].sort()
   const effectiveLanguages = normalizedLanguages.length ? normalizedLanguages : ['eng']
-  const key = effectiveLanguages.join('+')
+  const key = `${effectiveLanguages.join('+')}|${langPath ?? ''}`
   if (workerPromise && workerLanguagesKey !== key) await resetOcrWorker()
   if (!workerPromise) {
     workerLanguagesKey = key
     workerPromise = import('tesseract.js').then(({ createWorker }) => createWorker(effectiveLanguages, 1, {
+      langPath,
       logger: (message) => {
         if (typeof message.progress === 'number') progressSink?.(message.progress, message.status ?? 'OCR')
       },
@@ -143,11 +145,11 @@ function collectWords(blocks: unknown): OcrBox[] {
 export async function recognizeImage(
   image: File | Blob,
   onProgress?: (progress: number, status: string) => void,
-  options?: { signal?: AbortSignal; timeoutMs?: number; workerInitTimeoutMs?: number; languages?: string[] },
+  options?: { signal?: AbortSignal; timeoutMs?: number; workerInitTimeoutMs?: number; languages?: string[]; langPath?: string },
 ): Promise<OcrResult> {
   const signal = options?.signal
   if (signal?.aborted) throw abortError()
-  const worker = await getWorker(onProgress, options?.languages, options?.workerInitTimeoutMs)
+  const worker = await getWorker(onProgress, options?.languages, options?.workerInitTimeoutMs, options?.langPath)
   if (signal?.aborted) {
     await resetOcrWorker()
     throw abortError()
@@ -342,6 +344,7 @@ export async function recognizeImageTiled(
     onTileCheckpoint?: (state: OcrTileResumeState) => void | Promise<void>
     languages?: string[]
     workerInitTimeoutMs?: number
+    langPath?: string
   },
 ): Promise<{ result: OcrResult; width: number; height: number; visual: OcrVisualFingerprint; diagnostics: OcrRuntimeDiagnostics }> {
   const startedAt = new Date().toISOString()
@@ -360,7 +363,7 @@ export async function recognizeImageTiled(
     let lastError: unknown
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       try {
-        result = await recognizeImage(image, onProgress, { signal: options?.signal, timeoutMs: watchdogMs, languages: options?.languages, workerInitTimeoutMs: options?.workerInitTimeoutMs })
+        result = await recognizeImage(image, onProgress, { signal: options?.signal, timeoutMs: watchdogMs, languages: options?.languages, workerInitTimeoutMs: options?.workerInitTimeoutMs, langPath: options?.langPath })
         break
       } catch (error) {
         if ((error as Error)?.name === 'AbortError') throw error
@@ -467,7 +470,7 @@ export async function recognizeImageTiled(
         try {
           result = await recognizeImage(tile, (progress, status) => {
             onProgress?.((index + progress) / starts.length, `${index + 1}/${starts.length} · ${status}`)
-          }, { signal: options?.signal, timeoutMs: watchdogMs, languages: options?.languages, workerInitTimeoutMs: options?.workerInitTimeoutMs })
+          }, { signal: options?.signal, timeoutMs: watchdogMs, languages: options?.languages, workerInitTimeoutMs: options?.workerInitTimeoutMs, langPath: options?.langPath })
           break
         } catch (error) {
           if ((error as Error)?.name === 'AbortError') throw error
