@@ -6,6 +6,7 @@ import { localizeError, useI18n } from '../i18n'
 import { accountCurrencies } from '../lib/accounts'
 import { findDuplicateTransaction } from '../lib/duplicates'
 import { sourceFingerprint } from '../lib/fileFingerprint'
+import { importSourcesMatch } from '../lib/importIdentity'
 import { sanitizeOcrTileResumeMap } from '../lib/ocrCheckpoint'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
 import {
@@ -351,12 +352,8 @@ export function ImageImportMode({
       : undefined
     const amountValue = parsed.amount ? String(parsed.amount) : ''
     const candidateOccurredAt = fromLocalInputDateTime(localOccurredAt)
-    const sourceIdentitySet = new Set(sourceRowIds)
-    const sourceDuplicate = priorTransactions.find((tx) =>
-      tx.importSource?.adapterId === 'owallet-image-v2'
-      && tx.importSource.sourceId === sourceHash
-      && (tx.importSource.sourceRowIds ?? []).some((id) => sourceIdentitySet.has(id)),
-    )
+    const candidateImportSource = { adapterId: 'owallet-image-v2', sourceId: sourceHash, sourceRowIds }
+    const sourceDuplicate = priorTransactions.find((tx) => importSourcesMatch(tx.importSource, candidateImportSource))
     const conflict = sourceDuplicate
       ? { level: 'exact' as const, transaction: sourceDuplicate, score: 1 }
       : parsed.amount
@@ -559,9 +556,9 @@ export function ImageImportMode({
     }
     const numericAmount = Number(normalizedDraft.amount)
     let conflict: BatchOcrDraft['conflict']
-    const sourceIdentitySet = new Set(normalizedDraft.sourceRowIds?.length ? normalizedDraft.sourceRowIds : normalizedDraft.sourceRowId ? [normalizedDraft.sourceRowId] : [])
-    const sourceDuplicate = normalizedDraft.sourceHash && sourceIdentitySet.size
-      ? transactions.find((tx) => tx.importSource?.adapterId === 'owallet-image-v2' && tx.importSource.sourceId === normalizedDraft.sourceHash && (tx.importSource.sourceRowIds ?? []).some((id) => sourceIdentitySet.has(id)))
+    const sourceRowIds = normalizedDraft.sourceRowIds?.length ? normalizedDraft.sourceRowIds : normalizedDraft.sourceRowId ? [normalizedDraft.sourceRowId] : []
+    const sourceDuplicate = normalizedDraft.sourceHash && sourceRowIds.length
+      ? transactions.find((tx) => importSourcesMatch(tx.importSource, { adapterId: 'owallet-image-v2', sourceId: normalizedDraft.sourceHash!, sourceRowIds }))
       : undefined
     if (sourceDuplicate) {
       conflict = { level: 'exact', source: 'existing', transactionId: sourceDuplicate.id, occurredAt: sourceDuplicate.occurredAt, amount: sourceDuplicate.amount, merchant: sourceDuplicate.merchant }
