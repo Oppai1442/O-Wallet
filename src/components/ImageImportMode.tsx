@@ -6,7 +6,7 @@ import { localizeError, useI18n } from '../i18n'
 import { accountCurrencies } from '../lib/accounts'
 import { findDuplicateTransaction } from '../lib/duplicates'
 import { sourceFingerprint } from '../lib/fileFingerprint'
-import { importSourcesMatch } from '../lib/importIdentity'
+import { buildImageImportSemanticRowId, importSourcesMatch } from '../lib/importIdentity'
 import { sanitizeOcrTileResumeMap } from '../lib/ocrCheckpoint'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
 import {
@@ -62,15 +62,6 @@ function draftId(fileIndex: number, block: OcrTransactionBlock) {
 function candidateCurrency(candidate: ParsedTransactionCandidate) {
   return (candidate as ParsedTransactionCandidate & { currency?: string }).currency
 }
-
-function semanticRowIdentity(candidate: ParsedTransactionCandidate) {
-  const amount = candidate.amount !== undefined ? String(Math.round(candidate.amount * 100) / 100) : ''
-  const time = candidate.occurredAt ?? ''
-  const party = normalized(candidate.merchant ?? candidate.description ?? '').slice(0, 96)
-  if (!amount || (!time && !party)) return undefined
-  return `sig:${candidate.type}:${amount}:${time}:${party}`
-}
-
 
 function preservedDraft(oldDraft: BatchOcrDraft, freshDraft: BatchOcrDraft): BatchOcrDraft {
   return {
@@ -431,7 +422,7 @@ export function ImageImportMode({
       for (let blockIndex = 0; blockIndex < matched.blocks.length; blockIndex += 1) {
         const block = matched.blocks[blockIndex]
         const sourceRowId = `row:${blockIndex}`
-        const semanticId = semanticRowIdentity(block.candidate)
+        const semanticId = buildImageImportSemanticRowId(block.candidate)
         const sourceRowIds = semanticId ? [sourceRowId, semanticId] : [sourceRowId]
         const nextDraft = resolveDraft(analysis.fileIndex, block, analysis.width, analysis.height, candidates, analysis.sourceHash, sourceRowId, sourceRowIds)
         const exactOld = drafts.find((draft) => draft.id === nextDraft.id)
@@ -556,7 +547,7 @@ export function ImageImportMode({
     }
     const numericAmount = Number(normalizedDraft.amount)
     const ordinalSourceIds = (normalizedDraft.sourceRowIds?.length ? normalizedDraft.sourceRowIds : normalizedDraft.sourceRowId ? [normalizedDraft.sourceRowId] : []).filter((id) => !id.startsWith('sig:'))
-    const correctedSemanticId = semanticRowIdentity({
+    const correctedSemanticId = buildImageImportSemanticRowId({
       type: normalizedDraft.type,
       amount: numericAmount > 0 ? numericAmount : undefined,
       occurredAt: normalizedDraft.occurredAt ? fromLocalInputDateTime(normalizedDraft.occurredAt) : undefined,
