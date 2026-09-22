@@ -165,6 +165,7 @@ export function ImageImportMode({
   const sessionTemplatesRef = useRef<OcrTemplate[]>(settings?.ocrTemplates ?? [])
   const reviewedIdsRef = useRef<Set<string>>(new Set())
   const learningQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const learningRevisionRef = useRef<Map<string, number>>(new Map())
 
   useEffect(() => {
     const nextTemplates = settings?.ocrTemplates ?? []
@@ -226,6 +227,7 @@ export function ImageImportMode({
       for (const file of selected) hashes.push(await sourceFingerprint(file))
       setFiles(selected)
       setFileHashes(hashes)
+      learningRevisionRef.current.clear()
       setProgress(0)
 
       const checkpoint = await repository?.getEncryptedCheckpoint<ImageImportCheckpoint>(checkpointKey)
@@ -606,11 +608,14 @@ export function ImageImportMode({
       || previous.balanceAfter !== next.balanceAfter
       || previous.description !== next.description
     ))
-    if (feedbackChanged && reviewedIdsRef.current.has(next.id)) {
-      const updatedReviewed = new Set(reviewedIdsRef.current)
-      updatedReviewed.delete(next.id)
-      reviewedIdsRef.current = updatedReviewed
-      setReviewedIds(updatedReviewed)
+    if (feedbackChanged) {
+      learningRevisionRef.current.set(next.id, (learningRevisionRef.current.get(next.id) ?? 0) + 1)
+      if (reviewedIdsRef.current.has(next.id)) {
+        const updatedReviewed = new Set(reviewedIdsRef.current)
+        updatedReviewed.delete(next.id)
+        reviewedIdsRef.current = updatedReviewed
+        setReviewedIds(updatedReviewed)
+      }
     }
     const compatibleCategories = selectableCategories(categories, next.type)
     const account = accounts.find((item) => item.id === next.accountId)
@@ -715,6 +720,7 @@ export function ImageImportMode({
   }
 
   async function persistTemplates(next: OcrTemplate[]) {
+    if (!onSaveTemplates && !personalSettings) return
     const previous = sessionTemplatesRef.current
     sessionTemplatesRef.current = next
     try {
@@ -749,9 +755,13 @@ export function ImageImportMode({
   }
 
   function enqueueLearnFromDraft(draft: BatchOcrDraft, preserveIds: Set<string>) {
+    const revision = learningRevisionRef.current.get(draft.id) ?? 0
     const task = learningQueueRef.current
       .catch(() => undefined)
-      .then(() => learnFromDraft(draft, preserveIds))
+      .then(() => {
+        if ((learningRevisionRef.current.get(draft.id) ?? 0) !== revision) return
+        return learnFromDraft(draft, preserveIds)
+      })
     learningQueueRef.current = task.catch(() => undefined)
     return task
   }
