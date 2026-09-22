@@ -565,6 +565,7 @@ const vi: Record<string, string> = {
   'settings.ocrResetLearning': 'Đặt lại phần đã học',
   'settings.ocrResetConfirm': 'Thu gọn template về anchor/shape/visual chính và xóa các biến thể đã học thêm?',
   'settings.ocrPatternStats': '{patterns} field pattern · {anchors} anchor · {visuals} visual variant',
+  'settings.ocrLearningStats': '{successes} lần đúng · {failures} lần sai · {quarantined} pattern tạm ngưng',
   'settings.export': 'Xuất dữ liệu',
   'settings.exportHint': 'Tệp JSON/CSV xuất ra có thể đọc trực tiếp. Chỉ lưu hoặc chia sẻ ở nơi tin cậy.',
 
@@ -1318,6 +1319,7 @@ const en: Record<string, string> = {
   'settings.ocrResetLearning': 'Reset learned variants',
   'settings.ocrResetConfirm': 'Collapse this template back to its primary anchors, shapes, and visual signature, removing learned variants?',
   'settings.ocrPatternStats': '{patterns} field patterns · {anchors} anchors · {visuals} visual variants',
+  'settings.ocrLearningStats': '{successes} successes · {failures} failures · {quarantined} quarantined patterns',
   'settings.export': 'Export data',
   'settings.exportHint': 'Exported JSON/CSV files can be read directly. Store or share them only in places you trust.',
 
