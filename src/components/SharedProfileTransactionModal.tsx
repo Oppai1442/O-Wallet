@@ -18,6 +18,7 @@ import { localizeError, useI18n } from '../i18n'
 import { AI_OPENROUTER_KEY_SECRET, analyzeTransactionImage } from '../lib/ai'
 import { selectableCategories } from '../lib/categories'
 import { findDuplicateTransaction } from '../lib/duplicates'
+import { imageImportRecordId } from '../lib/importIdentity'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
 import { buildDetectedLines, buildPatternTemplate, parseTransactionFromOcr, parseTransactionFromRegions, recognizeImageTiled } from '../lib/ocr'
 import { mapDetectedLinesToRegions } from '../lib/ocrHeuristics'
@@ -445,8 +446,10 @@ export function SharedProfileTransactionModal({
     if (!googleSession) throw new Error('error.sharedSaveFailed')
     const now = new Date().toISOString()
     const batchId = drafts.length > 1 ? crypto.randomUUID() : undefined
-    await saveSharedTransactions(googleSession.accessToken, membership, drafts.map((draft, index) => ({
-      id: crypto.randomUUID(),
+    const records = await Promise.all(drafts.map(async (draft, index) => {
+      const sourceRowIds = draft.sourceRowIds?.length ? draft.sourceRowIds : draft.sourceRowId ? [draft.sourceRowId] : []
+      return {
+      id: draft.sourceHash && sourceRowIds.length ? await imageImportRecordId(draft.sourceHash, sourceRowIds) : crypto.randomUUID(),
       type: draft.type,
       amount: Number(draft.amount),
       currency: draft.currency || ledger.defaultCurrency,
@@ -467,7 +470,9 @@ export function SharedProfileTransactionModal({
         sourceFileName: sourceFiles[draft.fileIndex]?.name,
       } : undefined,
       createdAt: now,
-    })))
+    }
+    }))
+    await saveSharedTransactions(googleSession.accessToken, membership, records)
     onSaved()
   }
 
