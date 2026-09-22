@@ -553,12 +553,23 @@ export function ImageImportMode({
   }
 
   function updateDraft(next: BatchOcrDraft) {
-    setReviewedIds((current) => {
-      if (!current.has(next.id)) return current
-      const updated = new Set(current)
-      updated.delete(next.id)
-      return updated
-    })
+    const previous = drafts.find((draft) => draft.id === next.id)
+    const feedbackChanged = Boolean(previous && (
+      previous.type !== next.type
+      || previous.amount !== next.amount
+      || previous.occurredAt !== next.occurredAt
+      || previous.merchant !== next.merchant
+      || previous.balanceAfter !== next.balanceAfter
+      || previous.description !== next.description
+    ))
+    if (feedbackChanged) {
+      setReviewedIds((current) => {
+        if (!current.has(next.id)) return current
+        const updated = new Set(current)
+        updated.delete(next.id)
+        return updated
+      })
+    }
     const compatibleCategories = selectableCategories(categories, next.type)
     const account = accounts.find((item) => item.id === next.accountId)
     const allowedCurrencies = account ? accountCurrencies(account) : []
