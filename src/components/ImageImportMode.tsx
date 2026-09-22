@@ -692,6 +692,12 @@ export function ImageImportMode({
     setError(undefined)
   }
 
+  async function withPersonalImageImportLock<T>(task: () => Promise<T>) {
+    const manager = typeof navigator !== 'undefined' ? navigator.locks : undefined
+    if (!manager) return task()
+    return manager.request('owallet-personal-image-import-save', { mode: 'exclusive' }, task)
+  }
+
   async function saveSelected() {
     if (!repository || saving) return
     if (active) {
@@ -737,38 +743,50 @@ export function ImageImportMode({
     const imageIds = new Map<number, string>()
     let pendingRecords: Transaction[] = []
     try {
-      for (const fileIndex of [...new Set(selected.map((draft) => draft.fileIndex))]) {
-        const file = files[fileIndex]
-        if (file) imageIds.set(fileIndex, (await repository.saveImage(file)).id)
-      }
-      const now = new Date().toISOString()
-      const batchId = selected.length > 1 ? crypto.randomUUID() : undefined
-      const records: Transaction[] = selected.map((draft, index) => {
-        const numericAmount = Number(draft.amount)
-        return {
-          id: crypto.randomUUID(),
-          type: draft.type,
-          amount: numericAmount,
-          currency: draft.currency,
-          occurredAt: fromLocalInputDateTime(draft.occurredAt),
-          categoryId: draft.categoryId,
-          accountId: draft.accountId,
-          destinationAccountId: draft.type === 'transfer' ? draft.destinationAccountId : undefined,
-          destinationCurrency: draft.type === 'transfer' ? draft.currency : undefined,
-          destinationAmount: draft.type === 'transfer' ? numericAmount : undefined,
-          merchant: draft.merchant.trim() || undefined,
-          balanceAfter: draft.balanceAfter ? Number(draft.balanceAfter) : undefined,
-          description: draft.description.trim() || undefined,
-          importSource: draft.sourceHash ? { adapterId: 'owallet-image-v2', sourceId: draft.sourceHash, sourceRowIds: draft.sourceRowIds?.length ? draft.sourceRowIds : draft.sourceRowId ? [draft.sourceRowId] : [], sourceFileName: files[draft.fileIndex]?.name } : undefined,
-          batch: batchId ? { id: batchId, mode: 'ocr-batch', index, count: selected.length } : undefined,
-          imageIds: imageIds.has(draft.fileIndex) ? [imageIds.get(draft.fileIndex)!] : [],
-          createdAt: now,
-          updatedAt: now,
-          deleted: false,
+      await withPersonalImageImportLock(async () => {
+        const latestTransactions = await repository.getAll<Transaction>('transaction')
+        const freshSelected = selected.filter((draft) => {
+          if (!draft.sourceHash) return true
+          const sourceRowIds = draft.sourceRowIds?.length ? draft.sourceRowIds : draft.sourceRowId ? [draft.sourceRowId] : []
+          if (!sourceRowIds.length) return true
+          const source = { adapterId: 'owallet-image-v2', sourceId: draft.sourceHash, sourceRowIds }
+          return !latestTransactions.some((tx) => importSourcesMatch(tx.importSource, source))
+        })
+        if (!freshSelected.length) return
+
+        for (const fileIndex of [...new Set(freshSelected.map((draft) => draft.fileIndex))]) {
+          const file = files[fileIndex]
+          if (file) imageIds.set(fileIndex, (await repository.saveImage(file)).id)
         }
+        const now = new Date().toISOString()
+        const batchId = freshSelected.length > 1 ? crypto.randomUUID() : undefined
+        const records: Transaction[] = freshSelected.map((draft, index) => {
+          const numericAmount = Number(draft.amount)
+          return {
+            id: crypto.randomUUID(),
+            type: draft.type,
+            amount: numericAmount,
+            currency: draft.currency,
+            occurredAt: fromLocalInputDateTime(draft.occurredAt),
+            categoryId: draft.categoryId,
+            accountId: draft.accountId,
+            destinationAccountId: draft.type === 'transfer' ? draft.destinationAccountId : undefined,
+            destinationCurrency: draft.type === 'transfer' ? draft.currency : undefined,
+            destinationAmount: draft.type === 'transfer' ? numericAmount : undefined,
+            merchant: draft.merchant.trim() || undefined,
+            balanceAfter: draft.balanceAfter ? Number(draft.balanceAfter) : undefined,
+            description: draft.description.trim() || undefined,
+            importSource: draft.sourceHash ? { adapterId: 'owallet-image-v2', sourceId: draft.sourceHash, sourceRowIds: draft.sourceRowIds?.length ? draft.sourceRowIds : draft.sourceRowId ? [draft.sourceRowId] : [], sourceFileName: files[draft.fileIndex]?.name } : undefined,
+            batch: batchId ? { id: batchId, mode: 'ocr-batch', index, count: freshSelected.length } : undefined,
+            imageIds: imageIds.has(draft.fileIndex) ? [imageIds.get(draft.fileIndex)!] : [],
+            createdAt: now,
+            updatedAt: now,
+            deleted: false,
+          }
+        })
+        pendingRecords = records
+        await saveEntities(records)
       })
-      pendingRecords = records
-      await saveEntities(records)
       await invalidateCheckpointWrites()
       await repository.deleteEncryptedCheckpoint(checkpointKey)
       setTileResumeByHash({})
