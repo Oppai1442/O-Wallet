@@ -25,6 +25,23 @@ const productionCsp = [
   "upgrade-insecure-requests",
 ].join('; ')
 
+function pwaRegisterStubPlugin(): Plugin {
+  return {
+    name: 'o-wallet-pwa-register-stub',
+    enforce: 'pre',
+    resolveId(id) {
+      if (id === 'virtual:pwa-register') return '\0o-wallet-pwa-register-stub'
+      return undefined
+    },
+    load(id) {
+      if (id === '\0o-wallet-pwa-register-stub') {
+        return 'export function registerSW(){ return function updateServiceWorker(){} }'
+      }
+      return undefined
+    },
+  }
+}
+
 function securityMetaPlugin(): Plugin {
   return {
     name: 'o-wallet-security-meta',
@@ -51,7 +68,7 @@ export default defineConfig({
     securityMetaPlugin(),
     react(),
     tailwindcss(),
-    ...(!ocrVisualE2E ? [VitePWA({
+    ...(ocrVisualE2E ? [pwaRegisterStubPlugin()] : [VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'pwa-192.png', 'pwa-512.png'],
       manifest: {
@@ -75,6 +92,6 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,wasm}'],
         runtimeCaching: [],
       },
-    })] : []),
+    })]),
   ],
 })
