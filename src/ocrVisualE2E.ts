@@ -97,6 +97,7 @@ async function runScenario(name: string, cards: number, dark: boolean, jitter: n
     overlap: 120,
     retries: 1,
     watchdogMs: 120000,
+    languages: ['eng'],
   })
   const blocks = detectTransactionBlocks(ocr.result, ocr.width, ocr.height, undefined, ocr.visual)
   const amounts = blocks.flatMap((block) => block.candidate.amount !== undefined ? [block.candidate.amount] : [])
