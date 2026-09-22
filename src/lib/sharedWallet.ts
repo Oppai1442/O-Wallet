@@ -1111,6 +1111,23 @@ export async function saveSharedTransactions(
 
     if (!accepted.length) return returned
 
+    const ocrBatchGroups = new Map<string, SharedTransaction[]>()
+    for (const tx of accepted) {
+      if (tx.batch?.mode !== 'ocr-batch') continue
+      const group = ocrBatchGroups.get(tx.batch.id) ?? []
+      group.push(tx)
+      ocrBatchGroups.set(tx.batch.id, group)
+    }
+    for (const group of ocrBatchGroups.values()) {
+      if (group.length <= 1) {
+        group[0].batch = undefined
+        continue
+      }
+      group.forEach((tx, index) => {
+        tx.batch = { id: tx.batch!.id, mode: 'ocr-batch', index, count: group.length }
+      })
+    }
+
     const replacing = new Set(accepted.map((tx) => tx.id))
     const newCount = accepted.filter((tx) => !existingById.has(tx.id)).length
     if (feed.transactions.length + newCount > MAX_SHARED_TRANSACTIONS_PER_FEED) throw new Error('error.sharedFeedLimit')
