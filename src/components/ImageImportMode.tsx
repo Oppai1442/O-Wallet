@@ -6,7 +6,7 @@ import { localizeError, useI18n } from '../i18n'
 import { accountCurrencies } from '../lib/accounts'
 import { findDuplicateTransaction } from '../lib/duplicates'
 import { sourceFingerprint } from '../lib/fileFingerprint'
-import { buildImageImportBlockRowId, buildImageImportSemanticRowId, imageImportBlockFingerprint, imageImportRecordId, importSourcesMatch, sourceIdsMatch } from '../lib/importIdentity'
+import { buildImageImportBlockRowId, buildImageImportSemanticRowId, imageImportBlockFingerprint, imageImportImageId, imageImportRecordId, importSourcesMatch, sourceIdsMatch } from '../lib/importIdentity'
 import { sanitizeOcrTileResumeMap } from '../lib/ocrCheckpoint'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
 import {
@@ -942,7 +942,8 @@ export function ImageImportMode({
 
         for (const fileIndex of [...new Set(freshSelected.map((draft) => draft.fileIndex))]) {
           const file = files[fileIndex]
-          if (file) imageIds.set(fileIndex, (await repository.saveImage(file)).id)
+          const sourceHash = fileHashes[fileIndex]
+          if (file) imageIds.set(fileIndex, (await repository.saveImage(file, sourceHash ? await imageImportImageId(sourceHash) : undefined)).id)
         }
         const now = new Date().toISOString()
         const batchId = freshSelected.length > 1 ? crypto.randomUUID() : undefined
