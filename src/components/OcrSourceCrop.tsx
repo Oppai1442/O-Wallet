@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { OcrFieldEvidence } from '../types'
 
 export function OcrSourceCrop({
@@ -20,13 +20,31 @@ export function OcrSourceCrop({
   maxWidth?: number
   maxHeight?: number
 }) {
+  const hostRef = useRef<HTMLDivElement | null>(null)
+  const [activated, setActivated] = useState(() => typeof IntersectionObserver === 'undefined')
   const [url, setUrl] = useState<string>()
   const [crop, setCrop] = useState<{ x: number; y: number; width: number; height: number }>()
 
   useEffect(() => {
+    if (activated) return
+    const node = hostRef.current
+    if (!node || typeof IntersectionObserver === 'undefined') {
+      setActivated(true)
+      return
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return
+      setActivated(true)
+      observer.disconnect()
+    }, { rootMargin: '320px 0px' })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [activated])
+
+  useEffect(() => {
     let disposed = false
     let objectUrl: string | undefined
-    if (!file || !bbox || !sourceWidth || !sourceHeight || bbox.width <= 0 || bbox.height <= 0) {
+    if (!activated || !file || !bbox || !sourceWidth || !sourceHeight || bbox.width <= 0 || bbox.height <= 0) {
       setUrl(undefined)
       setCrop(undefined)
       return
@@ -67,10 +85,10 @@ export function OcrSourceCrop({
       disposed = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [bbox?.height, bbox?.width, bbox?.x, bbox?.y, file, maxHeight, maxWidth, sourceHeight, sourceWidth])
+  }, [activated, bbox?.height, bbox?.width, bbox?.x, bbox?.y, file, maxHeight, maxWidth, sourceHeight, sourceWidth])
 
   if (!url || !crop) {
-    return <div className={`flex items-center justify-center bg-stone-100 text-xs text-stone-400 dark:bg-stone-950 ${className}`}>…</div>
+    return <div ref={hostRef} className={`flex items-center justify-center bg-stone-100 text-xs text-stone-400 dark:bg-stone-950 ${className}`}>…</div>
   }
 
   const evidenceStyle = evidence ? {
@@ -80,7 +98,7 @@ export function OcrSourceCrop({
     height: `${Math.max(2, Math.min(100, (evidence.bbox.height / crop.height) * 100))}%`,
   } : undefined
 
-  return <div className={`relative overflow-hidden bg-stone-100 dark:bg-stone-950 ${className}`}>
+  return <div ref={hostRef} className={`relative overflow-hidden bg-stone-100 dark:bg-stone-950 ${className}`}>
     <img src={url} alt="" draggable={false} className="h-full w-full select-none object-contain" />
     {evidenceStyle && <div className="pointer-events-none absolute z-10 rounded border-2 border-blue-500 bg-blue-500/15 shadow-[0_0_0_9999px_rgba(0,0,0,.08)]" style={evidenceStyle}/>}
   </div>
