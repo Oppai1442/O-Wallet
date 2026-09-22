@@ -1,3 +1,24 @@
+export function buildImageImportSemanticRowId(input: {
+  type: 'expense' | 'income' | 'transfer'
+  amount?: number
+  occurredAt?: string
+  merchant?: string
+  description?: string
+}) {
+  const amount = input.amount !== undefined && Number.isFinite(input.amount)
+    ? String(Math.round(input.amount * 100) / 100)
+    : ''
+  const time = input.occurredAt ?? ''
+  const party = (input.merchant ?? input.description ?? '')
+    .normalize('NFKC')
+    .toLocaleLowerCase('vi-VN')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 96)
+  if (!amount || (!time && !party)) return undefined
+  return `sig:${input.type}:${amount}:${time}:${party}`
+}
+
 import type { ExternalImportTrace } from '../types'
 
 export function importSourcesMatch(left?: ExternalImportTrace, right?: ExternalImportTrace) {
