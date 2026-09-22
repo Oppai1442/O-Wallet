@@ -698,7 +698,7 @@ export function mergePatternTemplateEvidence(
     const anchors = [...new Set([...(prior.anchorTexts ?? (prior.anchorText ? [prior.anchorText] : [])), ...(next.anchorTexts ?? (next.anchorText ? [next.anchorText] : []))])].slice(-8)
     const shapes = [...new Set([...(prior.sampleShapes ?? (prior.sampleShape ? [prior.sampleShape] : [])), ...(next.sampleShapes ?? (next.sampleShape ? [next.sampleShape] : []))])].slice(-8)
     const correctedLine = correction?.lines.find((line) => correction.mappings[line.id] === next.field)
-    const predictedLine = correction ? findPatternLine(correction.lines, prior) : undefined
+    const predictedLine = correction ? findPatternLine(correction.lines, prior, true) : undefined
     const hasFeedback = Boolean(correction && correctedLine)
     const predictionMatched = Boolean(hasFeedback && predictedLine?.id === correctedLine?.id)
     return {
