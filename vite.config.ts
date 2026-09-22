@@ -5,6 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 const appVersion = (JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version?: string }).version ?? 'dev'
+const ocrVisualE2E = process.env.VITE_OCR_E2E === '1'
 
 const productionCsp = [
   "default-src 'self'",
@@ -50,7 +51,7 @@ export default defineConfig({
     securityMetaPlugin(),
     react(),
     tailwindcss(),
-    VitePWA({
+    ...(!ocrVisualE2E ? [VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'pwa-192.png', 'pwa-512.png'],
       manifest: {
@@ -74,6 +75,6 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,wasm}'],
         runtimeCaching: [],
       },
-    }),
+    })] : []),
   ],
 })
