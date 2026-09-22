@@ -88,12 +88,16 @@ function preservedDraft(oldDraft: BatchOcrDraft, freshDraft: BatchOcrDraft): Bat
   }
 }
 
+export type ImageImportSettings = Partial<Pick<AppSettings,
+  'ocrTemplates' | 'accountCatalogues' | 'transactionRules' | 'transactionDefaults' | 'transactionCurrency' | 'defaultCurrency'
+>>
+
 export interface ImageImportModeProps {
   onClose: () => void
   accountsOverride?: Account[]
   categoriesOverride?: Category[]
   cataloguesOverride?: AccountCatalogue[]
-  settingsOverride?: AppSettings
+  settingsOverride?: ImageImportSettings
   transactionsOverride?: Transaction[]
   checkpointKey?: string
   onSaveTemplates?: (templates: OcrTemplate[]) => Promise<void>
@@ -115,9 +119,10 @@ export function ImageImportMode({
   const repository = wallet.repository
   const saveEntity = wallet.saveEntity
   const saveEntities = wallet.saveEntities
+  const personalSettings = wallet.settings
   const accounts = accountsOverride ?? wallet.accounts
   const categories = categoriesOverride ?? wallet.categories
-  const settings = settingsOverride ?? wallet.settings
+  const settings: ImageImportSettings | undefined = settingsOverride ?? personalSettings
   const transactions = transactionsOverride ?? wallet.transactions
   const catalogues = cataloguesOverride ?? settings?.accountCatalogues ?? []
   const { t } = useI18n()
@@ -637,18 +642,18 @@ export function ImageImportMode({
   }
 
   async function persistTemplates(next: OcrTemplate[]) {
-    if (!settings) return
     if (onSaveTemplates) {
       await onSaveTemplates(next)
     } else {
+      if (!personalSettings) return
       const now = new Date().toISOString()
-      await saveEntity({ ...settings, ocrTemplates: next, updatedAt: now })
+      await saveEntity({ ...personalSettings, ocrTemplates: next, updatedAt: now })
     }
     setSessionTemplates(next)
   }
 
   async function learnFromDraft(draft: BatchOcrDraft, preserveIds = reviewedIds) {
-    if (!draft.templateId || !activeAnalysis || !activeTemplate || !activeLines.length || !settings) return
+    if (!draft.templateId || !activeAnalysis || !activeTemplate || !activeLines.length || (!personalSettings && !onSaveTemplates)) return
     const mappings = mappingsFromCorrectedDraft(draft, activeLines)
     const mappedFields = Object.values(mappings).filter((field): field is OcrField => Boolean(field))
     if (!canAutoLearnTemplate(activeAnalysis.templateScore, mappedFields)) return
@@ -672,7 +677,7 @@ export function ImageImportMode({
   }
 
   async function savePattern() {
-    if (!settings || !activeAnalysis || !activeLines.length || !patternName.trim()) return
+    if ((!personalSettings && !onSaveTemplates) || !activeAnalysis || !activeLines.length || !patternName.trim()) return
     const effectiveMappings = Object.values(lineMappings).some(Boolean)
       ? lineMappings
       : active ? mappingsFromCorrectedDraft(active, activeLines) : {}
