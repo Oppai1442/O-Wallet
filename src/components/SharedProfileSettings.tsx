@@ -250,7 +250,7 @@ export function SharedProfileSettings({
             return <div key={template.id} className={`rounded-xl border p-3 ${template.enabled === false ? 'bg-stone-50/60 opacity-70 dark:bg-stone-950/30' : ''} border-stone-200 dark:border-stone-800`}>
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2"><div className="truncate font-bold text-stone-800 dark:text-stone-100">{template.name}</div><Badge tone={template.enabled === false ? undefined : 'green'}>{template.enabled === false ? t('settings.ocrDisabled') : t('settings.ocrEnabled')}</Badge><Badge>{template.schemaVersion === 2 ? 'v2' : 'v1'}</Badge></div>
+                  <div className="flex flex-wrap items-center gap-2"><div className="truncate font-bold text-stone-800 dark:text-stone-100">{template.name}</div><Badge tone={template.enabled === false ? 'slate' : 'green'}>{template.enabled === false ? t('settings.ocrDisabled') : t('settings.ocrEnabled')}</Badge><Badge>{template.schemaVersion === 2 ? 'v2' : 'v1'}</Badge></div>
                   <div className="mt-1 text-xs text-stone-500">{template.schemaVersion === 2 ? t('settings.ocrPatternStats', { patterns: patternCount, anchors: anchorCount, visuals: visualCount }) : t('settings.regionCount', { count: template.regions.length })}</div>
                   {template.schemaVersion === 2 && <div className={`mt-1 text-[11px] ${quarantinedCount ? 'text-amber-600 dark:text-amber-300' : 'text-stone-400'}`}>{t('settings.ocrLearningStats', { successes: successCount, failures: failureCount, quarantined: quarantinedCount })}</div>}
                 </div>
