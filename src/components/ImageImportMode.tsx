@@ -80,6 +80,30 @@ function preservedDraft(oldDraft: BatchOcrDraft, freshDraft: BatchOcrDraft): Bat
   }
 }
 
+function detectedLinesForDraft(draft: BatchOcrDraft | undefined, analysis: SourceAnalysis | undefined) {
+  if (!draft || !analysis || !draft.sourceBBox) return [] as OcrDetectedLine[]
+  const box = draft.sourceBBox
+  return buildDetectedLines(analysis.result, analysis.width, analysis.height)
+    .filter((line) => {
+      const center = (line.y + line.height / 2) * analysis.height
+      return center >= box.y && center <= box.y + box.height
+    })
+    .map((line) => ({
+      ...line,
+      y: Math.max(0, ((line.y * analysis.height) - box.y) / Math.max(1, box.height)),
+      height: Math.min(1, (line.height * analysis.height) / Math.max(1, box.height)),
+    }))
+}
+
+function patternVisualForDraft(draft: BatchOcrDraft | undefined, analysis: SourceAnalysis | undefined) {
+  if (!analysis) return undefined
+  if (!draft?.sourceBBox?.width || !draft.sourceBBox.height) return analysis.visual
+  return {
+    ...analysis.visual,
+    aspectRatio: draft.sourceBBox.width / Math.max(1, draft.sourceBBox.height),
+  }
+}
+
 export type ImageImportSettings = Partial<Pick<AppSettings,
   'ocrTemplates' | 'accountCatalogues' | 'transactionRules' | 'transactionDefaults' | 'transactionCurrency' | 'defaultCurrency'
 >>
@@ -138,8 +162,19 @@ export function ImageImportMode({
   const abortRef = useRef<AbortController | undefined>(undefined)
   const checkpointWriteRef = useRef<Promise<void>>(Promise.resolve())
   const checkpointGenerationRef = useRef(0)
+  const sessionTemplatesRef = useRef<OcrTemplate[]>(settings?.ocrTemplates ?? [])
+  const reviewedIdsRef = useRef<Set<string>>(new Set())
+  const learningQueueRef = useRef<Promise<void>>(Promise.resolve())
 
-  useEffect(() => setSessionTemplates(settings?.ocrTemplates ?? []), [settings?.ocrTemplates])
+  useEffect(() => {
+    const nextTemplates = settings?.ocrTemplates ?? []
+    sessionTemplatesRef.current = nextTemplates
+    setSessionTemplates(nextTemplates)
+  }, [settings?.ocrTemplates])
+
+  useEffect(() => {
+    reviewedIdsRef.current = reviewedIds
+  }, [reviewedIds])
 
   useEffect(() => {
     let cancelled = false
@@ -168,29 +203,15 @@ export function ImageImportMode({
   const activeTemplate = active?.templateId ? sessionTemplates.find((item) => item.id === active.templateId) : undefined
   const legacyTemplates = sessionTemplates.filter((template) => template.schemaVersion !== 2 && template.enabled !== false && template.regions.length)
 
-  const activePatternVisual = useMemo(() => {
-    if (!activeAnalysis) return undefined
-    if (!active?.sourceBBox?.width || !active.sourceBBox.height) return activeAnalysis.visual
-    return {
-      ...activeAnalysis.visual,
-      aspectRatio: active.sourceBBox.width / Math.max(1, active.sourceBBox.height),
-    }
-  }, [active?.sourceBBox?.height, active?.sourceBBox?.width, activeAnalysis])
+  const activePatternVisual = useMemo(
+    () => patternVisualForDraft(active, activeAnalysis),
+    [active, activeAnalysis],
+  )
 
-  const activeLines = useMemo(() => {
-    if (!active || !activeAnalysis || !active.sourceBBox) return [] as OcrDetectedLine[]
-    const box = active.sourceBBox
-    return buildDetectedLines(activeAnalysis.result, activeAnalysis.width, activeAnalysis.height)
-      .filter((line) => {
-        const center = (line.y + line.height / 2) * activeAnalysis.height
-        return center >= box.y && center <= box.y + box.height
-      })
-      .map((line) => ({
-        ...line,
-        y: Math.max(0, ((line.y * activeAnalysis.height) - box.y) / Math.max(1, box.height)),
-        height: Math.min(1, (line.height * activeAnalysis.height) / Math.max(1, box.height)),
-      }))
-  }, [active, activeAnalysis])
+  const activeLines = useMemo(
+    () => detectedLinesForDraft(active, activeAnalysis),
+    [active, activeAnalysis],
+  )
 
   useEffect(() => {
     setLineMappings({})
