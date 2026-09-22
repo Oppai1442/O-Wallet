@@ -79,7 +79,7 @@ const {
 
 const { sourceFingerprint } = fingerprintModule
 const { sanitizeOcrTileResumeState, sanitizeOcrTileResumeMap } = checkpointModule
-const { buildImageImportSemanticRowId, importSourcesMatch } = importIdentityModule
+const { buildImageImportSemanticRowId, importSourcesMatch, sourceIdsMatch } = importIdentityModule
 
 const canonicalSigA = buildImageImportSemanticRowId({type:'expense',amount:100000,occurredAt:'2026-09-21T10:00:00.000Z',merchant:'  Nguyễn   Văn A '})
 const canonicalSigB = buildImageImportSemanticRowId({type:'expense',amount:100000.0,occurredAt:'2026-09-21T10:00:00.000Z',merchant:'nguyễn văn a'})
@@ -104,6 +104,10 @@ assert.equal(importSourcesMatch(
   {...importBase,sourceRowIds:['row:1']},
   {...importBase,sourceId:'different',sourceRowIds:['row:1']},
 ), false)
+assert.equal(importSourcesMatch(
+  {...importBase,sourceId:legacyAlias,sourceRowIds:['row:1']},
+  {...importBase,sourceId:fpA,sourceRowIds:['row:1']},
+), true, 'legacy transactions must match upgraded composite source ids')
 
 
 const validResume = {
@@ -121,6 +125,8 @@ assert.equal(sanitizeOcrTileResumeState({...validResume,boxes:[{...validResume.b
 assert.equal(sanitizeOcrTileResumeState({...validResume,boxes:[{...validResume.boxes[0],bbox:{x0:0,y0:0,x1:999999,y1:20}}]}), undefined, 'extreme bbox must be rejected')
 const goodKey='sample-sha256-v1:123:'+ 'a'.repeat(64)
 assert.deepEqual(Object.keys(sanitizeOcrTileResumeMap({[goodKey]:validResume})), [goodKey])
+const compositeKey = 'sha256-v2:123:' + 'b'.repeat(64) + '|' + goodKey
+assert.deepEqual(Object.keys(sanitizeOcrTileResumeMap({[compositeKey]:validResume})), [compositeKey])
 assert.equal(Object.keys(sanitizeOcrTileResumeMap({'not-a-source-key':validResume})).length, 0)
 
 const fpA = await sourceFingerprint(new Blob([new Uint8Array([1,2,3,4,5])]))
@@ -130,6 +136,12 @@ const fpLonger = await sourceFingerprint(new Blob([new Uint8Array([1,2,3,4,5,0])
 assert.equal(fpA, fpB, 'same source must have stable fingerprint')
 assert.notEqual(fpA, fpChanged, 'content changes must alter source fingerprint')
 assert.notEqual(fpA, fpLonger, 'size changes must alter source fingerprint')
+assert.ok(fpA.startsWith('sha256-v2:'), 'ordinary files should use strong SHA-256 as primary fingerprint')
+assert.ok(fpA.includes('|sample-sha256-v1:'), 'ordinary files should retain the legacy sampled fingerprint alias')
+const legacyAlias = fpA.split('|')[1]
+assert.ok(legacyAlias)
+assert.equal(sourceIdsMatch(fpA, legacyAlias), true, 'composite fingerprints must match their legacy alias')
+assert.equal(sourceIdsMatch(legacyAlias, fpA), true, 'source alias matching must be symmetric')
 
 function near(actual, expected, tolerance = 1e-6) {
   assert.ok(Math.abs(actual - expected) <= tolerance, `expected ${actual} ≈ ${expected}`)
