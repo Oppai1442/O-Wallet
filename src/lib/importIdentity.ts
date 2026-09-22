@@ -116,3 +116,10 @@ export async function imageImportRecordId(sourceId: string, rowIds: string[]) {
   const hex = [...digest.slice(0, 16)].map((value) => value.toString(16).padStart(2, '0')).join('')
   return `ocr-${hex}`
 }
+
+export async function imageImportImageId(sourceId: string) {
+  const canonical = `owallet-image-v2-image|${canonicalSourceId(sourceId)}`
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical)))
+  const hex = [...digest.slice(0, 16)].map((value) => value.toString(16).padStart(2, '0')).join('')
+  return `ocr-image-${hex}`
+}
