@@ -57,6 +57,7 @@ const {
   chooseOcrTileHeight,
   dedupeTransactionBlocks,
   isCredibleTemplateMatch,
+  isOcrPatternQuarantined,
   isStrongTransactionBlock,
   ocrPatternReliability,
   sampleShape,
@@ -221,6 +222,9 @@ assert.ok(ocrPatternReliability(12, 1) > ocrPatternReliability(1, 12))
 assert.ok(ocrPatternReliability(100, 0) < 1)
 assert.ok(ocrPatternReliability(0, 100) > 0)
 near(ocrPatternReliability(Number.NaN, -5), 0.5)
+assert.equal(isOcrPatternQuarantined(0, 2), false)
+assert.equal(isOcrPatternQuarantined(0, 3), true)
+assert.equal(isOcrPatternQuarantined(5, 3), false)
 
 // Adaptive tile policy stays bounded and scales down for weak devices/wide/very long images.
 assert.equal(chooseOcrTileHeight(1080, 2400, 2), 1400)
