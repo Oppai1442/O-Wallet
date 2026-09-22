@@ -6,7 +6,7 @@ import { localizeError, useI18n } from '../i18n'
 import { accountCurrencies } from '../lib/accounts'
 import { findDuplicateTransaction } from '../lib/duplicates'
 import { sourceFingerprint } from '../lib/fileFingerprint'
-import { buildImageImportSemanticRowId, importSourcesMatch, sourceIdsMatch } from '../lib/importIdentity'
+import { buildImageImportSemanticRowId, imageImportRecordId, importSourcesMatch, sourceIdsMatch } from '../lib/importIdentity'
 import { sanitizeOcrTileResumeMap } from '../lib/ocrCheckpoint'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
 import {
@@ -821,10 +821,11 @@ export function ImageImportMode({
         }
         const now = new Date().toISOString()
         const batchId = freshSelected.length > 1 ? crypto.randomUUID() : undefined
-        const records: Transaction[] = freshSelected.map((draft, index) => {
+        const records: Transaction[] = await Promise.all(freshSelected.map(async (draft, index) => {
           const numericAmount = Number(draft.amount)
+          const sourceRowIds = draft.sourceRowIds?.length ? draft.sourceRowIds : draft.sourceRowId ? [draft.sourceRowId] : []
           return {
-            id: crypto.randomUUID(),
+            id: draft.sourceHash && sourceRowIds.length ? await imageImportRecordId(draft.sourceHash, sourceRowIds) : crypto.randomUUID(),
             type: draft.type,
             amount: numericAmount,
             currency: draft.currency,
@@ -844,7 +845,7 @@ export function ImageImportMode({
             updatedAt: now,
             deleted: false,
           }
-        })
+        }))
         pendingRecords = records
         await saveEntities(records)
       })
