@@ -772,7 +772,8 @@ export function ImageImportMode({
 
   async function upgradeLegacyTemplate() {
     if (!legacyTemplateId || !activeAnalysis || !activeLines.length || (!personalSettings && !onSaveTemplates)) return
-    const legacy = legacyTemplates.find((template) => template.id === legacyTemplateId)
+    await learningQueueRef.current.catch(() => undefined)
+    const legacy = sessionTemplatesRef.current.find((template) => template.id === legacyTemplateId && template.schemaVersion !== 2)
     if (!legacy) return
     const inferred = mapDetectedLinesToRegions(activeLines, legacy.regions) as Record<string, OcrField | ''>
     const semanticCount = Object.values(inferred).filter((field) => field && field !== 'generic' && field !== 'ignore').length
@@ -786,7 +787,7 @@ export function ImageImportMode({
       inferred,
       activePatternVisual,
     )
-    const nextTemplates = [...sessionTemplates, upgraded]
+    const nextTemplates = [...sessionTemplatesRef.current, upgraded]
     await persistTemplates(nextTemplates)
     setLineMappings(inferred)
     setPatternName(upgraded.name)
@@ -797,16 +798,17 @@ export function ImageImportMode({
 
   async function savePattern() {
     if ((!personalSettings && !onSaveTemplates) || !activeAnalysis || !activeLines.length || !patternName.trim()) return
+    await learningQueueRef.current.catch(() => undefined)
     const effectiveMappings = Object.values(lineMappings).some(Boolean)
       ? lineMappings
       : active ? mappingsFromCorrectedDraft(active, activeLines) : {}
     if (Object.values(effectiveMappings).filter(Boolean).length < 2) return
-    const existing = activeTemplate
+    const existing = active?.templateId ? sessionTemplatesRef.current.find((template) => template.id === active.templateId) : undefined
     const learned = buildPatternTemplate(patternName.trim(), activeLines, effectiveMappings, activePatternVisual, existing?.id)
     const effectiveTemplate = existing ? mergePatternTemplateEvidence(existing, learned) : learned
     const nextTemplates = existing
-      ? sessionTemplates.map((template) => template.id === existing.id ? effectiveTemplate : template)
-      : [...sessionTemplates, effectiveTemplate]
+      ? sessionTemplatesRef.current.map((template) => template.id === existing.id ? effectiveTemplate : template)
+      : [...sessionTemplatesRef.current, effectiveTemplate]
     await persistTemplates(nextTemplates)
     buildDraftsFromAnalyses(analyses, nextTemplates, false)
     setLineMappings({})
@@ -822,11 +824,14 @@ export function ImageImportMode({
 
   async function saveSelected() {
     if (!repository || saving) return
-    if (active && !reviewedIds.has(active.id)) {
-      const nextReviewed = new Set(reviewedIds)
+    if (active && !reviewedIdsRef.current.has(active.id)) {
+      const nextReviewed = new Set(reviewedIdsRef.current)
       nextReviewed.add(active.id)
+      reviewedIdsRef.current = nextReviewed
       setReviewedIds(nextReviewed)
-      try { await learnFromDraft(active, nextReviewed) } catch { /* saving the corrected draft remains authoritative */ }
+      try { await enqueueLearnFromDraft(active, nextReviewed) } catch { /* saving the corrected draft remains authoritative */ }
+    } else {
+      await learningQueueRef.current.catch(() => undefined)
     }
     const selected = drafts.filter((draft) => draft.selected)
     if (!selected.length) {
