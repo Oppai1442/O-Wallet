@@ -95,9 +95,9 @@ async function runScenario(name: string, cards: number, dark: boolean, jitter: n
   const ocr = await recognizeImageTiled(source.blob, undefined, {
     tileHeight: 900,
     overlap: 120,
-    retries: 1,
-    watchdogMs: 120000,
-    workerInitTimeoutMs: 45_000,
+    retries: 0,
+    watchdogMs: 35_000,
+    workerInitTimeoutMs: 30_000,
     languages: ['eng'],
   })
   const blocks = detectTransactionBlocks(ocr.result, ocr.width, ocr.height, undefined, ocr.visual)
@@ -134,7 +134,7 @@ export async function runOcrVisualE2E(root: HTMLElement) {
   root.replaceChildren(main)
   try {
     const scenarios = []
-    scenarios.push(await runScenario('tiled-light', 3, false, 12))
+    scenarios.push(await runScenario('tiled-light', 4, false, 12))
     window.__OWALLET_OCR_E2E__ = { status: 'pass', scenarios }
     const status = document.getElementById('status')
     if (status) status.textContent = 'PASS'
