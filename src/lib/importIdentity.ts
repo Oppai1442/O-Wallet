@@ -21,9 +21,16 @@ export function buildImageImportSemanticRowId(input: {
 
 import type { ExternalImportTrace } from '../types'
 
+function sourceIdAliases(sourceId: string) {
+  return new Set(sourceId.split('|').map((value) => value.trim()).filter(Boolean))
+}
+
 export function importSourcesMatch(left?: ExternalImportTrace, right?: ExternalImportTrace) {
   if (!left || !right) return false
-  if (left.adapterId !== right.adapterId || left.sourceId !== right.sourceId) return false
+  if (left.adapterId !== right.adapterId) return false
+  const leftSources = sourceIdAliases(left.sourceId)
+  const rightSources = sourceIdAliases(right.sourceId)
+  if (![...leftSources].some((source) => rightSources.has(source))) return false
 
   const leftRows = left.sourceRowIds ?? []
   const rightRows = right.sourceRowIds ?? []
