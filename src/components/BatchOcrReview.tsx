@@ -62,7 +62,11 @@ export function BatchOcrReview({ drafts, files, accounts, categories, catalogues
   const eligibleCategories = selectableCategories(categories, active.type)
   const selectedCount = drafts.filter((draft) => draft.selected).length
   const sourceCounts = new Map<number, number>()
-  for (const draft of drafts) sourceCounts.set(draft.fileIndex, (sourceCounts.get(draft.fileIndex) ?? 0) + 1)
+  const sourceOrder = new Map<number, number>()
+  for (const draft of drafts) {
+    sourceCounts.set(draft.fileIndex, (sourceCounts.get(draft.fileIndex) ?? 0) + 1)
+    if (!sourceOrder.has(draft.fileIndex)) sourceOrder.set(draft.fileIndex, sourceOrder.size + 1)
+  }
   const selectedAccount = accounts.find((account) => account.id === active.accountId)
   const currencies = selectedAccount ? accountCurrencies(selectedAccount) : []
   const patch = (values: Partial<BatchOcrDraft>) => onChange({ ...active, ...values })
@@ -137,7 +141,7 @@ export function BatchOcrReview({ drafts, files, accounts, categories, catalogues
         const file = files[draft.fileIndex]
         const activeRow = draft.id === active.id
         const showSourceHeader = index === 0 || drafts[index - 1]?.fileIndex !== draft.fileIndex
-        const sourceOrdinal = [...new Set(drafts.slice(0, index + 1).map((item) => item.fileIndex))].length
+        const sourceOrdinal = sourceOrder.get(draft.fileIndex) ?? draft.fileIndex + 1
         return <Fragment key={draft.id}>
           {showSourceHeader&&<div className="sticky top-0 z-10 rounded-lg bg-blue-50/95 px-2.5 py-1.5 text-[11px] font-semibold text-stone-600 backdrop-blur dark:bg-stone-900/95 dark:text-stone-300"><span>{t('batch.sourceGroup',{index:sourceOrdinal,count:sourceCounts.get(draft.fileIndex)??0})}</span><span className="ml-1 font-normal text-stone-400">· {file?.name ?? t('common.file')}</span></div>}
           <button type="button" aria-current={activeRow ? 'true' : undefined} aria-label={`${index + 1}. ${file?.name ?? t('common.file')}`} onClick={() => onActiveId(draft.id)} className={`grid w-full min-w-0 grid-cols-[52px_minmax(0,1fr)_auto] items-center gap-2 rounded-xl border p-2 text-left transition ${activeRow ? 'border-blue-500 bg-white shadow-sm dark:bg-stone-900' : 'border-stone-200 bg-white/70 hover:border-blue-300 dark:border-stone-700 dark:bg-stone-900/70'}`}><OcrSourceCrop file={files[draft.fileIndex]} bbox={draft.sourceBBox} sourceWidth={draft.sourceWidth} sourceHeight={draft.sourceHeight} className="h-12 w-12 rounded-lg" maxWidth={96} maxHeight={96}/><span className="min-w-0"><span className="block truncate text-xs font-bold text-stone-800 dark:text-stone-100">#{index + 1}</span><span className="mt-0.5 block truncate text-[11px] text-stone-500">{draft.amount || '—'} {draft.currency || ''} · {draft.merchant || t('transaction.noDescription')}</span></span><span className="flex flex-col items-end gap-1">{draft.conflict?.level === 'exact' ? <AlertTriangle size={15} className="text-rose-500"/> : draft.conflict || needsReview(draft) ? <AlertTriangle size={15} className="text-amber-500"/> : <CheckCircle2 size={15} className="text-emerald-500"/>}{!draft.selected && <SkipForward size={14} className="text-stone-400"/>}</span></button>
