@@ -56,6 +56,7 @@ async function getWorker(
   languages: string[] = ['vie', 'eng'],
   initTimeoutMs = 60_000,
   langPath?: string,
+  signal?: AbortSignal,
 ) {
   progressSink = onProgress
   const normalizedLanguages = [...new Set(languages.map((language) => language.trim()).filter(Boolean))].sort()
@@ -74,6 +75,7 @@ async function getWorker(
 
   const creating = workerPromise
   let timeoutId: ReturnType<typeof setTimeout> | undefined
+  let abortHandler: (() => void) | undefined
   try {
     return await Promise.race([
       creating,
@@ -83,10 +85,18 @@ async function getWorker(
           error.name = 'TimeoutError'
           reject(error)
         }, Math.max(10_000, initTimeoutMs))
+        if (signal) {
+          if (signal.aborted) {
+            reject(abortError())
+            return
+          }
+          abortHandler = () => reject(abortError())
+          signal.addEventListener('abort', abortHandler, { once: true })
+        }
       }),
     ])
   } catch (error) {
-    if ((error as Error)?.name === 'TimeoutError' && workerPromise === creating) {
+    if (((error as Error)?.name === 'TimeoutError' || (error as Error)?.name === 'AbortError') && workerPromise === creating) {
       workerPromise = undefined
       workerLanguagesKey = ''
       progressSink = undefined
@@ -95,6 +105,7 @@ async function getWorker(
     throw error
   } finally {
     if (timeoutId) clearTimeout(timeoutId)
+    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler)
   }
 }
 
@@ -149,7 +160,7 @@ export async function recognizeImage(
 ): Promise<OcrResult> {
   const signal = options?.signal
   if (signal?.aborted) throw abortError()
-  const worker = await getWorker(onProgress, options?.languages, options?.workerInitTimeoutMs, options?.langPath)
+  const worker = await getWorker(onProgress, options?.languages, options?.workerInitTimeoutMs, options?.langPath, signal)
   if (signal?.aborted) {
     await resetOcrWorker()
     throw abortError()
