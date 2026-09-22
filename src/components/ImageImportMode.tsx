@@ -6,7 +6,7 @@ import { localizeError, useI18n } from '../i18n'
 import { accountCurrencies } from '../lib/accounts'
 import { findDuplicateTransaction } from '../lib/duplicates'
 import { sourceFingerprint } from '../lib/fileFingerprint'
-import { buildImageImportSemanticRowId, importSourcesMatch } from '../lib/importIdentity'
+import { buildImageImportSemanticRowId, importSourcesMatch, sourceIdsMatch } from '../lib/importIdentity'
 import { sanitizeOcrTileResumeMap } from '../lib/ocrCheckpoint'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
 import {
@@ -199,16 +199,30 @@ export function ImageImportMode({
       setProgress(0)
 
       const checkpoint = await repository?.getEncryptedCheckpoint<ImageImportCheckpoint>(checkpointKey)
-      const indexByHash = new Map(hashes.map((hash, index) => [hash, index]))
+      const resolveHash = (storedHash?: string) => {
+        if (!storedHash) return undefined
+        const index = hashes.findIndex((hash) => sourceIdsMatch(hash, storedHash))
+        return index >= 0 ? { index, hash: hashes[index] } : undefined
+      }
       const restoredAnalyses = (checkpoint?.analyses ?? [])
-        .filter((analysis) => indexByHash.has(analysis.sourceHash))
-        .map((analysis) => ({ ...analysis, fileIndex: indexByHash.get(analysis.sourceHash)! }))
+        .map((analysis) => {
+          const resolved = resolveHash(analysis.sourceHash)
+          return resolved ? { ...analysis, fileIndex: resolved.index, sourceHash: resolved.hash } : undefined
+        })
+        .filter((analysis): analysis is SourceAnalysis => Boolean(analysis))
       const restoredDrafts = (checkpoint?.drafts ?? [])
-        .filter((draft) => Boolean(draft.sourceHash && indexByHash.has(draft.sourceHash)))
-        .map((draft) => ({ ...draft, fileIndex: indexByHash.get(draft.sourceHash!)! }))
+        .map((draft) => {
+          const resolved = resolveHash(draft.sourceHash)
+          return resolved ? { ...draft, fileIndex: resolved.index, sourceHash: resolved.hash } : undefined
+        })
+        .filter((draft): draft is BatchOcrDraft => Boolean(draft))
 
       const sanitizedPartial = sanitizeOcrTileResumeMap(checkpoint?.partialTiles)
-      const restoredPartial = Object.fromEntries(Object.entries(sanitizedPartial).filter(([hash]) => indexByHash.has(hash)))
+      const restoredPartial: Record<string, OcrTileResumeState> = {}
+      for (const [storedHash, state] of Object.entries(sanitizedPartial)) {
+        const resolved = resolveHash(storedHash)
+        if (resolved) restoredPartial[resolved.hash] = state
+      }
       setAnalyses(restoredAnalyses)
       setDrafts(restoredDrafts)
       setTileResumeByHash(restoredPartial)
