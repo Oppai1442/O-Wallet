@@ -17,6 +17,7 @@ import {
   packEncryptedPayload,
   randomBytes,
   unpackEncryptedPayload,
+import { importSourcesMatch } from './importIdentity'
 } from './crypto'
 import {
   createAnyoneReaderPermission,
@@ -1052,24 +1053,6 @@ function buildSharedTransaction(
   }
 }
 
-function sharedImportSourcesMatch(
-  left?: SharedTransaction['importSource'],
-  right?: SharedTransaction['importSource'],
-) {
-  if (!left || !right || left.adapterId !== right.adapterId || left.sourceId !== right.sourceId) return false
-  const leftRows = left.sourceRowIds ?? []
-  const rightRows = right.sourceRowIds ?? []
-  if (!leftRows.length || !rightRows.length) return false
-  const leftSemantic = leftRows.filter((id) => id.startsWith('sig:'))
-  const rightSemantic = rightRows.filter((id) => id.startsWith('sig:'))
-  if (leftSemantic.length && rightSemantic.length) {
-    const rightSet = new Set(rightSemantic)
-    return leftSemantic.some((id) => rightSet.has(id))
-  }
-  const rightSet = new Set(rightRows)
-  return leftRows.some((id) => rightSet.has(id))
-}
-
 async function withSharedFeedLock<T>(membership: SharedWalletMembership, task: () => Promise<T>) {
   const manager = typeof navigator !== 'undefined' ? navigator.locks : undefined
   if (!manager) return task()
@@ -1107,11 +1090,11 @@ export async function saveSharedTransactions(
         ? feed.transactions.find((tx) =>
           !tx.deleted
           && tx.id !== candidate.id
-          && sharedImportSourcesMatch(tx.importSource, candidate.importSource),
+          && importSourcesMatch(tx.importSource, candidate.importSource),
         )
         : undefined
       const acceptedImport = candidate.importSource
-        ? accepted.find((tx) => sharedImportSourcesMatch(tx.importSource, candidate.importSource))
+        ? accepted.find((tx) => importSourcesMatch(tx.importSource, candidate.importSource))
         : undefined
 
       if (existingImport) {
