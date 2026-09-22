@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { chromium } from 'playwright'
 import fs from 'node:fs/promises'
 
 const host = '127.0.0.1'
 const port = 4173
 const url = `http://${host}:${port}/`
-const preview = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'preview', '--', '--host', host, '--port', String(port)], {
+const preview = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', host, '--port', String(port)], {
   stdio: ['ignore', 'pipe', 'pipe'],
   env: process.env,
 })
@@ -66,6 +67,20 @@ try {
   process.exitCode = 1
 } finally {
   await browser?.close().catch(() => undefined)
-  preview.kill('SIGTERM')
-  setTimeout(() => preview.kill('SIGKILL'), 2000).unref()
+  if (preview.exitCode === null && preview.signalCode === null) {
+    preview.kill('SIGTERM')
+    await Promise.race([
+      once(preview, 'exit').then(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 2_000)),
+    ])
+  }
+  if (preview.exitCode === null && preview.signalCode === null) {
+    preview.kill('SIGKILL')
+    await Promise.race([
+      once(preview, 'exit').then(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 2_000)),
+    ])
+  }
+  preview.stdout?.destroy()
+  preview.stderr?.destroy()
 }
