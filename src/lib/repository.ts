@@ -10,6 +10,7 @@ import type {
   WalletEntity,
 } from '../types'
 import { decryptBytes, decryptJson, encryptBytes, encryptJson } from './crypto'
+import { decodeCheckpointValue, encodeCheckpointValue } from './checkpointCodec'
 import { assertJsonPayloadSize, reportDiagnostic, safeDownloadFilename, SECURITY_LIMITS, sniffRasterImageMime, validateImageFile } from './security'
 import { db, deleteKv, getDeviceId, getKv, setKv, syncQueueKey } from './db'
 import { accountCurrencies } from './accounts'
@@ -76,9 +77,13 @@ export class WalletRepository {
 
   async setEncryptedCheckpoint<T>(name: string, value: T) {
     if (!name || name.length > 128) throw new Error('error.invalidLocalSecret')
-    const clearBytes = new TextEncoder().encode(JSON.stringify(value))
-    if (clearBytes.byteLength > SECURITY_LIMITS.maxOcrCheckpointBytes) throw new Error('error.payloadTooLarge')
-    const payload = await encryptJson(this.key, value, `checkpoint:${name}`)
+    const clear = await encodeCheckpointValue(
+      value,
+      SECURITY_LIMITS.maxOcrCheckpointBytes,
+      SECURITY_LIMITS.maxOcrCheckpointClearBytes,
+    )
+    const payload = await encryptBytes(this.key, clear, `checkpoint:${name}`)
+    if (payload.ciphertext.byteLength > SECURITY_LIMITS.maxOcrCheckpointBytes + 64) throw new Error('error.payloadTooLarge')
     await setKv(`encrypted-checkpoint:${name}`, payload)
   }
 
@@ -87,7 +92,9 @@ export class WalletRepository {
     const payload = await getKv<EncryptedPayload>(`encrypted-checkpoint:${name}`)
     if (!payload) return undefined
     try {
-      return await decryptJson<T>(this.key, payload, `checkpoint:${name}`)
+      if (payload.ciphertext.byteLength > SECURITY_LIMITS.maxOcrCheckpointBytes + 64) throw new Error('error.payloadTooLarge')
+      const clear = await decryptBytes(this.key, payload, `checkpoint:${name}`)
+      return await decodeCheckpointValue<T>(clear, SECURITY_LIMITS.maxOcrCheckpointClearBytes)
     } catch (error) {
       reportDiagnostic(`checkpoint:${name}`, error)
       await deleteKv(`encrypted-checkpoint:${name}`)
