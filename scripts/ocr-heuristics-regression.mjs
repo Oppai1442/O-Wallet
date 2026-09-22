@@ -83,7 +83,7 @@ const {
 
 const { sourceFingerprint } = fingerprintModule
 const { sanitizeOcrTileResumeState, sanitizeOcrTileResumeMap } = checkpointModule
-const { buildImageImportBlockRowId, buildImageImportSemanticRowId, imageImportBlockFingerprint, imageImportRecordId, importSourcesMatch, sourceIdsMatch } = importIdentityModule
+const { buildImageImportBlockRowId, buildImageImportSemanticRowId, imageImportBlockFingerprint, imageImportImageId, imageImportRecordId, importSourcesMatch, sourceIdsMatch } = importIdentityModule
 const { decodeCheckpointValue, encodeCheckpointValue, isCompressedCheckpoint } = checkpointCodecModule
 
 const smallCheckpoint = { version: 2, drafts: [{ id: 'one', amount: '100000' }] }
@@ -178,6 +178,10 @@ const legacyAlias = fpA.split('|')[1]
 assert.ok(legacyAlias)
 assert.equal(sourceIdsMatch(fpA, legacyAlias), true, 'composite fingerprints must match their legacy alias')
 assert.equal(sourceIdsMatch(legacyAlias, fpA), true, 'source alias matching must be symmetric')
+const deterministicImageA = await imageImportImageId(fpA)
+const deterministicImageB = await imageImportImageId(legacyAlias)
+assert.equal(deterministicImageA, deterministicImageB, 'image ids must survive source fingerprint upgrades')
+assert.match(deterministicImageA, /^ocr-image-[a-f0-9]{32}$/)
 assert.equal(importSourcesMatch(
   {adapterId:'owallet-image-v2',sourceId:legacyAlias,sourceRowIds:['row:1']},
   {adapterId:'owallet-image-v2',sourceId:fpA,sourceRowIds:['row:1']},
