@@ -168,6 +168,15 @@ export function ImageImportMode({
   const activeTemplate = active?.templateId ? sessionTemplates.find((item) => item.id === active.templateId) : undefined
   const legacyTemplates = sessionTemplates.filter((template) => template.schemaVersion !== 2 && template.enabled !== false && template.regions.length)
 
+  const activePatternVisual = useMemo(() => {
+    if (!activeAnalysis) return undefined
+    if (!active?.sourceBBox?.width || !active.sourceBBox.height) return activeAnalysis.visual
+    return {
+      ...activeAnalysis.visual,
+      aspectRatio: active.sourceBBox.width / Math.max(1, active.sourceBBox.height),
+    }
+  }, [active?.sourceBBox?.height, active?.sourceBBox?.width, activeAnalysis])
+
   const activeLines = useMemo(() => {
     if (!active || !activeAnalysis || !active.sourceBBox) return [] as OcrDetectedLine[]
     const box = active.sourceBBox
@@ -692,7 +701,7 @@ export function ImageImportMode({
     const mappings = mappingsFromCorrectedDraft(draft, activeLines)
     const mappedFields = Object.values(mappings).filter((field): field is OcrField => Boolean(field))
     if (!canAutoLearnTemplate(activeAnalysis.templateScore, mappedFields)) return
-    const learned = buildPatternTemplate(activeTemplate.name, activeLines, mappings, activeAnalysis.visual, activeTemplate.id)
+    const learned = buildPatternTemplate(activeTemplate.name, activeLines, mappings, activePatternVisual, activeTemplate.id)
     const merged = mergePatternTemplateEvidence(activeTemplate, learned, { lines: activeLines, mappings })
     const nextTemplates = sessionTemplates.map((template) => template.id === merged.id ? merged : template)
     await persistTemplates(nextTemplates)
@@ -726,7 +735,7 @@ export function ImageImportMode({
       t('imageImport.legacyUpgradeName', { name: legacy.name }),
       activeLines,
       inferred,
-      activeAnalysis.visual,
+      activePatternVisual,
     )
     const nextTemplates = [...sessionTemplates, upgraded]
     await persistTemplates(nextTemplates)
@@ -744,7 +753,7 @@ export function ImageImportMode({
       : active ? mappingsFromCorrectedDraft(active, activeLines) : {}
     if (Object.values(effectiveMappings).filter(Boolean).length < 2) return
     const existing = activeTemplate
-    const learned = buildPatternTemplate(patternName.trim(), activeLines, effectiveMappings, activeAnalysis.visual, existing?.id)
+    const learned = buildPatternTemplate(patternName.trim(), activeLines, effectiveMappings, activePatternVisual, existing?.id)
     const effectiveTemplate = existing ? mergePatternTemplateEvidence(existing, learned) : learned
     const nextTemplates = existing
       ? sessionTemplates.map((template) => template.id === existing.id ? effectiveTemplate : template)
