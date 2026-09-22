@@ -17,8 +17,8 @@ import {
   packEncryptedPayload,
   randomBytes,
   unpackEncryptedPayload,
-import { importSourcesMatch } from './importIdentity'
 } from './crypto'
+import { importSourcesMatch } from './importIdentity'
 import {
   createAnyoneReaderPermission,
   createDriveFolder,
