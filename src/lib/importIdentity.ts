@@ -50,3 +50,24 @@ export function importSourcesMatch(left?: ExternalImportTrace, right?: ExternalI
   const rightSet = new Set(rightRows)
   return leftRows.some((id) => rightSet.has(id))
 }
+
+function canonicalSourceId(sourceId: string) {
+  const aliases = [...sourceIdAliases(sourceId)]
+  return aliases.find((value) => value.startsWith('sample-sha256-v1:'))
+    ?? aliases.find((value) => value.startsWith('sha256-v2:'))
+    ?? aliases.sort()[0]
+    ?? sourceId
+}
+
+function canonicalRowId(rowIds: string[]) {
+  const semantic = rowIds.filter((id) => id.startsWith('sig:')).sort()
+  if (semantic.length) return semantic[0]
+  return [...rowIds].sort()[0] ?? 'row:unknown'
+}
+
+export async function imageImportRecordId(sourceId: string, rowIds: string[]) {
+  const canonical = `owallet-image-v2|${canonicalSourceId(sourceId)}|${canonicalRowId(rowIds)}`
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical)))
+  const hex = [...digest.slice(0, 16)].map((value) => value.toString(16).padStart(2, '0')).join('')
+  return `ocr-${hex}`
+}
