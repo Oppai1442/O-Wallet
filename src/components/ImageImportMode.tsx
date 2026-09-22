@@ -607,7 +607,6 @@ export function ImageImportMode({
       occurredAt: normalizedDraft.occurredAt ? fromLocalInputDateTime(normalizedDraft.occurredAt) : undefined,
       merchant: normalizedDraft.merchant.trim() || undefined,
       description: normalizedDraft.description.trim() || undefined,
-      rawText: normalizedDraft.rawText,
     })
     const sourceRowIds = correctedSemanticId ? [...ordinalSourceIds, correctedSemanticId] : ordinalSourceIds
     normalizedDraft.sourceRowIds = sourceRowIds
