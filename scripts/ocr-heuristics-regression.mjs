@@ -116,6 +116,14 @@ assert.equal(importSourcesMatch(
   {...importBase,sourceRowIds:['row:8','sig:expense:100:2026-09-21T10:00:00.000Z:cafe']},
 ), true, 'matching semantic signatures must survive row reordering')
 assert.equal(importSourcesMatch(
+  {...importBase,sourceRowIds:['row:1','sig:expense:100:2026-09-21T10:00:00.000Z:cafe','occ:0']},
+  {...importBase,sourceRowIds:['row:8','sig:expense:100:2026-09-21T10:00:00.000Z:cafe','occ:1']},
+), false, 'identical semantic rows with different occurrences must stay distinct')
+assert.equal(importSourcesMatch(
+  {...importBase,sourceRowIds:['sig:expense:100:2026-09-21T10:00:00.000Z:cafe']},
+  {...importBase,sourceRowIds:['row:8','sig:expense:100:2026-09-21T10:00:00.000Z:cafe','occ:1']},
+), true, 'legacy semantic identities without occurrence remain backward compatible')
+assert.equal(importSourcesMatch(
   {...importBase,sourceRowIds:['row:1']},
   {...importBase,sourceRowIds:['row:1','sig:expense:100:2026-09-21T10:00:00.000Z:cafe']},
 ), true, 'legacy ordinal identities remain backward compatible')
@@ -167,6 +175,11 @@ const deterministicB = await imageImportRecordId(legacyAlias, [...deterministicR
 assert.equal(deterministicA, deterministicB, 'record ids must survive fingerprint upgrades and row ordering')
 assert.match(deterministicA, /^ocr-[a-f0-9]{32}$/)
 assert.notEqual(deterministicA, await imageImportRecordId(fpA, ['sig:expense:200000:2026-09-21T10:00:00.000Z:cafe']))
+assert.notEqual(
+  await imageImportRecordId(fpA, ['sig:expense:100000:2026-09-21T10:00:00.000Z:cafe','occ:0']),
+  await imageImportRecordId(fpA, ['sig:expense:100000:2026-09-21T10:00:00.000Z:cafe','occ:1']),
+  'occurrence must disambiguate otherwise identical imported transactions',
+)
 
 function near(actual, expected, tolerance = 1e-6) {
   assert.ok(Math.abs(actual - expected) <= tolerance, `expected ${actual} ≈ ${expected}`)
