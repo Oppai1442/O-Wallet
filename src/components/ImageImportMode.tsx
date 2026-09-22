@@ -19,12 +19,12 @@ import {
   rankOcrTemplates,
   recognizeImageTiled,
 } from '../lib/ocr'
-import { bboxOverlapRatio, canAutoLearnTemplate, isCredibleTemplateMatch, OCR_HEURISTIC_THRESHOLDS } from '../lib/ocrHeuristics'
+import { bboxOverlapRatio, canAutoLearnTemplate, isCredibleTemplateMatch, mapDetectedLinesToRegions, OCR_HEURISTIC_THRESHOLDS } from '../lib/ocrHeuristics'
 import { findMatchingTransactionRule } from '../lib/rules'
 import { selectableCategories } from '../lib/categories'
 import { validateImageBatch } from '../lib/security'
 import { BatchOcrReview, type BatchOcrDraft } from './BatchOcrReview'
-import { Button, Input } from './ui'
+import { Button, Input, Select } from './ui'
 import { OcrTeachingPanel } from './OcrTeachingPanel'
 
 interface SourceAnalysis {
@@ -129,6 +129,7 @@ export function ImageImportMode({
   const [status, setStatus] = useState('')
   const [error, setError] = useState<string>()
   const [patternName, setPatternName] = useState('')
+  const [legacyTemplateId, setLegacyTemplateId] = useState('')
   const [lineMappings, setLineMappings] = useState<Record<string, OcrField | ''>>({})
   const [sessionTemplates, setSessionTemplates] = useState<OcrTemplate[]>(settings?.ocrTemplates ?? [])
   const [reviewedIds, setReviewedIds] = useState<Set<string>>(() => new Set())
@@ -165,6 +166,7 @@ export function ImageImportMode({
   const active = drafts.find((draft) => draft.id === activeId) ?? drafts[0]
   const activeAnalysis = active ? analyses.find((item) => item.fileIndex === active.fileIndex) : undefined
   const activeTemplate = active?.templateId ? sessionTemplates.find((item) => item.id === active.templateId) : undefined
+  const legacyTemplates = sessionTemplates.filter((template) => template.schemaVersion !== 2 && template.enabled !== false && template.regions.length)
 
   const activeLines = useMemo(() => {
     if (!active || !activeAnalysis || !active.sourceBBox) return [] as OcrDetectedLine[]
@@ -675,6 +677,31 @@ export function ImageImportMode({
     void persistCheckpoint(analyses, drafts, new Set([...reviewedIds, ...(current ? [current.id] : [])]), nextId)
   }
 
+  async function upgradeLegacyTemplate() {
+    if (!legacyTemplateId || !activeAnalysis || !activeLines.length || (!personalSettings && !onSaveTemplates)) return
+    const legacy = legacyTemplates.find((template) => template.id === legacyTemplateId)
+    if (!legacy) return
+    const inferred = mapDetectedLinesToRegions(activeLines, legacy.regions) as Record<string, OcrField | ''>
+    const semanticCount = Object.values(inferred).filter((field) => field && field !== 'generic' && field !== 'ignore').length
+    if (semanticCount < 2) {
+      setError(t('imageImport.legacyUpgradeFailed'))
+      return
+    }
+    const upgraded = buildPatternTemplate(
+      t('imageImport.legacyUpgradeName', { name: legacy.name }),
+      activeLines,
+      inferred,
+      activeAnalysis.visual,
+    )
+    const nextTemplates = [...sessionTemplates, upgraded]
+    await persistTemplates(nextTemplates)
+    setLineMappings(inferred)
+    setPatternName(upgraded.name)
+    setLegacyTemplateId('')
+    buildDraftsFromAnalyses(analyses, nextTemplates, false)
+    setError(undefined)
+  }
+
   async function savePattern() {
     if ((!personalSettings && !onSaveTemplates) || !activeAnalysis || !activeLines.length || !patternName.trim()) return
     const effectiveMappings = Object.values(lineMappings).some(Boolean)
@@ -848,6 +875,7 @@ export function ImageImportMode({
       <summary className="cursor-pointer list-none"><div className="flex items-center gap-2 font-bold text-stone-800 dark:text-stone-100"><BrainCircuit size={18} className="text-blue-500"/>{t('imageImport.patternTitle')}</div><p className="mt-1 text-xs leading-5 text-stone-500">{activeTemplate?t('imageImport.templateMatched',{name:activeTemplate.name}):t('imageImport.templateNone')}</p></summary>
       <div className="mt-4 space-y-3">
         <p className="text-xs leading-5 text-stone-500">{t('imageImport.patternHint')}</p>
+        {legacyTemplates.length>0&&<div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-500/20 dark:bg-amber-500/5"><div className="text-xs font-bold text-amber-800 dark:text-amber-200">{t('imageImport.legacyUpgrade')}</div><p className="mt-1 text-[11px] leading-5 text-amber-700/80 dark:text-amber-200/70">{t('imageImport.legacyUpgradeHint')}</p><div className="mt-2 flex flex-col gap-2 sm:flex-row"><Select value={legacyTemplateId} onChange={(event)=>setLegacyTemplateId(event.target.value)}><option value="">{t('imageImport.legacySelect')}</option>{legacyTemplates.map((template)=><option key={template.id} value={template.id}>{template.name}</option>)}</Select><Button variant="secondary" disabled={!legacyTemplateId} onClick={()=>void upgradeLegacyTemplate()}>{t('imageImport.legacyUpgradeAction')}</Button></div></div>}
         <OcrTeachingPanel lines={activeLines} mappings={lineMappings} onMap={(line,field)=>setLineMappings((current)=>({...current,[line.id]:field}))}/>
         <div className="flex flex-col gap-2 sm:flex-row"><Input value={patternName} onChange={(event)=>setPatternName(event.target.value)} placeholder={t('imageImport.patternName')}/><Button variant="secondary" onClick={()=>void savePattern()} disabled={!patternName.trim()||Object.values(lineMappings).filter(Boolean).length<2}><BrainCircuit size={17}/>{t('imageImport.savePattern')}</Button></div>
       </div>
