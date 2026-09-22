@@ -435,11 +435,14 @@ export function ImageImportMode({
       analysis.templateScore = matched.score
       analysis.templateAnchorScore = matched.anchorScore
       analysis.templateVisualScore = matched.visualScore
+      const semanticOccurrences = new Map<string, number>()
       for (let blockIndex = 0; blockIndex < matched.blocks.length; blockIndex += 1) {
         const block = matched.blocks[blockIndex]
         const sourceRowId = `row:${blockIndex}`
         const semanticId = buildImageImportSemanticRowId(block.candidate)
-        const sourceRowIds = semanticId ? [sourceRowId, semanticId] : [sourceRowId]
+        const occurrence = semanticId ? (semanticOccurrences.get(semanticId) ?? 0) : undefined
+        if (semanticId) semanticOccurrences.set(semanticId, occurrence! + 1)
+        const sourceRowIds = semanticId ? [sourceRowId, semanticId, `occ:${occurrence}`] : [sourceRowId]
         const nextDraft = resolveDraft(analysis.fileIndex, block, analysis.width, analysis.height, candidates, analysis.sourceHash, sourceRowId, sourceRowIds)
         const exactOld = drafts.find((draft) => draft.id === nextDraft.id)
         const overlapOld = exactOld ?? drafts
