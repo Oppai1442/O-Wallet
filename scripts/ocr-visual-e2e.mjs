@@ -34,12 +34,26 @@ try {
   page.on('pageerror', (error) => console.error('[browser:error]', error))
 
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 })
-  await page.waitForFunction(() => {
-    const state = window.__OWALLET_OCR_E2E__
-    return state && state.status !== 'running'
-  }, undefined, { timeout: 8 * 60_000 })
+  await page.waitForFunction(() => Boolean(window.__OWALLET_OCR_E2E__), undefined, { timeout: 15_000 })
+
+  const deadline = Date.now() + 3 * 60_000
+  let lastPhase = ''
+  while (Date.now() < deadline) {
+    const state = await page.evaluate(() => window.__OWALLET_OCR_E2E__)
+    if (!state) throw new Error('OCR visual harness disappeared after initialization')
+    const phase = `${state.phase ?? ''}|${Math.round((state.progress ?? 0) * 100)}`
+    if (phase !== lastPhase) {
+      lastPhase = phase
+      console.log(`[ocr-e2e] ${state.status} phase=${state.phase ?? 'unknown'} progress=${Math.round((state.progress ?? 0) * 100)}%`)
+    }
+    if (state.status !== 'running') break
+    await new Promise((resolve) => setTimeout(resolve, 2_000))
+  }
 
   const result = await page.evaluate(() => window.__OWALLET_OCR_E2E__)
+  if (result?.status === 'running') {
+    throw new Error(`OCR visual harness exceeded 3 minutes at phase=${result.phase ?? 'unknown'} progress=${Math.round((result.progress ?? 0) * 100)}%`)
+  }
   console.log(JSON.stringify(result, null, 2))
   if (!result || result.status !== 'pass') {
     await page.screenshot({ path: 'ocr-visual-e2e-failure.png', fullPage: true })
