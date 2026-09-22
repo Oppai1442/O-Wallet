@@ -25,7 +25,7 @@ import { mapDetectedLinesToRegions } from '../lib/ocrHeuristics'
 import { findMatchingTransactionRule } from '../lib/rules'
 import { combineLocalDateAndTime, localDateKeyFromInputDateTime, localTimeFromInputDateTime, localWeekday, recurringDateKeys } from '../lib/scheduling'
 import { validateImageBatch } from '../lib/security'
-import { saveSharedTransaction, saveSharedTransactions } from '../lib/sharedWallet'
+import { saveSharedTransaction, saveSharedTransactions, type SharedTransactionInput } from '../lib/sharedWallet'
 import { sharedTransactionsAsPersonalShape } from '../lib/sharedLedger'
 import { AccountSelect } from './AccountSelect'
 import { BatchOcrReview, type BatchOcrDraft } from './BatchOcrReview'
@@ -446,7 +446,7 @@ export function SharedProfileTransactionModal({
     if (!googleSession) throw new Error('error.sharedSaveFailed')
     const now = new Date().toISOString()
     const batchId = drafts.length > 1 ? crypto.randomUUID() : undefined
-    const records = await Promise.all(drafts.map(async (draft, index) => {
+    const records = await Promise.all(drafts.map(async (draft, index): Promise<SharedTransactionInput> => {
       const sourceRowIds = draft.sourceRowIds?.length ? draft.sourceRowIds : draft.sourceRowId ? [draft.sourceRowId] : []
       return {
       id: draft.sourceHash && sourceRowIds.length ? await imageImportRecordId(draft.sourceHash, sourceRowIds) : crypto.randomUUID(),
