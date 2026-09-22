@@ -826,8 +826,8 @@ function candidateValueFromLine(line: string, pattern: OcrFieldPattern) {
   return stripFieldLabel(line, pattern.field)
 }
 
-function findPatternLine(lines: OcrDetectedLine[], pattern: OcrFieldPattern) {
-  if (isOcrPatternQuarantined(pattern.successes, pattern.failures)) return undefined
+function findPatternLine(lines: OcrDetectedLine[], pattern: OcrFieldPattern, ignoreQuarantine = false) {
+  if (!ignoreQuarantine && isOcrPatternQuarantined(pattern.successes, pattern.failures)) return undefined
   const reliability = ocrPatternReliability(pattern.successes, pattern.failures)
   const anchors = pattern.anchorTexts?.length ? pattern.anchorTexts : pattern.anchorText ? [pattern.anchorText] : []
   if (anchors.length) {
