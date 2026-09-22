@@ -48,7 +48,11 @@ export async function terminateOcrWorker() {
   await resetOcrWorker()
 }
 
-async function getWorker(onProgress?: (progress: number, status: string) => void, languages: string[] = ['vie', 'eng']) {
+async function getWorker(
+  onProgress?: (progress: number, status: string) => void,
+  languages: string[] = ['vie', 'eng'],
+  initTimeoutMs = 60_000,
+) {
   progressSink = onProgress
   const normalizedLanguages = [...new Set(languages.map((language) => language.trim()).filter(Boolean))].sort()
   const effectiveLanguages = normalizedLanguages.length ? normalizedLanguages : ['eng']
@@ -62,7 +66,31 @@ async function getWorker(onProgress?: (progress: number, status: string) => void
       },
     }))
   }
-  return workerPromise
+
+  const creating = workerPromise
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      creating,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          const error = new Error('OCR worker initialization timeout')
+          error.name = 'TimeoutError'
+          reject(error)
+        }, Math.max(10_000, initTimeoutMs))
+      }),
+    ])
+  } catch (error) {
+    if ((error as Error)?.name === 'TimeoutError' && workerPromise === creating) {
+      workerPromise = undefined
+      workerLanguagesKey = ''
+      progressSink = undefined
+      void creating.then((worker) => worker.terminate()).catch(() => undefined)
+    }
+    throw error
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
 }
 
 function collectWords(blocks: unknown): OcrBox[] {
@@ -112,11 +140,11 @@ function collectWords(blocks: unknown): OcrBox[] {
 export async function recognizeImage(
   image: File | Blob,
   onProgress?: (progress: number, status: string) => void,
-  options?: { signal?: AbortSignal; timeoutMs?: number; languages?: string[] },
+  options?: { signal?: AbortSignal; timeoutMs?: number; workerInitTimeoutMs?: number; languages?: string[] },
 ): Promise<OcrResult> {
   const signal = options?.signal
   if (signal?.aborted) throw abortError()
-  const worker = await getWorker(onProgress, options?.languages)
+  const worker = await getWorker(onProgress, options?.languages, options?.workerInitTimeoutMs)
   if (signal?.aborted) {
     await resetOcrWorker()
     throw abortError()
@@ -310,6 +338,7 @@ export async function recognizeImageTiled(
     resumeState?: OcrTileResumeState
     onTileCheckpoint?: (state: OcrTileResumeState) => void | Promise<void>
     languages?: string[]
+    workerInitTimeoutMs?: number
   },
 ): Promise<{ result: OcrResult; width: number; height: number; visual: OcrVisualFingerprint; diagnostics: OcrRuntimeDiagnostics }> {
   const startedAt = new Date().toISOString()
@@ -328,7 +357,7 @@ export async function recognizeImageTiled(
     let lastError: unknown
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       try {
-        result = await recognizeImage(image, onProgress, { signal: options?.signal, timeoutMs: watchdogMs, languages: options?.languages })
+        result = await recognizeImage(image, onProgress, { signal: options?.signal, timeoutMs: watchdogMs, languages: options?.languages, workerInitTimeoutMs: options?.workerInitTimeoutMs })
         break
       } catch (error) {
         if ((error as Error)?.name === 'AbortError') throw error
@@ -435,7 +464,7 @@ export async function recognizeImageTiled(
         try {
           result = await recognizeImage(tile, (progress, status) => {
             onProgress?.((index + progress) / starts.length, `${index + 1}/${starts.length} · ${status}`)
-          }, { signal: options?.signal, timeoutMs: watchdogMs, languages: options?.languages })
+          }, { signal: options?.signal, timeoutMs: watchdogMs, languages: options?.languages, workerInitTimeoutMs: options?.workerInitTimeoutMs })
           break
         } catch (error) {
           if ((error as Error)?.name === 'AbortError') throw error
