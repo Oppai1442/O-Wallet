@@ -2,7 +2,7 @@ function hex(bytes: Uint8Array) {
   return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('')
 }
 
-async function legacySampleFingerprint(blob: Blob) {
+async function legacySampleFingerprint(blob: Blob, fullBytes?: Uint8Array) {
   const chunk = 1024 * 1024
   const points = blob.size <= chunk * 3
     ? [[0, blob.size]]
@@ -15,7 +15,9 @@ async function legacySampleFingerprint(blob: Blob) {
   const parts: Uint8Array[] = []
   let total = 16
   for (const [start, end] of points) {
-    const bytes = new Uint8Array(await blob.slice(start, end).arrayBuffer())
+    const bytes = fullBytes
+      ? fullBytes.slice(start, end)
+      : new Uint8Array(await blob.slice(start, end).arrayBuffer())
     parts.push(bytes)
     total += bytes.byteLength
   }
@@ -37,11 +39,14 @@ async function legacySampleFingerprint(blob: Blob) {
 }
 
 export async function sourceFingerprint(blob: Blob) {
-  const legacy = await legacySampleFingerprint(blob)
   const fullHashLimit = 16 * 1024 * 1024
-  if (blob.size > fullHashLimit) return legacy
+  if (blob.size > fullHashLimit) return legacySampleFingerprint(blob)
 
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()))
-  const strong = `sha256-v2:${blob.size}:${hex(digest)}`
+  const fullBytes = new Uint8Array(await blob.arrayBuffer())
+  const [legacy, fullDigest] = await Promise.all([
+    legacySampleFingerprint(blob, fullBytes),
+    crypto.subtle.digest('SHA-256', fullBytes),
+  ])
+  const strong = `sha256-v2:${blob.size}:${hex(new Uint8Array(fullDigest))}`
   return `${strong}|${legacy}`
 }
