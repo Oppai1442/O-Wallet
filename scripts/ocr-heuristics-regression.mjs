@@ -79,7 +79,13 @@ const {
 
 const { sourceFingerprint } = fingerprintModule
 const { sanitizeOcrTileResumeState, sanitizeOcrTileResumeMap } = checkpointModule
-const { importSourcesMatch } = importIdentityModule
+const { buildImageImportSemanticRowId, importSourcesMatch } = importIdentityModule
+
+const canonicalSigA = buildImageImportSemanticRowId({type:'expense',amount:100000,occurredAt:'2026-09-21T10:00:00.000Z',merchant:'  Nguyễn   Văn A '})
+const canonicalSigB = buildImageImportSemanticRowId({type:'expense',amount:100000.0,occurredAt:'2026-09-21T10:00:00.000Z',merchant:'nguyễn văn a'})
+assert.equal(canonicalSigA, canonicalSigB, 'semantic row signatures should canonicalize case and whitespace')
+assert.notEqual(canonicalSigA, buildImageImportSemanticRowId({type:'expense',amount:200000,occurredAt:'2026-09-21T10:00:00.000Z',merchant:'nguyễn văn a'}))
+assert.notEqual(canonicalSigA, buildImageImportSemanticRowId({type:'expense',amount:100000,occurredAt:'2026-09-21T10:01:00.000Z',merchant:'nguyễn văn a'}))
 
 const importBase = { adapterId:'owallet-image-v2', sourceId:'sample-sha256-v1:10:' + 'a'.repeat(64) }
 assert.equal(importSourcesMatch(
