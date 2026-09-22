@@ -240,18 +240,14 @@ export function ImageImportMode({
         const index = hashes.findIndex((hash) => sourceIdsMatch(hash, storedHash))
         return index >= 0 ? { index, hash: hashes[index] } : undefined
       }
-      const restoredAnalyses = (checkpoint?.analyses ?? [])
-        .map((analysis) => {
-          const resolved = resolveHash(analysis.sourceHash)
-          return resolved ? { ...analysis, fileIndex: resolved.index, sourceHash: resolved.hash } : undefined
-        })
-        .filter((analysis): analysis is SourceAnalysis => Boolean(analysis))
-      const restoredDrafts = (checkpoint?.drafts ?? [])
-        .map((draft) => {
-          const resolved = resolveHash(draft.sourceHash)
-          return resolved ? { ...draft, fileIndex: resolved.index, sourceHash: resolved.hash } : undefined
-        })
-        .filter((draft): draft is BatchOcrDraft => Boolean(draft))
+      const restoredAnalyses = (checkpoint?.analyses ?? []).flatMap((analysis): SourceAnalysis[] => {
+        const resolved = resolveHash(analysis.sourceHash)
+        return resolved ? [{ ...analysis, fileIndex: resolved.index, sourceHash: resolved.hash }] : []
+      })
+      const restoredDrafts = (checkpoint?.drafts ?? []).flatMap((draft): BatchOcrDraft[] => {
+        const resolved = resolveHash(draft.sourceHash)
+        return resolved ? [{ ...draft, fileIndex: resolved.index, sourceHash: resolved.hash }] : []
+      })
 
       const sanitizedPartial = sanitizeOcrTileResumeMap(checkpoint?.partialTiles)
       const restoredPartial: Record<string, OcrTileResumeState> = {}
