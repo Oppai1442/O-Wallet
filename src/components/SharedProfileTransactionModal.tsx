@@ -75,6 +75,15 @@ export function SharedProfileTransactionModal({
   const { googleSession, settings: personalSettings, repository } = useWallet()
   const { t, locale } = useI18n()
   const adaptedSettings = profileSettings(ledger, personalSettings)
+  const voiceSettings: AppSettings | undefined = personalSettings ? {
+    ...personalSettings,
+    defaultCurrency: ledger.defaultCurrency,
+    accountCatalogues: ledger.accountCatalogues,
+    transactionRules: ledger.transactionRules,
+    ocrTemplates: ledger.ocrTemplates ?? [],
+    transactionDefaults: ledger.transactionDefaults,
+    voiceInput: ledger.voiceInput ?? personalSettings.voiceInput,
+  } : undefined
   const editing = Boolean(transaction)
   const [type, setType] = useState<TransactionType>(transaction?.type ?? 'expense')
   const [amount, setAmount] = useState(transaction ? String(transaction.amount) : '')
@@ -570,9 +579,9 @@ export function SharedProfileTransactionModal({
       </>}
     </div>
 
-    {showVoice && <VoiceEntry
+    {showVoice && voiceSettings && <VoiceEntry
       initial={voiceDraft}
-      settings={adaptedSettings}
+      settings={voiceSettings}
       accounts={activeAccounts}
       categories={activeCategories}
       onClose={() => setShowVoice(false)}
