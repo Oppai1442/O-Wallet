@@ -256,7 +256,9 @@ export function ImageImportMode({
       setAnalyses(restoredAnalyses)
       setDrafts(restoredDrafts)
       setTileResumeByHash(restoredPartial)
-      setReviewedIds(new Set((checkpoint?.reviewedIds ?? []).filter((id) => restoredDrafts.some((draft) => draft.id === id))))
+      const restoredReviewed = new Set((checkpoint?.reviewedIds ?? []).filter((id) => restoredDrafts.some((draft) => draft.id === id)))
+      reviewedIdsRef.current = restoredReviewed
+      setReviewedIds(restoredReviewed)
       setActiveId(restoredDrafts.some((draft) => draft.id === checkpoint?.activeId) ? checkpoint?.activeId : restoredDrafts[0]?.id)
       setCheckpointAvailable(Boolean(restoredAnalyses.length || restoredDrafts.length || Object.keys(restoredPartial).length))
       setStatus(restoredAnalyses.length ? t('imageImport.resumeRestored',{count:restoredAnalyses.length}) : '')
@@ -604,13 +606,11 @@ export function ImageImportMode({
       || previous.balanceAfter !== next.balanceAfter
       || previous.description !== next.description
     ))
-    if (feedbackChanged) {
-      setReviewedIds((current) => {
-        if (!current.has(next.id)) return current
-        const updated = new Set(current)
-        updated.delete(next.id)
-        return updated
-      })
+    if (feedbackChanged && reviewedIdsRef.current.has(next.id)) {
+      const updatedReviewed = new Set(reviewedIdsRef.current)
+      updatedReviewed.delete(next.id)
+      reviewedIdsRef.current = updatedReviewed
+      setReviewedIds(updatedReviewed)
     }
     const compatibleCategories = selectableCategories(categories, next.type)
     const account = accounts.find((item) => item.id === next.accountId)
@@ -715,36 +715,56 @@ export function ImageImportMode({
   }
 
   async function persistTemplates(next: OcrTemplate[]) {
-    if (onSaveTemplates) {
-      await onSaveTemplates(next)
-    } else {
-      if (!personalSettings) return
-      const now = new Date().toISOString()
-      await saveEntity({ ...personalSettings, ocrTemplates: next, updatedAt: now })
+    const previous = sessionTemplatesRef.current
+    sessionTemplatesRef.current = next
+    try {
+      if (onSaveTemplates) {
+        await onSaveTemplates(next)
+      } else {
+        if (!personalSettings) return
+        const now = new Date().toISOString()
+        await saveEntity({ ...personalSettings, ocrTemplates: next, updatedAt: now })
+      }
+      setSessionTemplates(next)
+    } catch (persistError) {
+      if (sessionTemplatesRef.current === next) sessionTemplatesRef.current = previous
+      throw persistError
     }
-    setSessionTemplates(next)
   }
 
-  async function learnFromDraft(draft: BatchOcrDraft, preserveIds = reviewedIds) {
-    if (!draft.templateId || !activeAnalysis || !activeTemplate || !activeLines.length || (!personalSettings && !onSaveTemplates)) return
-    const mappings = mappingsFromCorrectedDraft(draft, activeLines)
+  async function learnFromDraft(draft: BatchOcrDraft, preserveIds = reviewedIdsRef.current) {
+    if (!draft.templateId || (!personalSettings && !onSaveTemplates)) return
+    const analysis = analyses.find((item) => item.fileIndex === draft.fileIndex)
+    const template = sessionTemplatesRef.current.find((item) => item.id === draft.templateId)
+    const lines = detectedLinesForDraft(draft, analysis)
+    if (!analysis || !template || !lines.length) return
+    const mappings = mappingsFromCorrectedDraft(draft, lines)
     const mappedFields = Object.values(mappings).filter((field): field is OcrField => Boolean(field))
-    if (!canAutoLearnTemplate(activeAnalysis.templateScore, mappedFields)) return
-    const learned = buildPatternTemplate(activeTemplate.name, activeLines, mappings, activePatternVisual, activeTemplate.id)
-    const merged = mergePatternTemplateEvidence(activeTemplate, learned, { lines: activeLines, mappings })
-    const nextTemplates = sessionTemplates.map((template) => template.id === merged.id ? merged : template)
+    if (!canAutoLearnTemplate(analysis.templateScore, mappedFields)) return
+    const learned = buildPatternTemplate(template.name, lines, mappings, patternVisualForDraft(draft, analysis), template.id)
+    const merged = mergePatternTemplateEvidence(template, learned, { lines, mappings })
+    const nextTemplates = sessionTemplatesRef.current.map((item) => item.id === merged.id ? merged : item)
     await persistTemplates(nextTemplates)
     buildDraftsFromAnalyses(analyses, nextTemplates, true, preserveIds)
   }
 
-  async function changeActive(nextId: string) {
+  function enqueueLearnFromDraft(draft: BatchOcrDraft, preserveIds: Set<string>) {
+    const task = learningQueueRef.current
+      .catch(() => undefined)
+      .then(() => learnFromDraft(draft, preserveIds))
+    learningQueueRef.current = task.catch(() => undefined)
+    return task
+  }
+
+  function changeActive(nextId: string) {
     const current = drafts.find((draft) => draft.id === activeId)
-    let nextReviewed = reviewedIds
-    if (current && !reviewedIds.has(current.id)) {
-      nextReviewed = new Set(reviewedIds)
+    let nextReviewed = reviewedIdsRef.current
+    if (current && !nextReviewed.has(current.id)) {
+      nextReviewed = new Set(nextReviewed)
       nextReviewed.add(current.id)
+      reviewedIdsRef.current = nextReviewed
       setReviewedIds(nextReviewed)
-      try { await learnFromDraft(current, nextReviewed) } catch { /* corrections still remain in the draft */ }
+      void enqueueLearnFromDraft(current, nextReviewed).catch(() => undefined)
     }
     setActiveId(nextId)
     void persistCheckpoint(analyses, drafts, nextReviewed, nextId)
