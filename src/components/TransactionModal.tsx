@@ -2,7 +2,8 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Bot, CalendarDays, CopyPlus, ImagePlus, Images, LoaderCircle, Mic, Repeat2, ScanText, Sparkles, Square, X } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { localizeError, useI18n } from '../i18n'
-import { buildDetectedLines, parseTransactionFromOcr, parseTransactionFromRegions, recognizeImageTiled } from '../lib/ocr'
+import { buildDetectedLines, buildPatternTemplate, parseTransactionFromOcr, parseTransactionFromRegions, recognizeImageTiled } from '../lib/ocr'
+import { mapDetectedLinesToRegions } from '../lib/ocrHeuristics'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
 import { combineLocalDateAndTime, localDateKeyFromInputDateTime, localTimeFromInputDateTime, localWeekday, recurringDateKeys } from '../lib/scheduling'
 import { accountCurrencies } from '../lib/accounts'
@@ -159,7 +160,31 @@ export function TransactionModal({ onClose, transaction, duplicateFrom, initialV
   async function saveTemplate() {
     if (!settings || !regions.length || !templateName.trim()) return
     const now = new Date().toISOString()
-    const template: OcrTemplate = { id: crypto.randomUUID(), name: templateName.trim(), aspectRatio: imageSize ? imageSize.width / imageSize.height : undefined, regions: regions.map((region) => ({ ...region, id: crypto.randomUUID(), sourceLineId: undefined })), createdAt: now, updatedAt: now }
+    const name = templateName.trim()
+    const aspectRatio = imageSize ? imageSize.width / imageSize.height : undefined
+    const fallbackRegions = regions.map((region) => ({ ...region, id: crypto.randomUUID(), sourceLineId: undefined }))
+    const semanticMappings = Object.values(lineMappings).filter((field) => field && field !== 'generic' && field !== 'ignore')
+    const pattern = detectedLines.length && semanticMappings.length >= 2
+      ? buildPatternTemplate(name, detectedLines, lineMappings)
+      : undefined
+    const template: OcrTemplate = pattern
+      ? {
+        ...pattern,
+        aspectRatio,
+        aspectRatios: aspectRatio ? [aspectRatio] : pattern.aspectRatios,
+        regions: fallbackRegions,
+        createdAt: now,
+        updatedAt: now,
+      }
+      : {
+        id: crypto.randomUUID(),
+        name,
+        schemaVersion: 1,
+        aspectRatio,
+        regions: fallbackRegions,
+        createdAt: now,
+        updatedAt: now,
+      }
     await saveEntity({ ...settings, ocrTemplates: [...templates, template], updatedAt: now })
     setTemplateId(template.id); setTemplateName('')
   }
@@ -190,7 +215,9 @@ export function TransactionModal({ onClose, transaction, duplicateFrom, initialV
       const ocr = await recognizeImageTiled(files[0], (progress, status) => { setOcrProgress(progress); setOcrStatus(status) }, { retries: 1, signal: controller.signal })
       const result = ocr.result
       const size = { width: ocr.width, height: ocr.height }
-      setImageSize(size); setOcrResult(result); setDetectedLines(buildDetectedLines(result, size.width, size.height)); setLineMappings(Object.fromEntries(regions.filter((region) => region.sourceLineId).map((region) => [region.sourceLineId!, region.field])))
+      const lines = buildDetectedLines(result, size.width, size.height)
+      const inferredMappings = mapDetectedLinesToRegions(lines, regions) as Record<string, OcrField | ''>
+      setImageSize(size); setOcrResult(result); setDetectedLines(lines); setLineMappings(inferredMappings)
       applyParsedCandidate(regions.length ? parseTransactionFromRegions(result, regions, size.width, size.height) : parseTransactionFromOcr(result))
     } catch (e) {
       if ((e as Error)?.name !== 'AbortError') setError(localizeError(e, t, 'modal.errorOcr'))
