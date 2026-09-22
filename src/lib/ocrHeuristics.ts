@@ -38,6 +38,12 @@ export interface TemplateRankEvidence {
   visualScore?: number
 }
 
+export function ocrPatternReliability(successes = 0, failures = 0) {
+  const safeSuccesses = Number.isFinite(successes) && successes > 0 ? successes : 0
+  const safeFailures = Number.isFinite(failures) && failures > 0 ? failures : 0
+  return (safeSuccesses + 1) / (safeSuccesses + safeFailures + 2)
+}
+
 export function chooseOcrTileHeight(width: number, height: number, deviceMemory = 4, requested?: number) {
   if (requested !== undefined) return Math.max(900, Math.min(4200, Math.round(requested)))
   const memory = Number.isFinite(deviceMemory) && deviceMemory > 0 ? deviceMemory : 4
