@@ -38,7 +38,10 @@ async function resetOcrWorker() {
   if (!current) return
   try {
     const worker = await current
-    await worker.terminate()
+    await Promise.race([
+      worker.terminate(),
+      new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+    ])
   } catch {
     // A failed/half-created worker is discarded; the next call recreates it.
   }
