@@ -19,6 +19,7 @@ execFileSync(tsc, [
   'src/lib/fileFingerprint.ts',
   'src/lib/ocrCheckpoint.ts',
   'src/lib/importIdentity.ts',
+  'src/lib/checkpointCodec.ts',
   '--ignoreConfig',
   '--target', 'ES2022',
   '--module', 'ESNext',
@@ -43,17 +44,20 @@ const parserFile = findCompiled('ocrParsing.js')
 const fingerprintFile = findCompiled('fileFingerprint.js')
 const checkpointFile = findCompiled('ocrCheckpoint.js')
 const importIdentityFile = findCompiled('importIdentity.js')
+const checkpointCodecFile = findCompiled('checkpointCodec.js')
 assert.ok(heuristicFile, 'compiled ocrHeuristics.js not found')
 assert.ok(parserFile, 'compiled ocrParsing.js not found')
 assert.ok(fingerprintFile, 'compiled fileFingerprint.js not found')
 assert.ok(checkpointFile, 'compiled ocrCheckpoint.js not found')
 assert.ok(importIdentityFile, 'compiled importIdentity.js not found')
+assert.ok(checkpointCodecFile, 'compiled checkpointCodec.js not found')
 
 const mod = await import(pathToFileURL(heuristicFile).href + `?t=${Date.now()}`)
 const parser = await import(pathToFileURL(parserFile).href + `?t=${Date.now()}`)
 const fingerprintModule = await import(pathToFileURL(fingerprintFile).href + `?t=${Date.now()}`)
 const checkpointModule = await import(pathToFileURL(checkpointFile).href + `?t=${Date.now()}`)
 const importIdentityModule = await import(pathToFileURL(importIdentityFile).href + `?t=${Date.now()}`)
+const checkpointCodecModule = await import(pathToFileURL(checkpointCodecFile).href + `?t=${Date.now()}`)
 const {
   OCR_HEURISTIC_THRESHOLDS,
   bboxOverlapRatio,
@@ -80,6 +84,21 @@ const {
 const { sourceFingerprint } = fingerprintModule
 const { sanitizeOcrTileResumeState, sanitizeOcrTileResumeMap } = checkpointModule
 const { buildImageImportSemanticRowId, imageImportRecordId, importSourcesMatch, sourceIdsMatch } = importIdentityModule
+const { decodeCheckpointValue, encodeCheckpointValue, isCompressedCheckpoint } = checkpointCodecModule
+
+const smallCheckpoint = { version: 2, drafts: [{ id: 'one', amount: '100000' }] }
+const encodedSmallCheckpoint = await encodeCheckpointValue(smallCheckpoint, 12 * 1024 * 1024, 64 * 1024 * 1024)
+assert.equal(isCompressedCheckpoint(encodedSmallCheckpoint), false, 'small checkpoints should avoid compression overhead')
+assert.deepEqual(await decodeCheckpointValue(encodedSmallCheckpoint, 64 * 1024 * 1024), smallCheckpoint)
+
+const largeCheckpoint = { version: 2, text: 'transaction-row-'.repeat(40_000) }
+const encodedLargeCheckpoint = await encodeCheckpointValue(largeCheckpoint, 12 * 1024 * 1024, 64 * 1024 * 1024)
+if (typeof CompressionStream !== 'undefined') {
+  assert.equal(isCompressedCheckpoint(encodedLargeCheckpoint), true, 'large repetitive checkpoints should be compressed')
+  assert.ok(encodedLargeCheckpoint.byteLength < JSON.stringify(largeCheckpoint).length / 10)
+}
+assert.deepEqual(await decodeCheckpointValue(encodedLargeCheckpoint, 64 * 1024 * 1024), largeCheckpoint)
+
 
 const canonicalSigA = buildImageImportSemanticRowId({type:'expense',amount:100000,occurredAt:'2026-09-21T10:00:00.000Z',merchant:'  Nguyễn   Văn A '})
 const canonicalSigB = buildImageImportSemanticRowId({type:'expense',amount:100000.0,occurredAt:'2026-09-21T10:00:00.000Z',merchant:'nguyễn văn a'})
