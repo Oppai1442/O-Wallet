@@ -493,7 +493,7 @@ export async function recognizeImageTiled(
       }
       if (!result) throw lastError ?? new Error('modal.errorOcr')
       tileDurationsMs.push(Math.max(0, performance.now() - tileStarted))
-      texts.push(result.text)
+      texts.push(result.text.slice(0, 4_000))
       for (const box of result.boxes) {
         const shifted: OcrBox = { ...box, bbox: { ...box.bbox, y0: box.bbox.y0 + y, y1: box.bbox.y1 + y } }
         const key = `${normalizeLine(shifted.text).toLocaleLowerCase('vi-VN')}|${Math.round(shifted.bbox.x0 / 6)}|${Math.round(shifted.bbox.y0 / 6)}`
