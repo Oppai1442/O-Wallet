@@ -1052,34 +1052,93 @@ function buildSharedTransaction(
   }
 }
 
+function sharedImportSourcesMatch(
+  left?: SharedTransaction['importSource'],
+  right?: SharedTransaction['importSource'],
+) {
+  if (!left || !right || left.adapterId !== right.adapterId || left.sourceId !== right.sourceId) return false
+  const leftRows = left.sourceRowIds ?? []
+  const rightRows = right.sourceRowIds ?? []
+  if (!leftRows.length || !rightRows.length) return false
+  const leftSemantic = leftRows.filter((id) => id.startsWith('sig:'))
+  const rightSemantic = rightRows.filter((id) => id.startsWith('sig:'))
+  if (leftSemantic.length && rightSemantic.length) {
+    const rightSet = new Set(rightSemantic)
+    return leftSemantic.some((id) => rightSet.has(id))
+  }
+  const rightSet = new Set(rightRows)
+  return leftRows.some((id) => rightSet.has(id))
+}
+
+async function withSharedFeedLock<T>(membership: SharedWalletMembership, task: () => Promise<T>) {
+  const manager = typeof navigator !== 'undefined' ? navigator.locks : undefined
+  if (!manager) return task()
+  return manager.request(
+    `owallet-shared-feed:${membership.groupId}:${membership.memberId}`,
+    { mode: 'exclusive' },
+    task,
+  )
+}
+
 export async function saveSharedTransactions(
   token: string,
   membership: SharedWalletMembership,
   inputs: SharedTransactionInput[],
 ) {
   if (!inputs.length) return [] as SharedTransaction[]
-  const effectiveMembership = await currentWritableMembership(membership)
-  const feed = await loadOwnFeed(token, effectiveMembership)
-  const existingById = new Map(feed.transactions.map((tx) => [tx.id, tx]))
-  const seen = new Set<string>()
-  const newIds = new Set<string>()
-  for (const input of inputs) {
-    const id = typeof input.id === 'string' ? input.id.slice(0, 160) : ''
-    if (!id || seen.has(id)) throw new Error('error.sharedSaveFailed')
-    seen.add(id)
-    if (!existingById.has(id)) newIds.add(id)
-  }
-  if (feed.transactions.length + newIds.size > MAX_SHARED_TRANSACTIONS_PER_FEED) throw new Error('error.sharedFeedLimit')
+  return withSharedFeedLock(membership, async () => {
+    const effectiveMembership = await currentWritableMembership(membership)
+    const feed = await loadOwnFeed(token, effectiveMembership)
+    const existingById = new Map(feed.transactions.map((tx) => [tx.id, tx]))
+    const seen = new Set<string>()
+    for (const input of inputs) {
+      const id = typeof input.id === 'string' ? input.id.slice(0, 160) : ''
+      if (!id || seen.has(id)) throw new Error('error.sharedSaveFailed')
+      seen.add(id)
+    }
 
-  const now = new Date().toISOString()
-  const records = inputs.map((input) => buildSharedTransaction(input, effectiveMembership, existingById.get(input.id), now))
-  const replacing = new Set(records.map((tx) => tx.id))
-  feed.transactions = [...feed.transactions.filter((tx) => !replacing.has(tx.id)), ...records]
-  feed.revision += 1
-  feed.keyVersion = effectiveMembership.keyVersion
-  feed.updatedAt = now
-  await writeOwnFeed(token, effectiveMembership, feed)
-  return records
+    const now = new Date().toISOString()
+    const candidates = inputs.map((input) => buildSharedTransaction(input, effectiveMembership, existingById.get(input.id), now))
+    const accepted: SharedTransaction[] = []
+    const returned: SharedTransaction[] = []
+
+    for (const candidate of candidates) {
+      const existingImport = candidate.importSource
+        ? feed.transactions.find((tx) =>
+          !tx.deleted
+          && tx.id !== candidate.id
+          && sharedImportSourcesMatch(tx.importSource, candidate.importSource),
+        )
+        : undefined
+      const acceptedImport = candidate.importSource
+        ? accepted.find((tx) => sharedImportSourcesMatch(tx.importSource, candidate.importSource))
+        : undefined
+
+      if (existingImport) {
+        returned.push(existingImport)
+        continue
+      }
+      if (acceptedImport) {
+        returned.push(acceptedImport)
+        continue
+      }
+      accepted.push(candidate)
+      returned.push(candidate)
+    }
+
+    if (!accepted.length) return returned
+
+    const replacing = new Set(accepted.map((tx) => tx.id))
+    const newCount = accepted.filter((tx) => !existingById.has(tx.id)).length
+    if (feed.transactions.length + newCount > MAX_SHARED_TRANSACTIONS_PER_FEED) throw new Error('error.sharedFeedLimit')
+
+    feed.transactions = [...feed.transactions.filter((tx) => !replacing.has(tx.id)), ...accepted]
+    feed.revision += 1
+    feed.keyVersion = effectiveMembership.keyVersion
+    feed.updatedAt = now
+    await writeOwnFeed(token, effectiveMembership, feed)
+    return returned
+  })
 }
 
 export async function saveSharedTransaction(
