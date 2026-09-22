@@ -602,6 +602,48 @@ export function ImageImportMode({
     }
   }
 
+  function refreshDraftSourceIdentities(input: BatchOcrDraft[]) {
+    const bySource = new Map<string, BatchOcrDraft[]>()
+    for (const draft of input) {
+      const key = draft.sourceHash ? `${draft.fileIndex}|${draft.sourceHash}` : `file:${draft.fileIndex}`
+      const group = bySource.get(key) ?? []
+      group.push(draft)
+      bySource.set(key, group)
+    }
+
+    const updates = new Map<string, BatchOcrDraft>()
+    for (const group of bySource.values()) {
+      const semanticOccurrences = new Map<string, number>()
+      const sorted = [...group].sort((a, b) => (a.sourceBBox?.y ?? 0) - (b.sourceBBox?.y ?? 0))
+      for (const draft of sorted) {
+        const numericAmount = Number(draft.amount)
+        const semanticId = buildImageImportSemanticRowId({
+          type: draft.type,
+          amount: numericAmount > 0 ? numericAmount : undefined,
+          occurredAt: draft.occurredAt ? fromLocalInputDateTime(draft.occurredAt) : undefined,
+          merchant: draft.merchant.trim() || undefined,
+          description: draft.description.trim() || undefined,
+        })
+        const occurrence = semanticId ? (semanticOccurrences.get(semanticId) ?? 0) : undefined
+        if (semanticId) semanticOccurrences.set(semanticId, occurrence! + 1)
+
+        const stableIds = (draft.sourceRowIds?.length
+          ? draft.sourceRowIds
+          : draft.sourceRowId ? [draft.sourceRowId] : [])
+          .filter((id) => !id.startsWith('sig:') && !id.startsWith('occ:'))
+        const sourceRowIds = semanticId
+          ? [...stableIds, semanticId, `occ:${occurrence}`]
+          : stableIds
+        updates.set(draft.id, {
+          ...draft,
+          sourceRowIds,
+          sourceRowId: stableIds.find((id) => id.startsWith('row:')) ?? draft.sourceRowId,
+        })
+      }
+    }
+    return input.map((draft) => updates.get(draft.id) ?? draft)
+  }
+
   function updateDraft(next: BatchOcrDraft) {
     const previous = drafts.find((draft) => draft.id === next.id)
     const feedbackChanged = Boolean(previous && (
@@ -630,17 +672,13 @@ export function ImageImportMode({
       currency: allowedCurrencies.includes(next.currency) ? next.currency : allowedCurrencies[0] ?? next.currency,
     }
     const numericAmount = Number(normalizedDraft.amount)
-    const ordinalSourceIds = (normalizedDraft.sourceRowIds?.length ? normalizedDraft.sourceRowIds : normalizedDraft.sourceRowId ? [normalizedDraft.sourceRowId] : []).filter((id) => !id.startsWith('sig:'))
-    const correctedSemanticId = buildImageImportSemanticRowId({
-      type: normalizedDraft.type,
-      amount: numericAmount > 0 ? numericAmount : undefined,
-      occurredAt: normalizedDraft.occurredAt ? fromLocalInputDateTime(normalizedDraft.occurredAt) : undefined,
-      merchant: normalizedDraft.merchant.trim() || undefined,
-      description: normalizedDraft.description.trim() || undefined,
-    })
-    const sourceRowIds = correctedSemanticId ? [...ordinalSourceIds, correctedSemanticId] : ordinalSourceIds
-    normalizedDraft.sourceRowIds = sourceRowIds
-    normalizedDraft.sourceRowId = ordinalSourceIds[0] ?? normalizedDraft.sourceRowId
+    const identityRefreshed = refreshDraftSourceIdentities(
+      drafts.map((draft) => draft.id === normalizedDraft.id ? normalizedDraft : draft),
+    )
+    const refreshedDraft = identityRefreshed.find((draft) => draft.id === normalizedDraft.id) ?? normalizedDraft
+    normalizedDraft.sourceRowIds = refreshedDraft.sourceRowIds
+    normalizedDraft.sourceRowId = refreshedDraft.sourceRowId
+    const sourceRowIds = normalizedDraft.sourceRowIds ?? []
     let conflict: BatchOcrDraft['conflict']
     const sourceDuplicate = normalizedDraft.sourceHash && sourceRowIds.length
       ? transactions.find((tx) => importSourcesMatch(tx.importSource, { adapterId: 'owallet-image-v2', sourceId: normalizedDraft.sourceHash!, sourceRowIds }))
@@ -686,7 +724,9 @@ export function ImageImportMode({
       } : undefined
     }
     setDrafts((current) => {
-      const next = current.map((draft) => draft.id === normalizedDraft.id ? { ...normalizedDraft, conflict } : draft)
+      const next = refreshDraftSourceIdentities(
+        current.map((draft) => draft.id === normalizedDraft.id ? { ...normalizedDraft, conflict } : draft),
+      )
       void persistCheckpoint(analyses, next, reviewedIdsRef.current, activeId)
       return next
     })
@@ -840,7 +880,8 @@ export function ImageImportMode({
 
   async function saveSelected() {
     if (!repository || saving || saveGuardRef.current) return
-    const selected = drafts.filter((draft) => draft.selected)
+    const identityRefreshedDrafts = refreshDraftSourceIdentities(drafts)
+    const selected = identityRefreshedDrafts.filter((draft) => draft.selected)
     if (!selected.length) {
       setError(t('batch.errorNoneSelected'))
       return
