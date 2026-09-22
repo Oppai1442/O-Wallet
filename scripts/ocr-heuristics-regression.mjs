@@ -18,6 +18,7 @@ execFileSync(tsc, [
   'src/lib/ocrParsing.ts',
   'src/lib/fileFingerprint.ts',
   'src/lib/ocrCheckpoint.ts',
+  'src/lib/importIdentity.ts',
   '--ignoreConfig',
   '--target', 'ES2022',
   '--module', 'ESNext',
@@ -41,15 +42,18 @@ const heuristicFile = findCompiled('ocrHeuristics.js')
 const parserFile = findCompiled('ocrParsing.js')
 const fingerprintFile = findCompiled('fileFingerprint.js')
 const checkpointFile = findCompiled('ocrCheckpoint.js')
+const importIdentityFile = findCompiled('importIdentity.js')
 assert.ok(heuristicFile, 'compiled ocrHeuristics.js not found')
 assert.ok(parserFile, 'compiled ocrParsing.js not found')
 assert.ok(fingerprintFile, 'compiled fileFingerprint.js not found')
 assert.ok(checkpointFile, 'compiled ocrCheckpoint.js not found')
+assert.ok(importIdentityFile, 'compiled importIdentity.js not found')
 
 const mod = await import(pathToFileURL(heuristicFile).href + `?t=${Date.now()}`)
 const parser = await import(pathToFileURL(parserFile).href + `?t=${Date.now()}`)
 const fingerprintModule = await import(pathToFileURL(fingerprintFile).href + `?t=${Date.now()}`)
 const checkpointModule = await import(pathToFileURL(checkpointFile).href + `?t=${Date.now()}`)
+const importIdentityModule = await import(pathToFileURL(importIdentityFile).href + `?t=${Date.now()}`)
 const {
   OCR_HEURISTIC_THRESHOLDS,
   bboxOverlapRatio,
@@ -75,6 +79,26 @@ const {
 
 const { sourceFingerprint } = fingerprintModule
 const { sanitizeOcrTileResumeState, sanitizeOcrTileResumeMap } = checkpointModule
+const { importSourcesMatch } = importIdentityModule
+
+const importBase = { adapterId:'owallet-image-v2', sourceId:'sample-sha256-v1:10:' + 'a'.repeat(64) }
+assert.equal(importSourcesMatch(
+  {...importBase,sourceRowIds:['row:1','sig:expense:100:2026-09-21T10:00:00.000Z:cafe']},
+  {...importBase,sourceRowIds:['row:1','sig:expense:200:2026-09-21T10:00:00.000Z:shop']},
+), false, 'semantic signatures must override matching ordinal rows')
+assert.equal(importSourcesMatch(
+  {...importBase,sourceRowIds:['row:1','sig:expense:100:2026-09-21T10:00:00.000Z:cafe']},
+  {...importBase,sourceRowIds:['row:8','sig:expense:100:2026-09-21T10:00:00.000Z:cafe']},
+), true, 'matching semantic signatures must survive row reordering')
+assert.equal(importSourcesMatch(
+  {...importBase,sourceRowIds:['row:1']},
+  {...importBase,sourceRowIds:['row:1','sig:expense:100:2026-09-21T10:00:00.000Z:cafe']},
+), true, 'legacy ordinal identities remain backward compatible')
+assert.equal(importSourcesMatch(
+  {...importBase,sourceRowIds:['row:1']},
+  {...importBase,sourceId:'different',sourceRowIds:['row:1']},
+), false)
+
 
 const validResume = {
   width:1080,height:80000,tileHeight:2000,overlap:200,nextTileIndex:3,
