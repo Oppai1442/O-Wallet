@@ -19,7 +19,8 @@ import { AI_OPENROUTER_KEY_SECRET, analyzeTransactionImage } from '../lib/ai'
 import { selectableCategories } from '../lib/categories'
 import { findDuplicateTransaction } from '../lib/duplicates'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
-import { buildDetectedLines, parseTransactionFromOcr, parseTransactionFromRegions, recognizeImageTiled } from '../lib/ocr'
+import { buildDetectedLines, buildPatternTemplate, parseTransactionFromOcr, parseTransactionFromRegions, recognizeImageTiled } from '../lib/ocr'
+import { mapDetectedLinesToRegions } from '../lib/ocrHeuristics'
 import { findMatchingTransactionRule } from '../lib/rules'
 import { combineLocalDateAndTime, localDateKeyFromInputDateTime, localTimeFromInputDateTime, localWeekday, recurringDateKeys } from '../lib/scheduling'
 import { validateImageBatch } from '../lib/security'
@@ -206,8 +207,9 @@ export function SharedProfileTransactionModal({
       setImageSize(size)
       setOcrResult(result)
       const lines = buildDetectedLines(result, size.width, size.height)
+      const inferredMappings = mapDetectedLinesToRegions(lines, regions) as Record<string, OcrField | ''>
       setDetectedLines(lines)
-      setLineMappings(Object.fromEntries(regions.filter((region) => region.sourceLineId).map((region) => [region.sourceLineId!, region.field])))
+      setLineMappings(inferredMappings)
       applyParsed(regions.length ? parseTransactionFromRegions(result, regions, size.width, size.height) : parseTransactionFromOcr(result))
     } catch (ocrError) {
       if ((ocrError as Error)?.name !== 'AbortError') setError(localizeError(ocrError, t, 'modal.errorOcr'))
@@ -257,14 +259,31 @@ export function SharedProfileTransactionModal({
   async function saveTemplate() {
     if (!regions.length || !templateName.trim()) return
     const now = new Date().toISOString()
-    const template: OcrTemplate = {
-      id: crypto.randomUUID(),
-      name: templateName.trim().slice(0, 120),
-      aspectRatio: imageSize ? imageSize.width / imageSize.height : undefined,
-      regions: regions.map((region) => ({ ...region, id: crypto.randomUUID(), sourceLineId: undefined })),
-      createdAt: now,
-      updatedAt: now,
-    }
+    const name = templateName.trim().slice(0, 120)
+    const aspectRatio = imageSize ? imageSize.width / imageSize.height : undefined
+    const fallbackRegions = regions.map((region) => ({ ...region, id: crypto.randomUUID(), sourceLineId: undefined }))
+    const semanticMappings = Object.values(lineMappings).filter((field) => field && field !== 'generic' && field !== 'ignore')
+    const pattern = detectedLines.length && semanticMappings.length >= 2
+      ? buildPatternTemplate(name, detectedLines, lineMappings)
+      : undefined
+    const template: OcrTemplate = pattern
+      ? {
+        ...pattern,
+        aspectRatio,
+        aspectRatios: aspectRatio ? [aspectRatio] : pattern.aspectRatios,
+        regions: fallbackRegions,
+        createdAt: now,
+        updatedAt: now,
+      }
+      : {
+        id: crypto.randomUUID(),
+        name,
+        schemaVersion: 1,
+        aspectRatio,
+        regions: fallbackRegions,
+        createdAt: now,
+        updatedAt: now,
+      }
     await onSaveLedger({ ...ledger, ocrTemplates: [...templates, template] })
     setTemplateId(template.id)
     setTemplateName('')
