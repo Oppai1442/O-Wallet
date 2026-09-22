@@ -1,4 +1,5 @@
-import { detectTransactionBlocks, recognizeImageTiled } from './lib/ocr'
+import { buildDetectedLines, buildPatternTemplate, detectTransactionBlocks, rankOcrTemplates, recognizeImageTiled } from './lib/ocr'
+import type { OcrField, OcrResult } from './types'
 
 declare global {
   interface Window {
@@ -11,6 +12,8 @@ declare global {
         textLength: number
         boxes: number
         blocks: number
+        templateBlocks: number
+        templateScore: number
         amounts: number[]
         tileCount: number
         retryCount: number
@@ -117,12 +120,40 @@ async function runScenario(name: string, cards: number, dark: boolean, jitter: n
   if (blocks.length < 2) throw new Error(`${name}: too few transaction blocks (${blocks.length}/${cards})`)
   if (hits < 2) throw new Error(`${name}: too few expected amount hits (${hits}/${cards})`)
 
+  window.__OWALLET_OCR_E2E__ = { status: 'running', phase: `${name}:template`, progress: 1 }
+  const firstCardHeight = Math.min(source.height, 600)
+  const firstBoxes = ocr.result.boxes.filter((box) => ((box.bbox.y0 + box.bbox.y1) / 2) < firstCardHeight)
+  const firstResult: OcrResult = {
+    text: firstBoxes.map((box) => box.text).join(' '),
+    boxes: firstBoxes,
+  }
+  const firstLines = buildDetectedLines(firstResult, ocr.width, firstCardHeight)
+  const mappings: Record<string, OcrField | ''> = {}
+  for (const line of firstLines) {
+    const text = line.text.toLowerCase()
+    if (text.includes('amount')) mappings[line.id] = 'amount'
+    else if (text.includes('date')) mappings[line.id] = 'occurredAt'
+    else if (text.includes('recipient')) mappings[line.id] = 'merchant'
+    else if (text.includes('description')) mappings[line.id] = 'description'
+  }
+  if (Object.values(mappings).filter(Boolean).length < 2) throw new Error(`${name}: could not teach synthetic template from OCR lines`)
+
+  const template = buildPatternTemplate('Synthetic Bank', firstLines, mappings, ocr.visual)
+  const ranked = rankOcrTemplates([template], ocr.result, ocr.width, ocr.height, ocr.visual)[0]
+  if (!ranked || ranked.score <= 0) throw new Error(`${name}: template ranking failed`)
+  const templateBlocks = detectTransactionBlocks(ocr.result, ocr.width, ocr.height, template, ocr.visual)
+  const templateAmounts = templateBlocks.flatMap((block) => block.candidate.amount !== undefined ? [block.candidate.amount] : [])
+  if (templateBlocks.length < 2) throw new Error(`${name}: template path found too few blocks (${templateBlocks.length}/${cards})`)
+  if (expectedAmountHits(templateAmounts, cards) < 2) throw new Error(`${name}: template path missed expected amounts`)
+
   return {
     name,
     textLength: ocr.result.text.length,
     boxes: ocr.result.boxes.length,
     blocks: blocks.length,
-    amounts,
+    templateBlocks: templateBlocks.length,
+    templateScore: ranked.score,
+    amounts: templateAmounts,
     tileCount: ocr.diagnostics.tileCount,
     retryCount: ocr.diagnostics.retryCount,
   }
