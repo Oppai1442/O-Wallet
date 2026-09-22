@@ -4,6 +4,8 @@ declare global {
   interface Window {
     __OWALLET_OCR_E2E__?: {
       status: 'running' | 'pass' | 'fail'
+      phase?: string
+      progress?: number
       scenarios?: Array<{
         name: string
         textLength: number
@@ -91,8 +93,12 @@ function expectedAmountHits(amounts: number[], cards: number) {
 }
 
 async function runScenario(name: string, cards: number, dark: boolean, jitter: number) {
+  window.__OWALLET_OCR_E2E__ = { status: 'running', phase: `${name}:fixture` }
   const source = await syntheticCapture({ cards, dark, jitter })
-  const ocr = await recognizeImageTiled(source.blob, undefined, {
+  window.__OWALLET_OCR_E2E__ = { status: 'running', phase: `${name}:ocr`, progress: 0 }
+  const ocr = await recognizeImageTiled(source.blob, (progress, status) => {
+    window.__OWALLET_OCR_E2E__ = { status: 'running', phase: `${name}:ocr:${status}`, progress }
+  }, {
     tileHeight: 900,
     overlap: 120,
     retries: 0,
@@ -100,6 +106,7 @@ async function runScenario(name: string, cards: number, dark: boolean, jitter: n
     workerInitTimeoutMs: 30_000,
     languages: ['eng'],
   })
+  window.__OWALLET_OCR_E2E__ = { status: 'running', phase: `${name}:segment`, progress: 1 }
   const blocks = detectTransactionBlocks(ocr.result, ocr.width, ocr.height, undefined, ocr.visual)
   const amounts = blocks.flatMap((block) => block.candidate.amount !== undefined ? [block.candidate.amount] : [])
   const hits = expectedAmountHits(amounts, cards)
@@ -121,7 +128,7 @@ async function runScenario(name: string, cards: number, dark: boolean, jitter: n
 }
 
 export async function runOcrVisualE2E(root: HTMLElement) {
-  window.__OWALLET_OCR_E2E__ = { status: 'running' }
+  window.__OWALLET_OCR_E2E__ = { status: 'running', phase: 'boot', progress: 0 }
   const main = document.createElement('main')
   main.style.fontFamily = 'system-ui'
   main.style.padding = '24px'
