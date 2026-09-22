@@ -670,7 +670,11 @@ export function buildPatternTemplate(
   }
 }
 
-export function mergePatternTemplateEvidence(existing: OcrTemplate, learned: OcrTemplate): OcrTemplate {
+export function mergePatternTemplateEvidence(
+  existing: OcrTemplate,
+  learned: OcrTemplate,
+  correction?: { lines: OcrDetectedLine[]; mappings: Record<string, OcrField | ''> },
+): OcrTemplate {
   if (existing.schemaVersion !== 2 || learned.schemaVersion !== 2) return learned
   const currentPatterns = existing.fieldPatterns ?? []
   const learnedPatterns = learned.fieldPatterns ?? []
@@ -679,6 +683,10 @@ export function mergePatternTemplateEvidence(existing: OcrTemplate, learned: Ocr
     if (!prior) return next
     const anchors = [...new Set([...(prior.anchorTexts ?? (prior.anchorText ? [prior.anchorText] : [])), ...(next.anchorTexts ?? (next.anchorText ? [next.anchorText] : []))])].slice(-8)
     const shapes = [...new Set([...(prior.sampleShapes ?? (prior.sampleShape ? [prior.sampleShape] : [])), ...(next.sampleShapes ?? (next.sampleShape ? [next.sampleShape] : []))])].slice(-8)
+    const correctedLine = correction?.lines.find((line) => correction.mappings[line.id] === next.field)
+    const predictedLine = correction ? findPatternLine(correction.lines, prior) : undefined
+    const hasFeedback = Boolean(correction && correctedLine)
+    const predictionMatched = Boolean(hasFeedback && predictedLine?.id === correctedLine?.id)
     return {
       ...prior,
       ...next,
@@ -689,8 +697,8 @@ export function mergePatternTemplateEvidence(existing: OcrTemplate, learned: Ocr
       ordinal: next.ordinal ?? prior.ordinal,
       sampleShape: next.sampleShape ?? prior.sampleShape,
       sampleShapes: shapes,
-      successes: (prior.successes ?? 0) + 1,
-      failures: prior.failures ?? 0,
+      successes: (prior.successes ?? 0) + (hasFeedback ? (predictionMatched ? 1 : 0) : 1),
+      failures: (prior.failures ?? 0) + (hasFeedback && !predictionMatched ? 1 : 0),
     }
   })
   for (const prior of currentPatterns) {
@@ -824,9 +832,10 @@ function findPatternLine(lines: OcrDetectedLine[], pattern: OcrFieldPattern) {
   const values = lines.filter((line) => lineLooksLikeValue(line.text, pattern.valueType))
   if (!values.length) return undefined
   const ordinal = Math.max(0, pattern.ordinal ?? 0)
+  const reliability = ((pattern.successes ?? 0) + 1) / ((pattern.successes ?? 0) + (pattern.failures ?? 0) + 2)
   const ranked = values.map((line, index) => ({
     line,
-    score: patternShapeScore(line.text, pattern) * 0.7 + (index === ordinal ? 0.3 : 0),
+    score: (patternShapeScore(line.text, pattern) * 0.7 + (index === ordinal ? 0.3 : 0)) * (0.35 + reliability * 0.65),
   })).sort((a, b) => b.score - a.score)
   return ranked[0]?.line ?? values[ordinal]
 }
