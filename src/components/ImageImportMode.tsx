@@ -6,7 +6,7 @@ import { localizeError, useI18n } from '../i18n'
 import { accountCurrencies } from '../lib/accounts'
 import { findDuplicateTransaction } from '../lib/duplicates'
 import { sourceFingerprint } from '../lib/fileFingerprint'
-import { buildImageImportSemanticRowId, imageImportRecordId, importSourcesMatch, sourceIdsMatch } from '../lib/importIdentity'
+import { buildImageImportBlockRowId, buildImageImportSemanticRowId, imageImportBlockFingerprint, imageImportRecordId, importSourcesMatch, sourceIdsMatch } from '../lib/importIdentity'
 import { sanitizeOcrTileResumeMap } from '../lib/ocrCheckpoint'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
 import {
@@ -445,13 +445,22 @@ export function ImageImportMode({
       analysis.templateAnchorScore = matched.anchorScore
       analysis.templateVisualScore = matched.visualScore
       const semanticOccurrences = new Map<string, number>()
+      const blockOccurrences = new Map<string, number>()
       for (let blockIndex = 0; blockIndex < matched.blocks.length; blockIndex += 1) {
         const block = matched.blocks[blockIndex]
         const sourceRowId = `row:${blockIndex}`
         const semanticId = buildImageImportSemanticRowId(block.candidate)
         const occurrence = semanticId ? (semanticOccurrences.get(semanticId) ?? 0) : undefined
         if (semanticId) semanticOccurrences.set(semanticId, occurrence! + 1)
-        const sourceRowIds = semanticId ? [sourceRowId, semanticId, `occ:${occurrence}`] : [sourceRowId]
+        const blockFingerprint = imageImportBlockFingerprint(block.candidate.rawText)
+        const blockOccurrence = blockFingerprint ? (blockOccurrences.get(blockFingerprint) ?? 0) : undefined
+        if (blockFingerprint) blockOccurrences.set(blockFingerprint, blockOccurrence! + 1)
+        const blockId = buildImageImportBlockRowId(block.candidate.rawText, blockOccurrence)
+        const sourceRowIds = [
+          sourceRowId,
+          ...(semanticId ? [semanticId, `occ:${occurrence}`] : []),
+          ...(blockId ? [blockId] : []),
+        ]
         const nextDraft = resolveDraft(analysis.fileIndex, block, analysis.width, analysis.height, candidates, analysis.sourceHash, sourceRowId, sourceRowIds)
         const exactOld = drafts.find((draft) => draft.id === nextDraft.id)
         const overlapOld = exactOld ?? drafts
