@@ -47,6 +47,22 @@ export function chooseOcrTileHeight(width: number, height: number, deviceMemory 
   return Math.max(1100, Math.min(3600, Math.round(base * pixelScale * longPenalty)))
 }
 
+export function mapDetectedLinesToRegions(
+  lines: Array<{ id: string; x: number; y: number; width: number; height: number }>,
+  regions: Array<{ field: string; x: number; y: number; width: number; height: number }>,
+) {
+  const mappings: Record<string, string> = {}
+  for (const line of lines) {
+    const cx = line.x + line.width / 2
+    const cy = line.y + line.height / 2
+    const matches = regions
+      .filter((region) => cx >= region.x && cx <= region.x + region.width && cy >= region.y && cy <= region.y + region.height)
+      .sort((a, b) => (a.width * a.height) - (b.width * b.height))
+    if (matches[0]) mappings[line.id] = matches[0].field
+  }
+  return mappings
+}
+
 export function sampleShape(text: string) {
   return text
     .normalize('NFD')
