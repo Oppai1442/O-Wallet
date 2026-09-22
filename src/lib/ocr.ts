@@ -14,7 +14,7 @@ import type {
   OcrVisualFingerprint,
   ParsedTransactionCandidate,
 } from '../types'
-import { chooseOcrTileHeight, dedupeTransactionBlocks, isStrongTransactionBlock, ocrPatternReliability, sampleShape, shapeSimilarity, visualSeparatorPositions } from './ocrHeuristics'
+import { chooseOcrTileHeight, dedupeTransactionBlocks, isOcrPatternQuarantined, isStrongTransactionBlock, ocrPatternReliability, sampleShape, shapeSimilarity, visualSeparatorPositions } from './ocrHeuristics'
 import { normalizeOcrLine as normalizeLine, parseDateTimeText, parseMoneyText, parseTransactionText, stripFieldLabel } from './ocrParsing'
 import { readRasterImageDimensions, SECURITY_LIMITS } from './security'
 
@@ -816,6 +816,8 @@ function candidateValueFromLine(line: string, pattern: OcrFieldPattern) {
 }
 
 function findPatternLine(lines: OcrDetectedLine[], pattern: OcrFieldPattern) {
+  if (isOcrPatternQuarantined(pattern.successes, pattern.failures)) return undefined
+  const reliability = ocrPatternReliability(pattern.successes, pattern.failures)
   const anchors = pattern.anchorTexts?.length ? pattern.anchorTexts : pattern.anchorText ? [pattern.anchorText] : []
   if (anchors.length) {
     const normalizedAnchors = anchors.map((value) => normalizeLine(value).toLocaleLowerCase('vi-VN'))
@@ -835,7 +837,6 @@ function findPatternLine(lines: OcrDetectedLine[], pattern: OcrFieldPattern) {
   const values = lines.filter((line) => lineLooksLikeValue(line.text, pattern.valueType))
   if (!values.length) return undefined
   const ordinal = Math.max(0, pattern.ordinal ?? 0)
-  const reliability = ocrPatternReliability(pattern.successes, pattern.failures)
   const ranked = values.map((line, index) => ({
     line,
     score: (patternShapeScore(line.text, pattern) * 0.7 + (index === ordinal ? 0.3 : 0)) * (0.35 + reliability * 0.65),
