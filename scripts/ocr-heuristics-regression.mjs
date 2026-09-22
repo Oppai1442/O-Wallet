@@ -83,7 +83,7 @@ const {
 
 const { sourceFingerprint } = fingerprintModule
 const { sanitizeOcrTileResumeState, sanitizeOcrTileResumeMap } = checkpointModule
-const { buildImageImportSemanticRowId, imageImportRecordId, importSourcesMatch, sourceIdsMatch } = importIdentityModule
+const { buildImageImportBlockRowId, buildImageImportSemanticRowId, imageImportBlockFingerprint, imageImportRecordId, importSourcesMatch, sourceIdsMatch } = importIdentityModule
 const { decodeCheckpointValue, encodeCheckpointValue, isCompressedCheckpoint } = checkpointCodecModule
 
 const smallCheckpoint = { version: 2, drafts: [{ id: 'one', amount: '100000' }] }
@@ -106,6 +106,13 @@ assert.equal(canonicalSigA, canonicalSigB, 'semantic row signatures should canon
 assert.notEqual(canonicalSigA, buildImageImportSemanticRowId({type:'expense',amount:200000,occurredAt:'2026-09-21T10:00:00.000Z',merchant:'nguyễn văn a'}))
 assert.notEqual(canonicalSigA, buildImageImportSemanticRowId({type:'expense',amount:100000,occurredAt:'2026-09-21T10:01:00.000Z',merchant:'nguyễn văn a'}))
 
+const blockFpA = imageImportBlockFingerprint('  Amount: 100.000 VND\nRecipient: NGUYEN VAN A  ')
+const blockFpB = imageImportBlockFingerprint('amount: 100.000 vnd recipient: nguyen van a')
+assert.equal(blockFpA, blockFpB, 'raw block fingerprints should normalize case and whitespace')
+const blockRow0 = buildImageImportBlockRowId('Amount: 100.000 VND Recipient: NGUYEN VAN A', 0)
+const blockRow1 = buildImageImportBlockRowId('Amount: 100.000 VND Recipient: NGUYEN VAN A', 1)
+assert.notEqual(blockRow0, blockRow1, 'identical OCR blocks must remain distinct by occurrence')
+
 const importBase = { adapterId:'owallet-image-v2', sourceId:'sample-sha256-v1:10:' + 'a'.repeat(64) }
 assert.equal(importSourcesMatch(
   {...importBase,sourceRowIds:['row:1','sig:expense:100:2026-09-21T10:00:00.000Z:cafe']},
@@ -120,6 +127,14 @@ assert.equal(importSourcesMatch(
   {...importBase,sourceRowIds:['row:8','sig:expense:100:2026-09-21T10:00:00.000Z:cafe','occ:1']},
 ), false, 'identical semantic rows with different occurrences must stay distinct')
 assert.equal(importSourcesMatch(
+  {...importBase,sourceRowIds:['row:1','sig:expense:100:old-value','occ:0',blockRow0]},
+  {...importBase,sourceRowIds:['row:9','sig:expense:999:corrected-value','occ:0',blockRow0]},
+), true, 'matching raw block provenance should survive semantic corrections')
+assert.equal(importSourcesMatch(
+  {...importBase,sourceRowIds:['row:1','sig:expense:100:same','occ:0',blockRow0]},
+  {...importBase,sourceRowIds:['row:2','sig:expense:100:same','occ:1',blockRow1]},
+), false, 'raw block occurrence must prevent collapsing identical rows')
+assert.equal(importSourcesMatch(
   {...importBase,sourceRowIds:['sig:expense:100:2026-09-21T10:00:00.000Z:cafe']},
   {...importBase,sourceRowIds:['row:8','sig:expense:100:2026-09-21T10:00:00.000Z:cafe','occ:1']},
 ), true, 'legacy semantic identities without occurrence remain backward compatible')
@@ -131,12 +146,6 @@ assert.equal(importSourcesMatch(
   {...importBase,sourceRowIds:['row:1']},
   {...importBase,sourceId:'different',sourceRowIds:['row:1']},
 ), false)
-assert.equal(importSourcesMatch(
-  {...importBase,sourceId:legacyAlias,sourceRowIds:['row:1']},
-  {...importBase,sourceId:fpA,sourceRowIds:['row:1']},
-), true, 'legacy transactions must match upgraded composite source ids')
-
-
 const validResume = {
   width:1080,height:80000,tileHeight:2000,overlap:200,nextTileIndex:3,
   boxes:[{text:'100.000 VND',confidence:90,bbox:{x0:10,y0:100,x1:300,y1:140}}],
@@ -169,6 +178,10 @@ const legacyAlias = fpA.split('|')[1]
 assert.ok(legacyAlias)
 assert.equal(sourceIdsMatch(fpA, legacyAlias), true, 'composite fingerprints must match their legacy alias')
 assert.equal(sourceIdsMatch(legacyAlias, fpA), true, 'source alias matching must be symmetric')
+assert.equal(importSourcesMatch(
+  {adapterId:'owallet-image-v2',sourceId:legacyAlias,sourceRowIds:['row:1']},
+  {adapterId:'owallet-image-v2',sourceId:fpA,sourceRowIds:['row:1']},
+), true, 'legacy transactions must match upgraded composite source ids')
 const deterministicRow = ['row:3', 'sig:expense:100000:2026-09-21T10:00:00.000Z:cafe']
 const deterministicA = await imageImportRecordId(fpA, deterministicRow)
 const deterministicB = await imageImportRecordId(legacyAlias, [...deterministicRow].reverse())
