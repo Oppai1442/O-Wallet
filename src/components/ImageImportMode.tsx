@@ -278,7 +278,7 @@ export function ImageImportMode({
   async function persistCheckpoint(
     nextAnalyses = analyses,
     nextDrafts = drafts,
-    nextReviewed = reviewedIds,
+    nextReviewed = reviewedIdsRef.current,
     nextActiveId = activeId,
     nextPartialTiles = tileResumeByHash,
   ) {
@@ -464,7 +464,7 @@ export function ImageImportMode({
     }
   }
 
-  function buildDraftsFromAnalyses(nextAnalyses: SourceAnalysis[], templates = sessionTemplates, preserveReviewed = true, preserveIds = reviewedIds) {
+  function buildDraftsFromAnalyses(nextAnalyses: SourceAnalysis[], templates = sessionTemplatesRef.current, preserveReviewed = true, preserveIds = reviewedIdsRef.current) {
     const next: BatchOcrDraft[] = []
     const candidates: Transaction[] = [...transactions]
     for (const analysis of nextAnalyses) {
@@ -564,7 +564,7 @@ export function ImageImportMode({
             const due = state.nextTileIndex % 3 === 0 || now - lastTileCheckpointPersistAt >= 2_500
             if (due) {
               lastTileCheckpointPersistAt = now
-              await persistCheckpoint(nextAnalyses, drafts, reviewedIds, activeId, nextPartialTiles)
+              await persistCheckpoint(nextAnalyses, drafts, reviewedIdsRef.current, activeId, nextPartialTiles)
             }
           },
         })
@@ -582,16 +582,16 @@ export function ImageImportMode({
         })
         nextAnalyses.sort((a,b)=>a.fileIndex-b.fileIndex)
         const partialDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true)
-        await persistCheckpoint(nextAnalyses, partialDrafts, reviewedIds, partialDrafts[0]?.id, nextPartialTiles)
+        await persistCheckpoint(nextAnalyses, partialDrafts, reviewedIdsRef.current, partialDrafts[0]?.id, nextPartialTiles)
       }
       const nextDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true)
-      await persistCheckpoint(nextAnalyses, nextDrafts, reviewedIds, activeId ?? nextDrafts[0]?.id, nextPartialTiles)
+      await persistCheckpoint(nextAnalyses, nextDrafts, reviewedIdsRef.current, activeId ?? nextDrafts[0]?.id, nextPartialTiles)
       if (!nextDrafts.length) setError(t('imageImport.noDrafts'))
       setProgress(1)
       setStatus('')
     } catch (analysisError) {
       if ((analysisError as Error)?.name === 'AbortError') {
-        await persistCheckpoint(nextAnalyses, drafts, reviewedIds, activeId, nextPartialTiles)
+        await persistCheckpoint(nextAnalyses, drafts, reviewedIdsRef.current, activeId, nextPartialTiles)
         setStatus(t('imageImport.cancelled'))
       } else {
         setError(localizeError(analysisError, t, 'modal.errorOcr'))
@@ -687,7 +687,7 @@ export function ImageImportMode({
     }
     setDrafts((current) => {
       const next = current.map((draft) => draft.id === normalizedDraft.id ? { ...normalizedDraft, conflict } : draft)
-      void persistCheckpoint(analyses, next, reviewedIds, activeId)
+      void persistCheckpoint(analyses, next, reviewedIdsRef.current, activeId)
       return next
     })
   }
