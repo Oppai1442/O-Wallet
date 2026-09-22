@@ -79,7 +79,7 @@ const {
 
 const { sourceFingerprint } = fingerprintModule
 const { sanitizeOcrTileResumeState, sanitizeOcrTileResumeMap } = checkpointModule
-const { buildImageImportSemanticRowId, importSourcesMatch, sourceIdsMatch } = importIdentityModule
+const { buildImageImportSemanticRowId, imageImportRecordId, importSourcesMatch, sourceIdsMatch } = importIdentityModule
 
 const canonicalSigA = buildImageImportSemanticRowId({type:'expense',amount:100000,occurredAt:'2026-09-21T10:00:00.000Z',merchant:'  Nguyễn   Văn A '})
 const canonicalSigB = buildImageImportSemanticRowId({type:'expense',amount:100000.0,occurredAt:'2026-09-21T10:00:00.000Z',merchant:'nguyễn văn a'})
@@ -142,6 +142,12 @@ const legacyAlias = fpA.split('|')[1]
 assert.ok(legacyAlias)
 assert.equal(sourceIdsMatch(fpA, legacyAlias), true, 'composite fingerprints must match their legacy alias')
 assert.equal(sourceIdsMatch(legacyAlias, fpA), true, 'source alias matching must be symmetric')
+const deterministicRow = ['row:3', 'sig:expense:100000:2026-09-21T10:00:00.000Z:cafe']
+const deterministicA = await imageImportRecordId(fpA, deterministicRow)
+const deterministicB = await imageImportRecordId(legacyAlias, [...deterministicRow].reverse())
+assert.equal(deterministicA, deterministicB, 'record ids must survive fingerprint upgrades and row ordering')
+assert.match(deterministicA, /^ocr-[a-f0-9]{32}$/)
+assert.notEqual(deterministicA, await imageImportRecordId(fpA, ['sig:expense:200000:2026-09-21T10:00:00.000Z:cafe']))
 
 function near(actual, expected, tolerance = 1e-6) {
   assert.ok(Math.abs(actual - expected) <= tolerance, `expected ${actual} ≈ ${expected}`)
