@@ -12,6 +12,8 @@ export const OCR_HEURISTIC_THRESHOLDS = {
   templateBlockMinConfidence: 18,
   genericBlockMinEvidence: 3,
   genericBlockMinConfidence: 22,
+  patternQuarantineMinFailures: 3,
+  patternQuarantineMaxReliability: 0.30,
 } as const
 
 export interface HeuristicFingerprint {
@@ -36,6 +38,11 @@ export interface TemplateRankEvidence {
   score?: number
   anchorScore?: number
   visualScore?: number
+}
+
+export function isOcrPatternQuarantined(successes = 0, failures = 0) {
+  return failures >= OCR_HEURISTIC_THRESHOLDS.patternQuarantineMinFailures
+    && ocrPatternReliability(successes, failures) <= OCR_HEURISTIC_THRESHOLDS.patternQuarantineMaxReliability
 }
 
 export function ocrPatternReliability(successes = 0, failures = 0) {
