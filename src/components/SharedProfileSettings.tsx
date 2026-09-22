@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { Bot, ScanText, Trash2 } from 'lucide-react'
-import type { AppSettings, BudgetConfig, SharedTransaction, SharedWalletLedger } from '../types'
+import { Bot, Copy, Pencil, Power, RotateCcw, ScanText, Trash2, Undo2 } from 'lucide-react'
+import type { AppSettings, BudgetConfig, OcrTemplate, SharedTransaction, SharedWalletLedger } from '../types'
 import { categoryPath, selectableCategories } from '../lib/categories'
 import { formatMoney } from '../lib/format'
 import { sharedTransactionsAsPersonalShape } from '../lib/sharedLedger'
+import { isOcrPatternQuarantined } from '../lib/ocrHeuristics'
 import { useWallet } from '../WalletContext'
 import { useI18n } from '../i18n'
 import { AccountManager } from './AccountManager'
@@ -12,7 +13,7 @@ import { CategoryManager } from './CategoryManager'
 import { CategoryPicker } from './CategoryPicker'
 import { RuleManager } from './RuleManager'
 import { VoiceSettings } from './VoiceSettings'
-import { Button, Card, EmptyState, Input } from './ui'
+import { Badge, Button, Card, EmptyState, Input } from './ui'
 
 function settingsAdapter(ledger: SharedWalletLedger, personal?: AppSettings): AppSettings {
   const now = new Date().toISOString()
@@ -112,6 +113,68 @@ export function SharedProfileSettings({
     await onSaveLedger({ ...ledger, ocrTemplates: templates.filter((item) => item.id !== id) })
   }
 
+  async function patchTemplate(id: string, patch: Partial<OcrTemplate>) {
+    if (!editable) return
+    await onSaveLedger({
+      ...ledger,
+      ocrTemplates: templates.map((template) => template.id === id ? { ...template, ...patch, updatedAt: new Date().toISOString() } : template),
+    })
+  }
+
+  async function renameTemplate(template: OcrTemplate) {
+    const name = window.prompt(t('settings.ocrRenamePrompt'), template.name)?.trim()
+    if (name && name !== template.name) await patchTemplate(template.id, { name: name.slice(0, 120) })
+  }
+
+  async function duplicateTemplate(template: OcrTemplate) {
+    const now = new Date().toISOString()
+    const copy: OcrTemplate = {
+      ...structuredClone(template),
+      id: crypto.randomUUID(),
+      name: t('settings.ocrCopyName', { name: template.name }),
+      fieldPatterns: template.fieldPatterns?.map((pattern) => ({ ...pattern, id: crypto.randomUUID() })),
+      rollbackSnapshot: undefined,
+      createdAt: now,
+      updatedAt: now,
+    }
+    await onSaveLedger({ ...ledger, ocrTemplates: [...templates, copy] })
+  }
+
+  async function resetTemplateLearning(template: OcrTemplate) {
+    if (!window.confirm(t('settings.ocrResetConfirm'))) return
+    const fieldPatterns = template.fieldPatterns?.map((pattern) => ({
+      ...pattern,
+      anchorTexts: pattern.anchorText ? [pattern.anchorText] : [],
+      sampleShapes: pattern.sampleShape ? [pattern.sampleShape] : [],
+      successes: 1,
+      failures: 0,
+    }))
+    const identityAnchors = [...new Set((fieldPatterns ?? []).map((pattern) => pattern.anchorText).filter((value): value is string => Boolean(value)))].slice(0, 12)
+    await patchTemplate(template.id, {
+      fieldPatterns,
+      identityAnchors,
+      blockPattern: template.schemaVersion === 2 ? { anchorTexts: identityAnchors.slice(0, 4), repeat: true } : template.blockPattern,
+      aspectRatios: template.aspectRatio ? [template.aspectRatio] : [],
+      visualFingerprints: template.visualFingerprint ? [template.visualFingerprint] : [],
+      rollbackSnapshot: undefined,
+    })
+  }
+
+  async function rollbackTemplateLearning(template: OcrTemplate) {
+    const snapshot = template.rollbackSnapshot
+    if (!snapshot) return
+    await patchTemplate(template.id, {
+      aspectRatio: snapshot.aspectRatio,
+      aspectRatios: snapshot.aspectRatios,
+      fieldPatterns: snapshot.fieldPatterns,
+      visualFingerprint: snapshot.visualFingerprint,
+      visualFingerprints: snapshot.visualFingerprints,
+      blockPattern: snapshot.blockPattern,
+      identityAnchors: snapshot.identityAnchors,
+      rollbackSnapshot: undefined,
+    })
+  }
+
   if (!editable) {
     return <Card className="p-5">
       <EmptyState
@@ -177,10 +240,31 @@ export function SharedProfileSettings({
       <Card className="p-4 sm:p-5">
         <div className="flex items-start gap-3"><ScanText size={18} className="mt-0.5 text-stone-400" /><div><h2 className="font-bold text-stone-900 dark:text-white">{t('settings.ocrTemplates')}</h2><p className="mt-1 text-sm text-stone-500">{t('settings.ocrTemplatesHint')}</p></div></div>
         <div className="mt-4 space-y-2">
-          {templates.length === 0 ? <div className="rounded-xl bg-stone-50 p-3 text-sm text-stone-500 dark:bg-stone-950">{t('settings.noOcrTemplates')}</div> : templates.map((template) => <div key={template.id} className="flex items-center gap-3 rounded-xl border border-stone-200 p-3 dark:border-stone-800">
-            <div className="min-w-0 flex-1"><div className="truncate font-bold text-stone-800 dark:text-stone-100">{template.name}</div><div className="text-xs text-stone-500">{t('settings.regionCount', { count: template.regions.length })}</div></div>
-            <Button variant="ghost" className="px-2 text-rose-500" onClick={() => void removeTemplate(template.id)}><Trash2 size={16} /></Button>
-          </div>)}
+          {templates.length === 0 ? <div className="rounded-xl bg-stone-50 p-3 text-sm text-stone-500 dark:bg-stone-950">{t('settings.noOcrTemplates')}</div> : templates.map((template) => {
+            const patternCount = template.fieldPatterns?.length ?? 0
+            const visualCount = template.visualFingerprints?.length ?? (template.visualFingerprint ? 1 : 0)
+            const anchorCount = template.identityAnchors?.length ?? 0
+            const successCount = (template.fieldPatterns ?? []).reduce((sum, pattern) => sum + (pattern.successes ?? 0), 0)
+            const failureCount = (template.fieldPatterns ?? []).reduce((sum, pattern) => sum + (pattern.failures ?? 0), 0)
+            const quarantinedCount = (template.fieldPatterns ?? []).filter((pattern) => isOcrPatternQuarantined(pattern.successes, pattern.failures)).length
+            return <div key={template.id} className={`rounded-xl border p-3 ${template.enabled === false ? 'bg-stone-50/60 opacity-70 dark:bg-stone-950/30' : ''} border-stone-200 dark:border-stone-800`}>
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2"><div className="truncate font-bold text-stone-800 dark:text-stone-100">{template.name}</div><Badge tone={template.enabled === false ? undefined : 'green'}>{template.enabled === false ? t('settings.ocrDisabled') : t('settings.ocrEnabled')}</Badge><Badge>{template.schemaVersion === 2 ? 'v2' : 'v1'}</Badge></div>
+                  <div className="mt-1 text-xs text-stone-500">{template.schemaVersion === 2 ? t('settings.ocrPatternStats', { patterns: patternCount, anchors: anchorCount, visuals: visualCount }) : t('settings.regionCount', { count: template.regions.length })}</div>
+                  {template.schemaVersion === 2 && <div className={`mt-1 text-[11px] ${quarantinedCount ? 'text-amber-600 dark:text-amber-300' : 'text-stone-400'}`}>{t('settings.ocrLearningStats', { successes: successCount, failures: failureCount, quarantined: quarantinedCount })}</div>}
+                </div>
+                <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                  <Button variant="ghost" className="px-2" title={template.enabled === false ? t('settings.ocrEnable') : t('settings.ocrDisable')} onClick={() => void patchTemplate(template.id, { enabled: template.enabled === false ? true : false })}><Power size={16} /></Button>
+                  <Button variant="ghost" className="px-2" title={t('settings.ocrRename')} onClick={() => void renameTemplate(template)}><Pencil size={16} /></Button>
+                  <Button variant="ghost" className="px-2" title={t('settings.ocrDuplicate')} onClick={() => void duplicateTemplate(template)}><Copy size={16} /></Button>
+                  {template.rollbackSnapshot && <Button variant="ghost" className="px-2" title={t('settings.ocrUndoLearning')} onClick={() => void rollbackTemplateLearning(template)}><Undo2 size={16} /></Button>}
+                  {template.schemaVersion === 2 && <Button variant="ghost" className="px-2" title={t('settings.ocrResetLearning')} onClick={() => void resetTemplateLearning(template)}><RotateCcw size={16} /></Button>}
+                  <Button variant="ghost" className="px-2 text-rose-500" title={t('common.delete')} onClick={() => void removeTemplate(template.id)}><Trash2 size={16} /></Button>
+                </div>
+              </div>
+            </div>
+          })}
         </div>
         <p className="mt-3 text-xs leading-5 text-stone-500">{locale === 'vi' ? 'Template mới được tạo trực tiếp trong Add transaction của shared profile.' : 'New templates are created directly from the shared profile Add transaction flow.'}</p>
       </Card>
