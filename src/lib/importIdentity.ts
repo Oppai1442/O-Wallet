@@ -1,3 +1,27 @@
+function normalizedBlockText(value: string) {
+  return value.normalize('NFKC').toLocaleLowerCase('vi-VN').replace(/\s+/g, ' ').trim()
+}
+
+function fnv1a64(value: string) {
+  let hash = 0xcbf29ce484222325n
+  const bytes = new TextEncoder().encode(value)
+  for (const byte of bytes) {
+    hash ^= BigInt(byte)
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n)
+  }
+  return hash.toString(16).padStart(16, '0')
+}
+
+export function imageImportBlockFingerprint(rawText: string) {
+  const normalized = normalizedBlockText(rawText)
+  return normalized ? fnv1a64(normalized) : undefined
+}
+
+export function buildImageImportBlockRowId(rawText: string, occurrence = 0) {
+  const fingerprint = imageImportBlockFingerprint(rawText)
+  return fingerprint ? `blk:${fingerprint}:${Math.max(0, Math.floor(occurrence))}` : undefined
+}
+
 export function buildImageImportSemanticRowId(input: {
   type: 'expense' | 'income' | 'transfer'
   amount?: number
@@ -43,6 +67,13 @@ export function importSourcesMatch(left?: ExternalImportTrace, right?: ExternalI
   const rightRows = right.sourceRowIds ?? []
   if (!leftRows.length || !rightRows.length) return false
 
+  const leftBlocks = leftRows.filter((id) => id.startsWith('blk:'))
+  const rightBlocks = rightRows.filter((id) => id.startsWith('blk:'))
+  if (leftBlocks.length && rightBlocks.length) {
+    const rightBlockSet = new Set(rightBlocks)
+    if (leftBlocks.some((id) => rightBlockSet.has(id))) return true
+  }
+
   const leftSemantic = leftRows.filter((id) => id.startsWith('sig:'))
   const rightSemantic = rightRows.filter((id) => id.startsWith('sig:'))
   if (leftSemantic.length && rightSemantic.length) {
@@ -71,6 +102,8 @@ function canonicalSourceId(sourceId: string) {
 }
 
 function canonicalRowId(rowIds: string[]) {
+  const blocks = rowIds.filter((id) => id.startsWith('blk:')).sort()
+  if (blocks.length) return blocks[0]
   const semantic = rowIds.filter((id) => id.startsWith('sig:')).sort()
   const occurrence = rowIds.filter((id) => id.startsWith('occ:')).sort()
   if (semantic.length) return occurrence.length ? `${semantic[0]}|${occurrence[0]}` : semantic[0]
