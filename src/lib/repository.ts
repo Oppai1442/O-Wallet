@@ -241,8 +241,13 @@ export class WalletRepository {
     await this.put({ ...transaction, deleted: true, updatedAt: now })
   }
 
-  async saveImage(file: File) {
+  async saveImage(file: File, preferredId?: string) {
     await validateImageFile(file)
+    const requestedId = preferredId?.trim()
+    if (requestedId && (requestedId.length > 160 || !/^[a-zA-Z0-9._:-]+$/.test(requestedId))) throw new Error('error.invalidImageId')
+    const existing = requestedId ? await db.images.get(requestedId) : undefined
+    if (existing && !existing.deleted) return existing
+
     const raw = new Uint8Array(await file.arrayBuffer())
     const header = new TextEncoder().encode(JSON.stringify({
       mimeType: file.type || 'application/octet-stream',
@@ -256,10 +261,10 @@ export class WalletRepository {
 
     const deviceId = await getDeviceId()
     const now = new Date().toISOString()
-    const id = crypto.randomUUID()
+    const id = requestedId || crypto.randomUUID()
     const row: EncryptedImageRow = {
       id,
-      version: 1,
+      version: (existing?.version ?? 0) + 1,
       updatedAt: now,
       deviceId,
       deleted: false,
