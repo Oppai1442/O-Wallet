@@ -553,6 +553,12 @@ export function ImageImportMode({
   }
 
   function updateDraft(next: BatchOcrDraft) {
+    setReviewedIds((current) => {
+      if (!current.has(next.id)) return current
+      const updated = new Set(current)
+      updated.delete(next.id)
+      return updated
+    })
     const compatibleCategories = selectableCategories(categories, next.type)
     const account = accounts.find((item) => item.id === next.accountId)
     const allowedCurrencies = account ? accountCurrencies(account) : []
@@ -681,14 +687,15 @@ export function ImageImportMode({
 
   async function changeActive(nextId: string) {
     const current = drafts.find((draft) => draft.id === activeId)
-    if (current) {
-      const nextReviewed = new Set(reviewedIds)
+    let nextReviewed = reviewedIds
+    if (current && !reviewedIds.has(current.id)) {
+      nextReviewed = new Set(reviewedIds)
       nextReviewed.add(current.id)
       setReviewedIds(nextReviewed)
       try { await learnFromDraft(current, nextReviewed) } catch { /* corrections still remain in the draft */ }
     }
     setActiveId(nextId)
-    void persistCheckpoint(analyses, drafts, new Set([...reviewedIds, ...(current ? [current.id] : [])]), nextId)
+    void persistCheckpoint(analyses, drafts, nextReviewed, nextId)
   }
 
   async function upgradeLegacyTemplate() {
@@ -743,7 +750,7 @@ export function ImageImportMode({
 
   async function saveSelected() {
     if (!repository || saving) return
-    if (active) {
+    if (active && !reviewedIds.has(active.id)) {
       const nextReviewed = new Set(reviewedIds)
       nextReviewed.add(active.id)
       setReviewedIds(nextReviewed)
