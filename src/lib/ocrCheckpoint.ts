@@ -69,7 +69,7 @@ export function sanitizeOcrTileResumeMap(value: unknown) {
   const result: Record<string, OcrTileResumeState> = {}
   if (!value || typeof value !== 'object' || Array.isArray(value)) return result
   for (const [key, candidate] of Object.entries(value as Record<string, unknown>).slice(0, MAX_IMAGES_PER_BATCH)) {
-    if (!/^(?:sample-sha256-v1|sha256-v2):\d+:[a-f0-9]{64}$/i.test(key)) continue
+    if (!/^(?:(?:sample-sha256-v1|sha256-v2):\d+:[a-f0-9]{64})(?:\|(?:sample-sha256-v1|sha256-v2):\d+:[a-f0-9]{64})?$/i.test(key)) continue
     const state = sanitizeOcrTileResumeState(candidate)
     if (state) result[key] = state
   }
