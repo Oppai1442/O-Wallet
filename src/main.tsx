@@ -19,7 +19,13 @@ if (window.top !== window.self) {
   // inside a third-party frame to reduce clickjacking risk.
   root.textContent = 'O-Wallet cannot run inside another page.'
 } else if (import.meta.env.VITE_OCR_E2E === '1') {
-  void import('./ocrVisualE2E').then(({ runOcrVisualE2E }) => runOcrVisualE2E(root))
+  void import('./ocrVisualE2E').then(({ mountOcrCalibrationHarness, runOcrVisualE2E }) => {
+    if (new URLSearchParams(window.location.search).get('calibration') === '1') {
+      mountOcrCalibrationHarness(root)
+    } else {
+      void runOcrVisualE2E(root)
+    }
+  })
 } else {
   createRoot(root).render(
     <StrictMode>

@@ -1,7 +1,7 @@
 {
   "name": "o-wallet",
   "private": true,
-  "version": "0.19.1",
+  "version": "0.19.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,8 @@
     "security:dist": "node scripts/dist-security-check.mjs",
     "test:ocr": "node scripts/ocr-heuristics-regression.mjs",
     "check": "npm run security:check && npm run test:ocr && npm run build && npm run security:dist",
-    "test:ocr:visual": "node scripts/ocr-visual-e2e.mjs"
+    "test:ocr:visual": "node scripts/ocr-visual-e2e.mjs",
+    "test:ocr:calibration": "node scripts/ocr-calibration-e2e.mjs"
   },
   "cloudflare": {
     "bindings": {

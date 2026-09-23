@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "sanitized-history-long-light",
+      "file": "sanitized-history-long-light.png",
+      "mimeType": "image/png",
+      "languages": ["vie", "eng"],
+      "tileHeight": 1400,
+      "overlap": 160,
+      "expect": {
+        "minBlocks": 3,
+        "maxBlocks": 3,
+        "minBoxes": 18,
+        "expectedAmounts": [125000, 250000, 99000],
+        "minAmountHits": 3,
+        "minAverageBlockConfidence": 55
+      },
+      "template": {
+        "sourceBlock": 0,
+        "hints": [
+          { "contains": "số tiền", "field": "amount" },
+          { "contains": "thời gian", "field": "occurredAt" },
+          { "contains": "người nhận", "field": "merchant" },
+          { "contains": "nội dung", "field": "description" }
+        ],
+        "minBlocks": 3,
+        "minScore": 0.35,
+        "minAmountHits": 3
+      }
+    }
+  ]
+}
