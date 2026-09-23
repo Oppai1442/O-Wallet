@@ -19,6 +19,8 @@ on:
       - 'src/main.tsx'
       - 'vite.config.ts'
       - 'scripts/ocr-visual-e2e.mjs'
+      - 'scripts/ocr-calibration-e2e.mjs'
+      - 'tests/ocr-calibration/**'
       - 'package.json'
       - '.github/workflows/ocr-visual-e2e.yml'
   workflow_dispatch:
@@ -57,11 +59,14 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Cache English OCR language data locally
+      - name: Cache OCR language data locally
         shell: bash
         run: |
           mkdir -p public/tessdata
           curl -fsSL --retry 3 --retry-delay 2 https://tessdata.projectnaptha.com/4.0.0/eng.traineddata.gz -o public/tessdata/eng.traineddata.gz
+          if [ -f tests/ocr-calibration/manifest.json ]; then
+            curl -fsSL --retry 3 --retry-delay 2 https://tessdata.projectnaptha.com/4.0.0/vie.traineddata.gz -o public/tessdata/vie.traineddata.gz
+          fi
 
       - name: Build OCR visual harness
         run: npm run build
@@ -70,6 +75,9 @@ jobs:
 
       - name: Run synthetic visual OCR E2E
         run: npm run test:ocr:visual
+
+      - name: Run real-fixture OCR calibration
+        run: npm run test:ocr:calibration
 
       - name: Upload failure diagnostics
         if: failure()
@@ -80,3 +88,5 @@ jobs:
           path: |
             ocr-visual-e2e-failure.png
             ocr-visual-e2e-result.json
+            ocr-calibration-e2e-failure.png
+            ocr-calibration-e2e-result.json
