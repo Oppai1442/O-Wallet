@@ -1,6 +1,51 @@
 import { buildDetectedLines, buildPatternTemplate, detectTransactionBlocks, rankOcrTemplates, recognizeImageTiled } from './lib/ocr'
 import type { OcrField, OcrResult } from './types'
 
+type OcrCalibrationField = Exclude<OcrField, 'ignore' | 'generic'>
+
+type OcrCalibrationInput = {
+  name: string
+  base64: string
+  mimeType?: string
+  languages?: string[]
+  tileHeight?: number
+  overlap?: number
+  expect?: {
+    minBlocks?: number
+    maxBlocks?: number
+    minBoxes?: number
+    expectedAmounts?: number[]
+    minAmountHits?: number
+    minAverageBlockConfidence?: number
+  }
+  template?: {
+    sourceBlock?: number
+    hints: Array<{ contains: string; field: OcrCalibrationField }>
+    minBlocks?: number
+    minScore?: number
+    minAmountHits?: number
+  }
+}
+
+type OcrCalibrationResult = {
+  name: string
+  width: number
+  height: number
+  boxes: number
+  blocks: number
+  amountCount: number
+  amountHits: number
+  averageBlockConfidence: number
+  tileCount: number
+  retryCount: number
+  template?: {
+    blocks: number
+    score: number
+    amountCount: number
+    amountHits: number
+  }
+}
+
 declare global {
   interface Window {
     __OWALLET_OCR_E2E__?: {
@@ -20,6 +65,7 @@ declare global {
       }>
       error?: string
     }
+    __OWALLET_OCR_CALIBRATE__?: (input: OcrCalibrationInput) => Promise<OcrCalibrationResult>
   }
 }
 
@@ -93,6 +139,160 @@ async function syntheticCapture({
 function expectedAmountHits(amounts: number[], cards: number) {
   const expected = new Set(Array.from({ length: cards }, (_, index) => (index + 1) * 100000))
   return amounts.filter((amount) => expected.has(Math.round(amount))).length
+}
+
+
+function calibrationBlob(base64: string, mimeType = 'image/png') {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+  return new Blob([bytes], { type: mimeType })
+}
+
+function calibrationAmountHits(actual: number[], expected: number[]) {
+  const used = new Set<number>()
+  let hits = 0
+  for (const target of expected) {
+    const match = actual.findIndex((value, index) => !used.has(index) && Math.abs(value - target) <= 0.01)
+    if (match >= 0) {
+      used.add(match)
+      hits += 1
+    }
+  }
+  return hits
+}
+
+function average(values: number[]) {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0
+}
+
+function assertMinimum(name: string, label: string, actual: number, expected?: number) {
+  if (expected !== undefined && actual < expected) throw new Error(`${name}: ${label} below expectation (${actual}/${expected})`)
+}
+
+function assertMaximum(name: string, label: string, actual: number, expected?: number) {
+  if (expected !== undefined && actual > expected) throw new Error(`${name}: ${label} above expectation (${actual}/${expected})`)
+}
+
+function resultForCalibrationBlock(result: OcrResult, y: number, height: number) {
+  const y0 = Math.max(0, y)
+  const y1 = Math.max(y0 + 1, y + height)
+  const boxes = result.boxes.filter((box) => {
+    const center = (box.bbox.y0 + box.bbox.y1) / 2
+    return center >= y0 && center <= y1
+  }).map((box) => ({
+    ...box,
+    bbox: {
+      ...box.bbox,
+      y0: box.bbox.y0 - y0,
+      y1: box.bbox.y1 - y0,
+    },
+  }))
+  return {
+    text: boxes.map((box) => box.text).join(' '),
+    boxes,
+  }
+}
+
+async function runOcrCalibrationCase(input: OcrCalibrationInput): Promise<OcrCalibrationResult> {
+  const name = input.name?.trim()
+  if (!name) throw new Error('calibration case requires a name')
+  if (!input.base64) throw new Error(`${name}: fixture payload is empty`)
+
+  const languages = input.languages?.map((language) => language.trim()).filter(Boolean)
+  const ocr = await recognizeImageTiled(calibrationBlob(input.base64, input.mimeType), undefined, {
+    tileHeight: input.tileHeight,
+    overlap: input.overlap,
+    retries: 1,
+    watchdogMs: 45_000,
+    workerInitTimeoutMs: 30_000,
+    languages: languages?.length ? languages : ['vie', 'eng'],
+    langPath: new URL('./tessdata', window.location.href).href,
+  })
+
+  const blocks = detectTransactionBlocks(ocr.result, ocr.width, ocr.height, undefined, ocr.visual)
+  const amounts = blocks.flatMap((block) => block.candidate.amount !== undefined ? [block.candidate.amount] : [])
+  const expectedAmounts = input.expect?.expectedAmounts ?? []
+  const amountHits = calibrationAmountHits(amounts, expectedAmounts)
+  const averageBlockConfidence = average(blocks.map((block) => block.confidence))
+
+  assertMinimum(name, 'OCR boxes', ocr.result.boxes.length, input.expect?.minBoxes)
+  assertMinimum(name, 'transaction blocks', blocks.length, input.expect?.minBlocks)
+  assertMaximum(name, 'transaction blocks', blocks.length, input.expect?.maxBlocks)
+  assertMinimum(name, 'average block confidence', averageBlockConfidence, input.expect?.minAverageBlockConfidence)
+  if (expectedAmounts.length) {
+    assertMinimum(name, 'expected amount hits', amountHits, input.expect?.minAmountHits ?? expectedAmounts.length)
+  }
+
+  let templateResult: OcrCalibrationResult['template']
+  if (input.template) {
+    const sourceIndex = Math.max(0, Math.floor(input.template.sourceBlock ?? 0))
+    const sourceBlock = blocks[sourceIndex]
+    if (!sourceBlock) throw new Error(`${name}: template source block is unavailable`)
+
+    const sourceResult = resultForCalibrationBlock(ocr.result, sourceBlock.bbox.y, sourceBlock.bbox.height)
+    const sourceLines = buildDetectedLines(sourceResult, ocr.width, Math.max(1, sourceBlock.bbox.height))
+    const mappings: Record<string, OcrField | ''> = {}
+    for (const line of sourceLines) {
+      const text = line.text.toLocaleLowerCase('vi-VN')
+      const hint = input.template.hints.find((candidate) => {
+        const needle = candidate.contains.trim().toLocaleLowerCase('vi-VN')
+        return needle.length > 0 && text.includes(needle)
+      })
+      if (hint) mappings[line.id] = hint.field
+    }
+    if (Object.values(mappings).filter(Boolean).length < 2) {
+      throw new Error(`${name}: template hints matched fewer than two OCR lines`)
+    }
+
+    const template = buildPatternTemplate(`Calibration ${name}`, sourceLines, mappings, ocr.visual)
+    const ranked = rankOcrTemplates([template], ocr.result, ocr.width, ocr.height, ocr.visual)[0]
+    if (!ranked) throw new Error(`${name}: template ranking returned no result`)
+
+    const templateBlocks = detectTransactionBlocks(ocr.result, ocr.width, ocr.height, template, ocr.visual)
+    const templateAmounts = templateBlocks.flatMap((block) => block.candidate.amount !== undefined ? [block.candidate.amount] : [])
+    const templateAmountHits = calibrationAmountHits(templateAmounts, expectedAmounts)
+    assertMinimum(name, 'template blocks', templateBlocks.length, input.template.minBlocks)
+    assertMinimum(name, 'template score', ranked.score, input.template.minScore)
+    if (expectedAmounts.length) {
+      assertMinimum(name, 'template expected amount hits', templateAmountHits, input.template.minAmountHits ?? expectedAmounts.length)
+    }
+    templateResult = {
+      blocks: templateBlocks.length,
+      score: ranked.score,
+      amountCount: templateAmounts.length,
+      amountHits: templateAmountHits,
+    }
+  }
+
+  return {
+    name,
+    width: ocr.width,
+    height: ocr.height,
+    boxes: ocr.result.boxes.length,
+    blocks: blocks.length,
+    amountCount: amounts.length,
+    amountHits,
+    averageBlockConfidence,
+    tileCount: ocr.diagnostics.tileCount,
+    retryCount: ocr.diagnostics.retryCount,
+    template: templateResult,
+  }
+}
+
+export function mountOcrCalibrationHarness(root: HTMLElement) {
+  window.__OWALLET_OCR_E2E__ = undefined
+  window.__OWALLET_OCR_CALIBRATE__ = runOcrCalibrationCase
+  const main = document.createElement('main')
+  main.style.fontFamily = 'system-ui'
+  main.style.padding = '24px'
+  const title = document.createElement('h1')
+  title.textContent = 'O-Wallet OCR calibration harness'
+  const status = document.createElement('p')
+  status.id = 'status'
+  status.textContent = 'Ready for sanitized real-world fixtures.'
+  main.append(title, status)
+  root.replaceChildren(main)
 }
 
 async function runScenario(name: string, cards: number, dark: boolean, jitter: number) {
