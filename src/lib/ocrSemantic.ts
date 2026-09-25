@@ -115,3 +115,131 @@ export function suggestOcrMappings(lines: OcrDetectedLine[], minConfidence = 0.7
   }
   return mappings
 }
+
+
+export interface OcrCustomInputMatch {
+  line: OcrDetectedLine
+  field: OcrField
+  confidence: number
+  prefix?: string
+  suffix?: string
+  exactSubstring: boolean
+}
+
+function compactWords(value: string) {
+  return normalized(value).split(' ').filter(Boolean)
+}
+
+function textSimilarity(left: string, right: string) {
+  const a = new Set(compactWords(left))
+  const b = new Set(compactWords(right))
+  if (!a.size || !b.size) return 0
+  let intersection = 0
+  for (const token of a) if (b.has(token)) intersection += 1
+  return intersection / Math.max(a.size, b.size)
+}
+
+function moneyCandidates(text: string) {
+  const chunks = text.match(/[-+]?\d[\d\s.,]{1,24}(?:\s*(?:đ|₫|vnd|usd|eur))?/gi) ?? []
+  return chunks.map((chunk) => parseMoneyText(chunk)).filter((value): value is number => value !== undefined)
+}
+
+function surroundingContext(lineText: string, expected: string) {
+  const line = normalized(lineText)
+  const target = normalized(expected)
+  const index = target ? line.indexOf(target) : -1
+  if (index < 0) return {}
+  const before = line.slice(0, index).trim().split(' ').filter(Boolean)
+  const after = line.slice(index + target.length).trim().split(' ').filter(Boolean)
+  return {
+    prefix: before.slice(-6).join(' ') || undefined,
+    suffix: after.slice(0, 6).join(' ') || undefined,
+  }
+}
+
+export function findOcrCustomInputMatch(lines: OcrDetectedLine[], field: OcrField, expected: string): OcrCustomInputMatch | undefined {
+  const target = expected.trim()
+  if (!target || field === 'generic' || field === 'ignore') return undefined
+  const targetNormalized = normalized(target)
+  const targetMoney = field === 'amount' || field === 'balanceAfter' ? parseMoneyText(target) : undefined
+  const targetDate = field === 'occurredAt' ? parseDateTimeText(target) : undefined
+  const ranked = lines.map((line) => {
+    const lineNormalized = normalized(line.text)
+    let score = 0
+    let exactSubstring = false
+    if (targetNormalized && lineNormalized.includes(targetNormalized)) {
+      exactSubstring = true
+      score = targetNormalized === lineNormalized ? 1 : 0.97
+    } else if (targetMoney !== undefined && moneyCandidates(line.text).some((value) => Math.abs(value - targetMoney) <= 0.01)) {
+      score = 0.96
+    } else if (targetDate) {
+      const parsed = parseDateTimeText(line.text)
+      if (parsed && Math.abs(Date.parse(parsed) - Date.parse(targetDate)) <= 60_000) score = 0.95
+    } else if (field === 'merchant' || field === 'description') {
+      score = textSimilarity(line.text, target) * 0.88
+    }
+    return { line, score, exactSubstring }
+  }).filter((item) => item.score >= 0.58).sort((a, b) => b.score - a.score || b.line.confidence - a.line.confidence)
+  const best = ranked[0]
+  if (!best) return undefined
+  const context = best.exactSubstring ? surroundingContext(best.line.text, target) : {}
+  return {
+    line: best.line,
+    field,
+    confidence: Math.min(1, best.score * 0.85 + Math.max(0, Math.min(1, best.line.confidence / 100)) * 0.15),
+    prefix: context.prefix,
+    suffix: context.suffix,
+    exactSubstring: best.exactSubstring,
+  }
+}
+
+function comparableWithMap(value: string) {
+  let normalizedText = ''
+  const map: number[] = []
+  let previousSpace = false
+  for (let index = 0; index < value.length; index += 1) {
+    const folded = value[index]
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/gi, 'd')
+      .toLocaleLowerCase('vi-VN')
+    for (const char of folded) {
+      const isWord = /[a-z0-9]/.test(char)
+      if (isWord) {
+        normalizedText += char
+        map.push(index)
+        previousSpace = false
+      } else if (!previousSpace && normalizedText.length) {
+        normalizedText += ' '
+        map.push(index)
+        previousSpace = true
+      }
+    }
+  }
+  while (normalizedText.endsWith(' ')) {
+    normalizedText = normalizedText.slice(0, -1)
+    map.pop()
+  }
+  return { text: normalizedText, map }
+}
+
+export function extractBetweenOcrContexts(line: string, prefixes?: string[], suffixes?: string[]) {
+  const source = comparableWithMap(line)
+  const prefixMatches = (prefixes ?? []).map(normalized).filter(Boolean).map((prefix) => {
+    const index = source.text.indexOf(prefix)
+    return index < 0 ? undefined : { index, end: index + prefix.length }
+  }).filter((value): value is { index: number; end: number } => Boolean(value)).sort((a, b) => b.end - a.end)
+  const startNormalized = prefixMatches[0]?.end ?? 0
+  const suffixMatches = (suffixes ?? []).map(normalized).filter(Boolean).map((suffix) => {
+    const index = source.text.indexOf(suffix, startNormalized)
+    return index < 0 ? undefined : { index }
+  }).filter((value): value is { index: number } => Boolean(value)).sort((a, b) => a.index - b.index)
+  const endNormalized = suffixMatches[0]?.index ?? source.text.length
+  if ((!prefixMatches.length && !suffixMatches.length) || endNormalized <= startNormalized) return undefined
+  let start = source.map[Math.min(startNormalized, source.map.length - 1)] ?? 0
+  let end = endNormalized >= source.map.length ? line.length : (source.map[endNormalized] ?? line.length)
+  while (start < end && /[\s:：\-–—\[\](){}]/.test(line[start])) start += 1
+  while (end > start && /[\s:：\-–—\[\](){}]/.test(line[end - 1])) end -= 1
+  const extracted = line.slice(start, end).trim()
+  return extracted || undefined
+}
