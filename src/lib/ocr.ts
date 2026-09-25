@@ -844,6 +844,16 @@ function candidateValueFromLine(line: string, pattern: OcrFieldPattern) {
 function findPatternLine(lines: OcrDetectedLine[], pattern: OcrFieldPattern, ignoreQuarantine = false) {
   if (!ignoreQuarantine && isOcrPatternQuarantined(pattern.successes, pattern.failures)) return undefined
   const reliability = ocrPatternReliability(pattern.successes, pattern.failures)
+  const hasContextSlot = Boolean(pattern.contextPrefixes?.length || pattern.contextSuffixes?.length)
+  if (hasContextSlot) {
+    const contextual = lines.map((line) => ({
+      line,
+      extraction: extractBetweenOcrContextsDetailed(line.text, pattern.contextPrefixes, pattern.contextSuffixes),
+    })).filter((item) => item.extraction && lineLooksLikeValue(item.extraction.value, pattern.valueType))
+      .sort((a, b) => (b.extraction?.confidence ?? 0) - (a.extraction?.confidence ?? 0) || b.line.confidence - a.line.confidence)
+    const best = contextual[0]
+    if (best?.extraction && best.extraction.confidence >= 0.72) return best.line
+  }
   const anchors = pattern.anchorTexts?.length ? pattern.anchorTexts : pattern.anchorText ? [pattern.anchorText] : []
   if (anchors.length) {
     const normalizedAnchors = anchors.map((value) => normalizeLine(value).toLocaleLowerCase('vi-VN'))
