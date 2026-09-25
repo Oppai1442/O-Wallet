@@ -820,6 +820,13 @@ function patternShapeScore(line: string, pattern: OcrFieldPattern) {
   return shapes.length ? Math.max(...shapes.map((shape) => shapeSimilarity(target, shape))) : 0
 }
 
+function lineMatchesIgnoredPattern(line: OcrDetectedLine, pattern: OcrFieldPattern) {
+  if (pattern.field !== 'ignore') return false
+  const text = normalizeLine(line.text).toLocaleLowerCase('vi-VN')
+  const anchors = pattern.anchorTexts?.length ? pattern.anchorTexts : pattern.anchorText ? [pattern.anchorText] : []
+  return anchors.some((anchor) => text.includes(normalizeLine(anchor).toLocaleLowerCase('vi-VN')))
+}
+
 function candidateValueFromLine(line: string, pattern: OcrFieldPattern) {
   if (pattern.valueType === 'money') return parseMoneyText(line)
   if (pattern.valueType === 'datetime') return parseDateTimeText(line)
@@ -865,10 +872,18 @@ export function parseTransactionWithTemplate(
     return template.regions.length ? parseTransactionFromRegions(result, template.regions, width, height) : parseTransactionFromOcr(result)
   }
   const lines = buildDetectedLines(result, width, height)
-  const base = parseTransactionFromOcr(result)
+  const ignoredPatterns = template.fieldPatterns.filter((pattern) => pattern.field === 'ignore')
+  const semanticLines = ignoredPatterns.length
+    ? lines.filter((line) => !ignoredPatterns.some((pattern) => lineMatchesIgnoredPattern(line, pattern)))
+    : lines
+  const semanticResult: OcrResult = semanticLines.length === lines.length
+    ? result
+    : { ...result, text: semanticLines.map((line) => line.text).join('\n') }
+  const base = parseTransactionFromOcr(semanticResult)
   const values: Partial<Record<OcrField, unknown>> = {}
   for (const pattern of template.fieldPatterns) {
-    const line = findPatternLine(lines, pattern)
+    if (pattern.field === 'ignore' || pattern.field === 'generic') continue
+    const line = findPatternLine(semanticLines, pattern)
     if (!line) continue
     values[pattern.field] = candidateValueFromLine(line.text, pattern)
   }
