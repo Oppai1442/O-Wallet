@@ -83,7 +83,8 @@ const {
 
 const { sourceFingerprint } = fingerprintModule
 const { sanitizeOcrTileResumeState, sanitizeOcrTileResumeMap } = checkpointModule
-const { buildImageImportBlockRowId, buildImageImportSemanticRowId, imageImportBlockFingerprint, imageImportImageId, imageImportRecordId, importSourcesMatch, sourceIdsMatch } = importIdentityModule
+const { findOcrCustomInputMatch, extractBetweenOcrContexts, extractBetweenOcrContextsDetailed } = ocrSemanticModule
+const { buildImageImportBlockRowId, buildImageImportSemanticRowId, canonicalImageImportTransaction, imageImportBlockFingerprint, imageImportImageId, imageImportRecordId, imageImportTransactionHash, importSourcesMatch, sourceIdsMatch } = importIdentityModule
 const { decodeCheckpointValue, encodeCheckpointValue, isCompressedCheckpoint } = checkpointCodecModule
 
 const smallCheckpoint = { version: 2, drafts: [{ id: 'one', amount: '100000' }] }
@@ -105,6 +106,12 @@ const canonicalSigB = buildImageImportSemanticRowId({type:'expense',amount:10000
 assert.equal(canonicalSigA, canonicalSigB, 'semantic row signatures should canonicalize case and whitespace')
 assert.notEqual(canonicalSigA, buildImageImportSemanticRowId({type:'expense',amount:200000,occurredAt:'2026-09-21T10:00:00.000Z',merchant:'nguyễn văn a'}))
 assert.notEqual(canonicalSigA, buildImageImportSemanticRowId({type:'expense',amount:100000,occurredAt:'2026-09-21T10:01:00.000Z',merchant:'nguyễn văn a'}))
+
+const canonicalTxA = canonicalImageImportTransaction({type:'transfer',amount:5000000,currency:'vnd',occurredAt:'2026-09-25T13:42:10.000Z',accountId:'main',merchant:' Nguyễn  Văn A ',description:'Chuyển tiền'})
+const canonicalTxB = canonicalImageImportTransaction({type:'transfer',amount:5000000.0,currency:'VND',occurredAt:'2026-09-25T13:42:59.000Z',accountId:'main',merchant:'nguyen van a',description:'chuyen tien'})
+assert.equal(canonicalTxA, canonicalTxB, 'transaction conflict canonicalization should ignore accents, case, spacing and seconds')
+assert.equal(await imageImportTransactionHash({type:'transfer',amount:5000000,currency:'VND',occurredAt:'2026-09-25T13:42:10.000Z',accountId:'main',merchant:'NGUYEN VAN A',description:'CHUYEN TIEN'}), await imageImportTransactionHash({type:'transfer',amount:5000000,currency:'vnd',occurredAt:'2026-09-25T13:42:59.000Z',accountId:'main',merchant:'Nguyễn Văn A',description:'Chuyển tiền'}))
+assert.notEqual(await imageImportTransactionHash({type:'transfer',amount:5000000,currency:'VND',occurredAt:'2026-09-25T13:42:10.000Z',accountId:'main',merchant:'A'}), await imageImportTransactionHash({type:'transfer',amount:6000000,currency:'VND',occurredAt:'2026-09-25T13:42:10.000Z',accountId:'main',merchant:'A'}))
 
 const blockFpA = imageImportBlockFingerprint('  Amount: 100.000 VND\nRecipient: NGUYEN VAN A  ')
 const blockFpB = imageImportBlockFingerprint('amount: 100.000 vnd recipient: nguyen van a')
@@ -398,3 +405,28 @@ assert.equal(separateRows.length, 2)
 
 fs.rmSync(outDir, { recursive: true, force: true })
 console.log('OCR heuristic regression PASS')
+
+
+const customInputLines = [
+  {id:'sentence',text:'Đã chuyển tiền tới tài khoản [Nguyễn Văn A] với số tiền 500.000đ',confidence:94,x:0,y:0,width:1,height:0.1},
+  {id:'reference',text:'Mã tham chiếu 123456789',confidence:97,x:0,y:0.1,width:1,height:0.1},
+]
+const merchantCustomMatch = findOcrCustomInputMatch(customInputLines, 'merchant', 'nguyen van a')
+assert.equal(merchantCustomMatch?.line.id, 'sentence')
+assert.equal(merchantCustomMatch?.exactSubstring, true)
+assert.equal(merchantCustomMatch?.prefix, 'da chuyen tien toi tai khoan')
+assert.equal(merchantCustomMatch?.suffix, 'voi so tien 500 000d')
+assert.equal(extractBetweenOcrContexts(customInputLines[0].text, [merchantCustomMatch.prefix], [merchantCustomMatch.suffix]), 'Nguyễn Văn A')
+const amountCustomMatch = findOcrCustomInputMatch(customInputLines, 'amount', '500000')
+assert.equal(amountCustomMatch?.line.id, 'sentence')
+assert.equal(findOcrCustomInputMatch(customInputLines, 'merchant', 'không tồn tại'), undefined)
+
+
+// Fuzzy contextual slots tolerate small OCR/layout-anchor mutations while keeping the value boundary.
+assert.equal(extractBetweenOcrContexts('abcdyz Trần Văn B zxcvbnm', ['abcdyx'], ['zxcvbnm']), 'Trần Văn B')
+const fuzzySlot = extractBetweenOcrContextsDetailed('abcdyz Công ty ABC zxcvbnm', ['abcdyx'], ['zxcvbnm'])
+assert.equal(fuzzySlot?.value, 'Công ty ABC')
+assert.equal(fuzzySlot?.fuzzy, true)
+assert.ok((fuzzySlot?.confidence ?? 0) >= 0.72)
+assert.equal(extractBetweenOcrContexts('Đã chuyển tiền đến tài khoản [Trần Văn B] với số tiền 700.000đ', ['da chuyen tien toi tai khoan'], ['voi so tien 500 000d']), 'Trần Văn B')
+assert.equal(extractBetweenOcrContexts('unrelated header Nguyễn Văn C unrelated footer', ['abcdyx'], ['zxcvbnm']), undefined)

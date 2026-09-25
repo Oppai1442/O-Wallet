@@ -123,3 +123,55 @@ export async function imageImportImageId(sourceId: string) {
   const hex = [...digest.slice(0, 16)].map((value) => value.toString(16).padStart(2, '0')).join('')
   return `ocr-image-${hex}`
 }
+
+
+function canonicalTransactionText(value?: string) {
+  return (value ?? '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/gi, 'd')
+    .toLocaleLowerCase('vi-VN')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160)
+}
+
+export function canonicalImageImportTransaction(input: {
+  type: 'expense' | 'income' | 'transfer'
+  amount: number
+  currency?: string
+  occurredAt?: string
+  accountId?: string
+  merchant?: string
+  description?: string
+}) {
+  const amount = Number.isFinite(input.amount) ? String(Math.round(input.amount * 100) / 100) : ''
+  const occurredAt = input.occurredAt ? new Date(input.occurredAt) : undefined
+  const minute = occurredAt && Number.isFinite(occurredAt.getTime())
+    ? occurredAt.toISOString().slice(0, 16)
+    : ''
+  return [
+    input.type,
+    amount,
+    (input.currency ?? '').trim().toUpperCase(),
+    minute,
+    input.accountId ?? '',
+    canonicalTransactionText(input.merchant),
+    canonicalTransactionText(input.description),
+  ].join('|')
+}
+
+export async function imageImportTransactionHash(input: {
+  type: 'expense' | 'income' | 'transfer'
+  amount: number
+  currency?: string
+  occurredAt?: string
+  accountId?: string
+  merchant?: string
+  description?: string
+}) {
+  const canonical = canonicalImageImportTransaction(input)
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical)))
+  return [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
+}

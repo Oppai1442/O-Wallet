@@ -6,7 +6,7 @@ import { localizeError, useI18n } from '../i18n'
 import { accountCurrencies } from '../lib/accounts'
 import { findDuplicateTransaction } from '../lib/duplicates'
 import { sourceFingerprint } from '../lib/fileFingerprint'
-import { buildImageImportBlockRowId, buildImageImportSemanticRowId, imageImportBlockFingerprint, imageImportImageId, imageImportRecordId, importSourcesMatch, sourceIdsMatch } from '../lib/importIdentity'
+import { buildImageImportBlockRowId, buildImageImportSemanticRowId, imageImportBlockFingerprint, imageImportImageId, imageImportRecordId, imageImportTransactionHash, importSourcesMatch, sourceIdsMatch } from '../lib/importIdentity'
 import { sanitizeOcrTileResumeMap } from '../lib/ocrCheckpoint'
 import { fromLocalInputDateTime, toLocalInputDateTime } from '../lib/format'
 import {
@@ -23,6 +23,7 @@ import { bboxOverlapRatio, canAutoLearnTemplate, isCredibleTemplateMatch, mapDet
 import { findMatchingTransactionRule } from '../lib/rules'
 import { selectableCategories } from '../lib/categories'
 import { validateImageBatch } from '../lib/security'
+import { findOcrCustomInputMatch, suggestOcrMappings } from '../lib/ocrSemantic'
 import { BatchOcrReview, type BatchOcrDraft } from './BatchOcrReview'
 import { Button, Input, Select } from './ui'
 import { OcrTeachingPanel } from './OcrTeachingPanel'
@@ -236,7 +237,7 @@ export function ImageImportMode({
   async function chooseImages(selected: File[]) {
     setError(undefined)
     try {
-      await validateImageBatch(selected)
+      await validateImageBatch(selected, { unlimitedCount: true })
       const hashes: string[] = []
       for (const file of selected) hashes.push(await sourceFingerprint(file))
       setFiles(selected)
@@ -426,7 +427,7 @@ export function ImageImportMode({
     return {
       id: draftId(fileIndex, block),
       fileIndex,
-      selected: conflict?.level !== 'exact',
+      selected: !conflict,
       type: parsedType,
       amount: amountValue,
       currency: resolvedCurrency,
@@ -447,6 +448,7 @@ export function ImageImportMode({
       sourceHash,
       sourceRowId,
       sourceRowIds,
+      conflictDecision: conflict ? 'pending' : undefined,
       conflict: conflict ? {
         level: conflict.level,
         source: transactions.some((item) => item.id === conflict.transaction.id) ? 'existing' : 'batch',
@@ -470,6 +472,46 @@ export function ImageImportMode({
       visualScore: credibleMatch ? top?.visualScore ?? 0 : 0,
       blocks: detectTransactionBlocks(analysis.result, analysis.width, analysis.height, best, analysis.visual),
     }
+  }
+
+  async function enrichTransactionHashes(input: BatchOcrDraft[]) {
+    const hashes = new Map<string, string[]>()
+    const next = await Promise.all(input.map(async (draft) => {
+      const numericAmount = Number(draft.amount)
+      if (!(numericAmount > 0) || !draft.occurredAt) return draft
+      const transactionHash = await imageImportTransactionHash({
+        type: draft.type,
+        amount: numericAmount,
+        currency: draft.currency,
+        occurredAt: fromLocalInputDateTime(draft.occurredAt),
+        accountId: draft.accountId,
+        merchant: draft.merchant,
+        description: draft.description,
+      })
+      const ids = hashes.get(transactionHash) ?? []
+      ids.push(draft.id)
+      hashes.set(transactionHash, ids)
+      return { ...draft, transactionHash }
+    }))
+    const duplicateHashes = new Set([...hashes.entries()].filter(([, ids]) => ids.length > 1).map(([hash]) => hash))
+    return next.map((draft) => {
+      if (!draft.transactionHash || !duplicateHashes.has(draft.transactionHash) || draft.conflict) return draft
+      const sibling = next.find((candidate) => candidate.id !== draft.id && candidate.transactionHash === draft.transactionHash)
+      if (!sibling) return draft
+      return {
+        ...draft,
+        selected: false,
+        conflictDecision: 'pending' as const,
+        conflict: {
+          level: 'exact' as const,
+          source: 'batch' as const,
+          transactionId: sibling.id,
+          occurredAt: fromLocalInputDateTime(sibling.occurredAt),
+          amount: Number(sibling.amount),
+          merchant: sibling.merchant || undefined,
+        },
+      }
+    })
   }
 
   function buildDraftsFromAnalyses(nextAnalyses: SourceAnalysis[], templates = sessionTemplatesRef.current, preserveReviewed = true, preserveIds = reviewedIdsRef.current) {
@@ -589,10 +631,12 @@ export function ImageImportMode({
           diagnostics: ocr.diagnostics,
         })
         nextAnalyses.sort((a,b)=>a.fileIndex-b.fileIndex)
-        const partialDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true)
+        const partialDrafts = await enrichTransactionHashes(buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true))
+        setDrafts(partialDrafts)
         await persistCheckpoint(nextAnalyses, partialDrafts, reviewedIdsRef.current, partialDrafts[0]?.id, nextPartialTiles)
       }
-      const nextDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true)
+      const nextDrafts = await enrichTransactionHashes(buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true))
+      setDrafts(nextDrafts)
       await persistCheckpoint(nextAnalyses, nextDrafts, reviewedIdsRef.current, activeId ?? nextDrafts[0]?.id, nextPartialTiles)
       setError(undefined)
       setProgress(1)
@@ -733,42 +777,60 @@ export function ImageImportMode({
     }
     setDrafts((current) => {
       const next = refreshDraftSourceIdentities(
-        current.map((draft) => draft.id === normalizedDraft.id ? { ...normalizedDraft, conflict } : draft),
+        current.map((draft) => draft.id === normalizedDraft.id ? {
+          ...normalizedDraft,
+          conflict,
+          conflictDecision: conflict ? (normalizedDraft.conflictDecision ?? 'pending') : undefined,
+        } : draft),
       )
-      void persistCheckpoint(analyses, next, reviewedIdsRef.current, activeId)
+      void enrichTransactionHashes(next).then((hashed) => {
+        setDrafts(hashed)
+        void persistCheckpoint(analyses, hashed, reviewedIdsRef.current, activeId)
+      })
       return next
     })
   }
 
+  function customInputMatchesFromDraft(draft: BatchOcrDraft, lines: OcrDetectedLine[]) {
+    const expected: Array<[OcrField, string]> = [
+      ['amount', draft.amount],
+      ['balanceAfter', draft.balanceAfter],
+      ['occurredAt', draft.occurredAt ? fromLocalInputDateTime(draft.occurredAt) : ''],
+      ['merchant', draft.merchant],
+      ['description', draft.description],
+    ]
+    const used = new Set<string>()
+    const matches = expected.map(([field, value]) => {
+      if (!value) return undefined
+      const match = findOcrCustomInputMatch(lines.filter((line) => !used.has(line.id)), field, value)
+      if (match) used.add(match.line.id)
+      return match
+    }).filter((match): match is NonNullable<typeof match> => Boolean(match))
+    return matches
+  }
+
   function mappingsFromCorrectedDraft(draft: BatchOcrDraft, lines: OcrDetectedLine[]) {
     const mappings: Record<string, OcrField | ''> = {}
-    const unused = new Set(lines.map((line) => line.id))
-    const take = (field: OcrField, predicate: (line: OcrDetectedLine) => boolean) => {
-      const line = lines.find((item) => unused.has(item.id) && predicate(item))
-      if (!line) return
-      mappings[line.id] = field
-      unused.delete(line.id)
-    }
-
-    const amountValue = Number(draft.amount)
-    if (amountValue > 0) take('amount', (line) => parseMoneyText(line.text) === amountValue)
-    if (draft.balanceAfter && Number(draft.balanceAfter) > 0) take('balanceAfter', (line) => parseMoneyText(line.text) === Number(draft.balanceAfter))
-    if (draft.occurredAt) {
-      const expected = Date.parse(fromLocalInputDateTime(draft.occurredAt))
-      take('occurredAt', (line) => {
-        const parsed = parseDateTimeText(line.text)
-        return Boolean(parsed && Math.abs(Date.parse(parsed) - expected) <= 60_000)
-      })
-    }
-    if (draft.merchant.trim()) {
-      const target = normalized(draft.merchant)
-      take('merchant', (line) => normalized(line.text).includes(target) || target.includes(normalized(line.text)))
-    }
-    if (draft.description.trim()) {
-      const target = normalized(draft.description)
-      take('description', (line) => normalized(line.text).includes(target) || target.includes(normalized(line.text)))
-    }
+    for (const match of customInputMatchesFromDraft(draft, lines)) mappings[match.line.id] = match.field
     return mappings
+  }
+
+  function applyCustomInputContext(template: OcrTemplate, draft: BatchOcrDraft, lines: OcrDetectedLine[]) {
+    if (template.schemaVersion !== 2 || !template.fieldPatterns?.length) return template
+    const matches = customInputMatchesFromDraft(draft, lines)
+    if (!matches.length) return template
+    return {
+      ...template,
+      fieldPatterns: template.fieldPatterns.map((pattern) => {
+        const match = matches.find((item) => item.field === pattern.field)
+        if (!match || (!match.prefix && !match.suffix)) return pattern
+        return {
+          ...pattern,
+          contextPrefixes: [...new Set([...(pattern.contextPrefixes ?? []), ...(match.prefix ? [match.prefix] : [])])].slice(-8),
+          contextSuffixes: [...new Set([...(pattern.contextSuffixes ?? []), ...(match.suffix ? [match.suffix] : [])])].slice(-8),
+        }
+      }),
+    }
   }
 
   async function persistTemplates(next: OcrTemplate[]) {
@@ -799,11 +861,13 @@ export function ImageImportMode({
     const mappings = mappingsFromCorrectedDraft(draft, lines)
     const mappedFields = Object.values(mappings).filter((field): field is OcrField => Boolean(field))
     if (!canAutoLearnTemplate(analysis.templateScore, mappedFields)) return
-    const learned = buildPatternTemplate(template.name, lines, mappings, patternVisualForDraft(draft, analysis), template.id)
+    const learnedBase = buildPatternTemplate(template.name, lines, mappings, patternVisualForDraft(draft, analysis), template.id)
+    const learned = applyCustomInputContext(learnedBase, draft, lines)
     const merged = mergePatternTemplateEvidence(template, learned, { lines, mappings })
     const nextTemplates = sessionTemplatesRef.current.map((item) => item.id === merged.id ? merged : item)
     await persistTemplates(nextTemplates)
-    buildDraftsFromAnalyses(analyses, nextTemplates, true, preserveIds)
+    const rebuilt = await enrichTransactionHashes(buildDraftsFromAnalyses(analyses, nextTemplates, true, preserveIds))
+    setDrafts(rebuilt)
   }
 
   function enqueueLearnFromDraft(draft: BatchOcrDraft, preserveIds: Set<string>) {
@@ -856,7 +920,8 @@ export function ImageImportMode({
     setLineMappings(inferred)
     setPatternName(upgraded.name)
     setLegacyTemplateId('')
-    buildDraftsFromAnalyses(analyses, nextTemplates, false)
+    const rebuilt = await enrichTransactionHashes(buildDraftsFromAnalyses(analyses, nextTemplates, false))
+    setDrafts(rebuilt)
     setError(undefined)
   }
 
@@ -865,18 +930,22 @@ export function ImageImportMode({
     await learningQueueRef.current.catch(() => undefined)
     const effectiveMappings = Object.values(lineMappings).some(Boolean)
       ? lineMappings
-      : active ? mappingsFromCorrectedDraft(active, activeLines) : {}
+      : active
+        ? mappingsFromCorrectedDraft(active, activeLines)
+        : suggestOcrMappings(activeLines)
     if (Object.values(effectiveMappings).filter(Boolean).length < 2) return
     const existing = patternTemplate?.schemaVersion === 2
       ? sessionTemplatesRef.current.find((template) => template.id === patternTemplate.id)
       : undefined
-    const learned = buildPatternTemplate(patternName.trim(), activeLines, effectiveMappings, activePatternVisual, existing?.id)
+    const learnedBase = buildPatternTemplate(patternName.trim(), activeLines, effectiveMappings, activePatternVisual, existing?.id)
+    const learned = active ? applyCustomInputContext(learnedBase, active, activeLines) : learnedBase
     const effectiveTemplate = existing ? mergePatternTemplateEvidence(existing, learned) : learned
     const nextTemplates = existing
       ? sessionTemplatesRef.current.map((template) => template.id === existing.id ? effectiveTemplate : template)
       : [...sessionTemplatesRef.current, effectiveTemplate]
     await persistTemplates(nextTemplates)
-    buildDraftsFromAnalyses(analyses, nextTemplates, false)
+    const rebuilt = await enrichTransactionHashes(buildDraftsFromAnalyses(analyses, nextTemplates, false))
+    setDrafts(rebuilt)
     setLineMappings({})
     setPatternName(effectiveTemplate.name)
     setError(undefined)
@@ -891,7 +960,13 @@ export function ImageImportMode({
   async function saveSelected() {
     if (!repository || saving || saveGuardRef.current) return
     const identityRefreshedDrafts = refreshDraftSourceIdentities(drafts)
-    const selected = identityRefreshedDrafts.filter((draft) => draft.selected)
+    const unresolvedConflict = identityRefreshedDrafts.find((draft) => draft.conflict && (!draft.conflictDecision || draft.conflictDecision === 'pending'))
+    if (unresolvedConflict) {
+      setActiveId(unresolvedConflict.id)
+      setError(t('batch.errorConflictPending'))
+      return
+    }
+    const selected = identityRefreshedDrafts.filter((draft) => draft.selected && draft.conflictDecision !== 'ignore')
     if (!selected.length) {
       setError(t('batch.errorNoneSelected'))
       return
@@ -1033,7 +1108,7 @@ export function ImageImportMode({
         <Button onClick={()=>void analyzeImages()} disabled={!files.length||busy}><ScanText size={17}/>{busy?t('imageImport.analyzing'):t('imageImport.analyze')}</Button>
         {busy&&<Button variant="secondary" onClick={cancelAnalysis}><Square size={15}/>{t('imageImport.cancel')}</Button>}
       </div>
-      {files.length>0&&<div className="mt-3 flex gap-2 overflow-x-auto pb-1">{files.map((file,index)=><div key={`${file.name}-${file.size}-${index}`} className="w-40 shrink-0 rounded-xl border border-stone-200 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-900"><div className="truncate text-xs font-semibold text-stone-700 dark:text-stone-200">{file.name}</div><div className="mt-1 text-[11px] text-stone-400">{Math.max(1,Math.round(file.size/1024))} KB</div></div>)}</div>}
+      {files.length>0&&<div className="mt-3"><div className="mb-1 text-xs font-semibold text-stone-500">{t('imageImport.queueCount',{count:files.length})}</div><div className="flex gap-2 overflow-x-auto pb-1">{files.slice(0,24).map((file,index)=><div key={`${file.name}-${file.size}-${index}`} className="w-40 shrink-0 rounded-xl border border-stone-200 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-900"><div className="truncate text-xs font-semibold text-stone-700 dark:text-stone-200">{file.name}</div><div className="mt-1 text-[11px] text-stone-400">{Math.max(1,Math.round(file.size/1024))} KB</div></div>)}{files.length>24&&<div className="flex w-28 shrink-0 items-center justify-center rounded-xl border border-dashed border-stone-300 px-3 text-xs font-semibold text-stone-500 dark:border-stone-700">+{files.length-24}</div>}</div></div>}
       {busy&&<><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800"><div className="h-full bg-blue-500 transition-all" style={{width:`${Math.round(progress*100)}%`}}/></div><div className="mt-1 text-xs text-stone-500">{status}</div></>}
       {!busy&&status&&<div className="mt-2 text-xs text-stone-500">{status}</div>}
       {checkpointAvailable&&<div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500"><span>{t('imageImport.checkpointReady')}</span><button type="button" className="font-semibold text-rose-600 hover:underline dark:text-rose-300" onClick={()=>void discardCheckpoint()}>{t('imageImport.discardCheckpoint')}</button></div>}

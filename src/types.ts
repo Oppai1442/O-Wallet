@@ -48,6 +48,10 @@ export interface OcrFieldPattern {
   sampleShape?: string
   /** Alternate normalized value shapes learned over time. */
   sampleShapes?: string[]
+  /** Text immediately before a user-entered value when that value was found inside a longer OCR line. */
+  contextPrefixes?: string[]
+  /** Text immediately after a user-entered value when that value was found inside a longer OCR line. */
+  contextSuffixes?: string[]
   successes?: number
   failures?: number
 }

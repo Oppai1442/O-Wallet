@@ -646,11 +646,15 @@ export function buildPatternTemplate(
   visualFingerprint?: OcrVisualFingerprint,
   existingId?: string,
 ): OcrTemplate {
-  const mapped = lines.map((line, index) => ({ line, index, field: mappings[line.id] })).filter((item) => item.field && item.field !== 'ignore' && item.field !== 'generic') as Array<{ line: OcrDetectedLine; index: number; field: Exclude<OcrField, 'ignore' | 'generic'> }>
+  const mapped = lines.map((line, index) => ({ line, index, field: mappings[line.id] })).filter((item) => item.field && item.field !== 'generic') as Array<{ line: OcrDetectedLine; index: number; field: Exclude<OcrField, 'generic'> }>
   const fieldPatterns: OcrFieldPattern[] = mapped.map(({ line, index, field }) => {
-    const type = valueTypeForField(field)
-    const anchor = inferAnchor(lines, index, field)
-    const sameTypeBefore = mapped.filter((item) => item.index < index && valueTypeForField(item.field) === type).length
+    const type = field === 'ignore'
+      ? (/^\D*\d[\d\s._-]{5,}\D*$/.test(line.text) ? 'digits' : 'text')
+      : valueTypeForField(field)
+    const anchor = field === 'ignore'
+      ? { text: line.text, relation: 'nearest' as const }
+      : inferAnchor(lines, index, field)
+    const sameTypeBefore = mapped.filter((item) => item.index < index && item.field !== 'ignore' && valueTypeForField(item.field) === type).length
     return {
       id: crypto.randomUUID(),
       field,
@@ -711,6 +715,8 @@ export function mergePatternTemplateEvidence(
       ordinal: next.ordinal ?? prior.ordinal,
       sampleShape: next.sampleShape ?? prior.sampleShape,
       sampleShapes: shapes,
+      contextPrefixes: [...new Set([...(prior.contextPrefixes ?? []), ...(next.contextPrefixes ?? [])])].slice(-8),
+      contextSuffixes: [...new Set([...(prior.contextSuffixes ?? []), ...(next.contextSuffixes ?? [])])].slice(-8),
       successes: (prior.successes ?? 0) + (hasFeedback ? (predictionMatched ? 1 : 0) : 1),
       failures: (prior.failures ?? 0) + (hasFeedback && !predictionMatched ? 1 : 0),
     }
@@ -820,15 +826,34 @@ function patternShapeScore(line: string, pattern: OcrFieldPattern) {
   return shapes.length ? Math.max(...shapes.map((shape) => shapeSimilarity(target, shape))) : 0
 }
 
+function lineMatchesIgnoredPattern(line: OcrDetectedLine, pattern: OcrFieldPattern) {
+  if (pattern.field !== 'ignore') return false
+  const text = normalizeLine(line.text).toLocaleLowerCase('vi-VN')
+  const anchors = pattern.anchorTexts?.length ? pattern.anchorTexts : pattern.anchorText ? [pattern.anchorText] : []
+  return anchors.some((anchor) => text.includes(normalizeLine(anchor).toLocaleLowerCase('vi-VN')))
+}
+
 function candidateValueFromLine(line: string, pattern: OcrFieldPattern) {
-  if (pattern.valueType === 'money') return parseMoneyText(line)
-  if (pattern.valueType === 'datetime') return parseDateTimeText(line)
-  return stripFieldLabel(line, pattern.field)
+  const contextual = extractBetweenOcrContexts(line, pattern.contextPrefixes, pattern.contextSuffixes)
+  const valueText = contextual ?? line
+  if (pattern.valueType === 'money') return parseMoneyText(valueText)
+  if (pattern.valueType === 'datetime') return parseDateTimeText(valueText)
+  return contextual ?? stripFieldLabel(line, pattern.field)
 }
 
 function findPatternLine(lines: OcrDetectedLine[], pattern: OcrFieldPattern, ignoreQuarantine = false) {
   if (!ignoreQuarantine && isOcrPatternQuarantined(pattern.successes, pattern.failures)) return undefined
   const reliability = ocrPatternReliability(pattern.successes, pattern.failures)
+  const hasContextSlot = Boolean(pattern.contextPrefixes?.length || pattern.contextSuffixes?.length)
+  if (hasContextSlot) {
+    const contextual = lines.map((line) => ({
+      line,
+      extraction: extractBetweenOcrContextsDetailed(line.text, pattern.contextPrefixes, pattern.contextSuffixes),
+    })).filter((item) => item.extraction && lineLooksLikeValue(item.extraction.value, pattern.valueType))
+      .sort((a, b) => (b.extraction?.confidence ?? 0) - (a.extraction?.confidence ?? 0) || b.line.confidence - a.line.confidence)
+    const best = contextual[0]
+    if (best?.extraction && best.extraction.confidence >= 0.72) return best.line
+  }
   const anchors = pattern.anchorTexts?.length ? pattern.anchorTexts : pattern.anchorText ? [pattern.anchorText] : []
   if (anchors.length) {
     const normalizedAnchors = anchors.map((value) => normalizeLine(value).toLocaleLowerCase('vi-VN'))
@@ -865,10 +890,18 @@ export function parseTransactionWithTemplate(
     return template.regions.length ? parseTransactionFromRegions(result, template.regions, width, height) : parseTransactionFromOcr(result)
   }
   const lines = buildDetectedLines(result, width, height)
-  const base = parseTransactionFromOcr(result)
+  const ignoredPatterns = template.fieldPatterns.filter((pattern) => pattern.field === 'ignore')
+  const semanticLines = ignoredPatterns.length
+    ? lines.filter((line) => !ignoredPatterns.some((pattern) => lineMatchesIgnoredPattern(line, pattern)))
+    : lines
+  const semanticResult: OcrResult = semanticLines.length === lines.length
+    ? result
+    : { ...result, text: semanticLines.map((line) => line.text).join('\n') }
+  const base = parseTransactionFromOcr(semanticResult)
   const values: Partial<Record<OcrField, unknown>> = {}
   for (const pattern of template.fieldPatterns) {
-    const line = findPatternLine(lines, pattern)
+    if (pattern.field === 'ignore' || pattern.field === 'generic') continue
+    const line = findPatternLine(semanticLines, pattern)
     if (!line) continue
     values[pattern.field] = candidateValueFromLine(line.text, pattern)
   }
