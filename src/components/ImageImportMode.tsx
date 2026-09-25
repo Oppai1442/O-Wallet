@@ -23,7 +23,7 @@ import { bboxOverlapRatio, canAutoLearnTemplate, isCredibleTemplateMatch, mapDet
 import { findMatchingTransactionRule } from '../lib/rules'
 import { selectableCategories } from '../lib/categories'
 import { validateImageBatch } from '../lib/security'
-import { suggestOcrMappings } from '../lib/ocrSemantic'
+import { findOcrCustomInputMatch, suggestOcrMappings } from '../lib/ocrSemantic'
 import { BatchOcrReview, type BatchOcrDraft } from './BatchOcrReview'
 import { Button, Input, Select } from './ui'
 import { OcrTeachingPanel } from './OcrTeachingPanel'
@@ -791,35 +791,46 @@ export function ImageImportMode({
     })
   }
 
+  function customInputMatchesFromDraft(draft: BatchOcrDraft, lines: OcrDetectedLine[]) {
+    const expected: Array<[OcrField, string]> = [
+      ['amount', draft.amount],
+      ['balanceAfter', draft.balanceAfter],
+      ['occurredAt', draft.occurredAt ? fromLocalInputDateTime(draft.occurredAt) : ''],
+      ['merchant', draft.merchant],
+      ['description', draft.description],
+    ]
+    const used = new Set<string>()
+    const matches = expected.map(([field, value]) => {
+      if (!value) return undefined
+      const match = findOcrCustomInputMatch(lines.filter((line) => !used.has(line.id)), field, value)
+      if (match) used.add(match.line.id)
+      return match
+    }).filter((match): match is NonNullable<typeof match> => Boolean(match))
+    return matches
+  }
+
   function mappingsFromCorrectedDraft(draft: BatchOcrDraft, lines: OcrDetectedLine[]) {
     const mappings: Record<string, OcrField | ''> = {}
-    const unused = new Set(lines.map((line) => line.id))
-    const take = (field: OcrField, predicate: (line: OcrDetectedLine) => boolean) => {
-      const line = lines.find((item) => unused.has(item.id) && predicate(item))
-      if (!line) return
-      mappings[line.id] = field
-      unused.delete(line.id)
-    }
-
-    const amountValue = Number(draft.amount)
-    if (amountValue > 0) take('amount', (line) => parseMoneyText(line.text) === amountValue)
-    if (draft.balanceAfter && Number(draft.balanceAfter) > 0) take('balanceAfter', (line) => parseMoneyText(line.text) === Number(draft.balanceAfter))
-    if (draft.occurredAt) {
-      const expected = Date.parse(fromLocalInputDateTime(draft.occurredAt))
-      take('occurredAt', (line) => {
-        const parsed = parseDateTimeText(line.text)
-        return Boolean(parsed && Math.abs(Date.parse(parsed) - expected) <= 60_000)
-      })
-    }
-    if (draft.merchant.trim()) {
-      const target = normalized(draft.merchant)
-      take('merchant', (line) => normalized(line.text).includes(target) || target.includes(normalized(line.text)))
-    }
-    if (draft.description.trim()) {
-      const target = normalized(draft.description)
-      take('description', (line) => normalized(line.text).includes(target) || target.includes(normalized(line.text)))
-    }
+    for (const match of customInputMatchesFromDraft(draft, lines)) mappings[match.line.id] = match.field
     return mappings
+  }
+
+  function applyCustomInputContext(template: OcrTemplate, draft: BatchOcrDraft, lines: OcrDetectedLine[]) {
+    if (template.schemaVersion !== 2 || !template.fieldPatterns?.length) return template
+    const matches = customInputMatchesFromDraft(draft, lines)
+    if (!matches.length) return template
+    return {
+      ...template,
+      fieldPatterns: template.fieldPatterns.map((pattern) => {
+        const match = matches.find((item) => item.field === pattern.field)
+        if (!match || (!match.prefix && !match.suffix)) return pattern
+        return {
+          ...pattern,
+          contextPrefixes: [...new Set([...(pattern.contextPrefixes ?? []), ...(match.prefix ? [match.prefix] : [])])].slice(-8),
+          contextSuffixes: [...new Set([...(pattern.contextSuffixes ?? []), ...(match.suffix ? [match.suffix] : [])])].slice(-8),
+        }
+      }),
+    }
   }
 
   async function persistTemplates(next: OcrTemplate[]) {
@@ -850,7 +861,8 @@ export function ImageImportMode({
     const mappings = mappingsFromCorrectedDraft(draft, lines)
     const mappedFields = Object.values(mappings).filter((field): field is OcrField => Boolean(field))
     if (!canAutoLearnTemplate(analysis.templateScore, mappedFields)) return
-    const learned = buildPatternTemplate(template.name, lines, mappings, patternVisualForDraft(draft, analysis), template.id)
+    const learnedBase = buildPatternTemplate(template.name, lines, mappings, patternVisualForDraft(draft, analysis), template.id)
+    const learned = applyCustomInputContext(learnedBase, draft, lines)
     const merged = mergePatternTemplateEvidence(template, learned, { lines, mappings })
     const nextTemplates = sessionTemplatesRef.current.map((item) => item.id === merged.id ? merged : item)
     await persistTemplates(nextTemplates)
@@ -925,7 +937,8 @@ export function ImageImportMode({
     const existing = patternTemplate?.schemaVersion === 2
       ? sessionTemplatesRef.current.find((template) => template.id === patternTemplate.id)
       : undefined
-    const learned = buildPatternTemplate(patternName.trim(), activeLines, effectiveMappings, activePatternVisual, existing?.id)
+    const learnedBase = buildPatternTemplate(patternName.trim(), activeLines, effectiveMappings, activePatternVisual, existing?.id)
+    const learned = active ? applyCustomInputContext(learnedBase, active, activeLines) : learnedBase
     const effectiveTemplate = existing ? mergePatternTemplateEvidence(existing, learned) : learned
     const nextTemplates = existing
       ? sessionTemplatesRef.current.map((template) => template.id === existing.id ? effectiveTemplate : template)
