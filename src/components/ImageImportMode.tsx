@@ -575,10 +575,8 @@ export function ImageImportMode({
       }
     }
     setAnalyses([...nextAnalyses])
-    void enrichTransactionHashes(next).then((hashed) => {
-      setDrafts(hashed)
-      setActiveId((current) => current && hashed.some((draft) => draft.id === current) ? current : hashed[0]?.id)
-    })
+    setDrafts(next)
+    setActiveId((current) => current && next.some((draft) => draft.id === current) ? current : next[0]?.id)
     return next
   }
 
@@ -633,10 +631,12 @@ export function ImageImportMode({
           diagnostics: ocr.diagnostics,
         })
         nextAnalyses.sort((a,b)=>a.fileIndex-b.fileIndex)
-        const partialDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true)
+        const partialDrafts = await enrichTransactionHashes(buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true))
+        setDrafts(partialDrafts)
         await persistCheckpoint(nextAnalyses, partialDrafts, reviewedIdsRef.current, partialDrafts[0]?.id, nextPartialTiles)
       }
-      const nextDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true)
+      const nextDrafts = await enrichTransactionHashes(buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true))
+      setDrafts(nextDrafts)
       await persistCheckpoint(nextAnalyses, nextDrafts, reviewedIdsRef.current, activeId ?? nextDrafts[0]?.id, nextPartialTiles)
       setError(undefined)
       setProgress(1)
@@ -929,7 +929,8 @@ export function ImageImportMode({
       ? sessionTemplatesRef.current.map((template) => template.id === existing.id ? effectiveTemplate : template)
       : [...sessionTemplatesRef.current, effectiveTemplate]
     await persistTemplates(nextTemplates)
-    buildDraftsFromAnalyses(analyses, nextTemplates, false)
+    const rebuilt = await enrichTransactionHashes(buildDraftsFromAnalyses(analyses, nextTemplates, false))
+    setDrafts(rebuilt)
     setLineMappings({})
     setPatternName(effectiveTemplate.name)
     setError(undefined)
