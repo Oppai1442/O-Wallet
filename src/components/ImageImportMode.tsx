@@ -854,7 +854,8 @@ export function ImageImportMode({
     const merged = mergePatternTemplateEvidence(template, learned, { lines, mappings })
     const nextTemplates = sessionTemplatesRef.current.map((item) => item.id === merged.id ? merged : item)
     await persistTemplates(nextTemplates)
-    buildDraftsFromAnalyses(analyses, nextTemplates, true, preserveIds)
+    const rebuilt = await enrichTransactionHashes(buildDraftsFromAnalyses(analyses, nextTemplates, true, preserveIds))
+    setDrafts(rebuilt)
   }
 
   function enqueueLearnFromDraft(draft: BatchOcrDraft, preserveIds: Set<string>) {
@@ -907,7 +908,8 @@ export function ImageImportMode({
     setLineMappings(inferred)
     setPatternName(upgraded.name)
     setLegacyTemplateId('')
-    buildDraftsFromAnalyses(analyses, nextTemplates, false)
+    const rebuilt = await enrichTransactionHashes(buildDraftsFromAnalyses(analyses, nextTemplates, false))
+    setDrafts(rebuilt)
     setError(undefined)
   }
 
