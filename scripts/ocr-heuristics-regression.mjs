@@ -83,7 +83,7 @@ const {
 
 const { sourceFingerprint } = fingerprintModule
 const { sanitizeOcrTileResumeState, sanitizeOcrTileResumeMap } = checkpointModule
-const { buildImageImportBlockRowId, buildImageImportSemanticRowId, imageImportBlockFingerprint, imageImportImageId, imageImportRecordId, importSourcesMatch, sourceIdsMatch } = importIdentityModule
+const { buildImageImportBlockRowId, buildImageImportSemanticRowId, canonicalImageImportTransaction, imageImportBlockFingerprint, imageImportImageId, imageImportRecordId, imageImportTransactionHash, importSourcesMatch, sourceIdsMatch } = importIdentityModule
 const { decodeCheckpointValue, encodeCheckpointValue, isCompressedCheckpoint } = checkpointCodecModule
 
 const smallCheckpoint = { version: 2, drafts: [{ id: 'one', amount: '100000' }] }
@@ -105,6 +105,12 @@ const canonicalSigB = buildImageImportSemanticRowId({type:'expense',amount:10000
 assert.equal(canonicalSigA, canonicalSigB, 'semantic row signatures should canonicalize case and whitespace')
 assert.notEqual(canonicalSigA, buildImageImportSemanticRowId({type:'expense',amount:200000,occurredAt:'2026-09-21T10:00:00.000Z',merchant:'nguyễn văn a'}))
 assert.notEqual(canonicalSigA, buildImageImportSemanticRowId({type:'expense',amount:100000,occurredAt:'2026-09-21T10:01:00.000Z',merchant:'nguyễn văn a'}))
+
+const canonicalTxA = canonicalImageImportTransaction({type:'transfer',amount:5000000,currency:'vnd',occurredAt:'2026-09-25T13:42:10.000Z',accountId:'main',merchant:' Nguyễn  Văn A ',description:'Chuyển tiền'})
+const canonicalTxB = canonicalImageImportTransaction({type:'transfer',amount:5000000.0,currency:'VND',occurredAt:'2026-09-25T13:42:59.000Z',accountId:'main',merchant:'nguyen van a',description:'chuyen tien'})
+assert.equal(canonicalTxA, canonicalTxB, 'transaction conflict canonicalization should ignore accents, case, spacing and seconds')
+assert.equal(await imageImportTransactionHash({type:'transfer',amount:5000000,currency:'VND',occurredAt:'2026-09-25T13:42:10.000Z',accountId:'main',merchant:'NGUYEN VAN A',description:'CHUYEN TIEN'}), await imageImportTransactionHash({type:'transfer',amount:5000000,currency:'vnd',occurredAt:'2026-09-25T13:42:59.000Z',accountId:'main',merchant:'Nguyễn Văn A',description:'Chuyển tiền'}))
+assert.notEqual(await imageImportTransactionHash({type:'transfer',amount:5000000,currency:'VND',occurredAt:'2026-09-25T13:42:10.000Z',accountId:'main',merchant:'A'}), await imageImportTransactionHash({type:'transfer',amount:6000000,currency:'VND',occurredAt:'2026-09-25T13:42:10.000Z',accountId:'main',merchant:'A'}))
 
 const blockFpA = imageImportBlockFingerprint('  Amount: 100.000 VND\nRecipient: NGUYEN VAN A  ')
 const blockFpB = imageImportBlockFingerprint('amount: 100.000 vnd recipient: nguyen van a')
