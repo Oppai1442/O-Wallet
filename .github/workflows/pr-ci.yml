@@ -1,0 +1,71 @@
+name: Pull Request CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: pr-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Build, security and regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout merged PR result
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Resolve dependency lock if repository does not include one
+        shell: bash
+        run: |
+          if [ ! -f package-lock.json ]; then
+            echo "::warning::package-lock.json is not committed; resolving transitive dependencies for this run."
+            npm install --package-lock-only --include=optional --ignore-scripts --no-audit --no-fund
+          fi
+
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --include=optional --ignore-scripts --no-audit --no-fund
+
+      - name: Security source checks
+        run: npm run security:check
+
+      - name: Dependency vulnerability gate
+        run: npm audit --audit-level=high
+
+      - name: OCR heuristic regression
+        run: npm run test:ocr
+
+      - name: Production build
+        run: npm run build
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
+          VITE_GOOGLE_API_KEY: ${{ vars.VITE_GOOGLE_API_KEY }}
+
+      - name: Security checks on built artifact
+        run: npm run security:dist
+
+      - name: Upload browser-test build
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: o-wallet-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
