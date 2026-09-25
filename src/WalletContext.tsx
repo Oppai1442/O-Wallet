@@ -53,8 +53,8 @@ import {
   persistGoogleSession,
   revokeGoogle,
 } from './lib/googleAuth'
-import { deleteAllDriveWalletData, downloadVaultConfig, findExistingDriveLayout, migrateDriveStorageMode } from './lib/drive'
-import { fetchRemoteImageToLocal, syncWalletToDrive } from './lib/sync'
+import { deleteAllDriveWalletData, downloadVaultConfig, ensureDriveLayout, findExistingDriveLayout, migrateDriveStorageMode } from './lib/drive'
+import { fetchRemoteImageToLocal, syncWalletToDrive, uploadPreparedImageToDrive } from './lib/sync'
 import { reportDiagnostic } from './lib/security'
 import { buildFxSnapshot } from './lib/fx'
 
@@ -109,6 +109,7 @@ interface WalletContextValue {
   changeDriveStorageMode: (mode: DriveStorageMode) => Promise<void>
   restoreVaultConfigFromDrive: () => Promise<boolean>
   syncNow: () => Promise<SyncStats | undefined>
+  uploadImageRemoteOnly: (file: File, preferredId?: string) => Promise<string>
   notifyMutation: () => Promise<void>
   updateDevicePreferences: (patch: Partial<DeviceSessionPreferences>) => Promise<void>
   clearError: () => void
@@ -750,6 +751,23 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     return performSync(session, repository, vaultConfig)
   }, [acceptGoogleSession, devicePreferences.googleRemember, googleBinding, googleRememberedUser, googleSession, performSync, repository, syncBusy, t, vaultConfig])
 
+  const uploadImageRemoteOnly = useCallback(async (file: File, preferredId?: string) => {
+    if (!repository) throw new Error('error.vaultLocked')
+    let session = googleSession
+    if (!session || session.expiresAt <= Date.now()) {
+      const hint = googleRememberedUser ?? googleBinding
+      if (!hint) throw new Error('error.googleNotReady')
+      session = await connectGoogleAuth('', hint.email)
+      if (session.user.sub !== hint.sub) throw new Error('error.googleAccountMismatch')
+      acceptGoogleSession(session, devicePreferences.googleRemember, false)
+    }
+    const prepared = await repository.prepareImage(file, preferredId)
+    if (prepared.alreadyLocal) return prepared.row.id
+    const layout = await ensureDriveLayout(session.accessToken)
+    await uploadPreparedImageToDrive(session.accessToken, layout, prepared.row)
+    return prepared.row.id
+  }, [acceptGoogleSession, devicePreferences.googleRemember, googleBinding, googleRememberedUser, googleSession, repository])
+
   useEffect(() => {
     if (!settings?.autoSync || status !== 'unlocked' || !googleSession || !repository || !vaultConfig) return
 
@@ -888,8 +906,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     googleConfigured: googleClientConfigured(), devicePreferences, syncBusy, destroyBusy, driveModeBusy, syncMessage, syncProgress, lastSync, error,
     createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities,
     deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount, destroyAllData, changeDriveStorageMode,
-    restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences, clearError: () => setError(undefined),
-  }), [status, vaultConfig, repository, transactions, accounts, categories, settings, googleSession, googleBinding, googleRememberedUser, googleConnectionState, googleAutoConnecting, devicePreferences, syncBusy, destroyBusy, driveModeBusy, syncMessage, syncProgress, lastSync, error, createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities, deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount, destroyAllData, changeDriveStorageMode, restoreVaultConfigFromDrive, syncNow, notifyMutation, updateDevicePreferences])
+    restoreVaultConfigFromDrive, syncNow, uploadImageRemoteOnly, notifyMutation, updateDevicePreferences, clearError: () => setError(undefined),
+  }), [status, vaultConfig, repository, transactions, accounts, categories, settings, googleSession, googleBinding, googleRememberedUser, googleConnectionState, googleAutoConnecting, devicePreferences, syncBusy, destroyBusy, driveModeBusy, syncMessage, syncProgress, lastSync, error, createNewVault, unlockWithPassword, unlockWithRecovery, lock, refresh, saveEntity, saveEntities, deleteTransaction, connectGoogle, retryGoogleConnection, disconnectGoogle, switchLocalAccount, destroyAllData, changeDriveStorageMode, restoreVaultConfigFromDrive, syncNow, uploadImageRemoteOnly, notifyMutation, updateDevicePreferences])
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>
 }
