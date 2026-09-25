@@ -646,11 +646,15 @@ export function buildPatternTemplate(
   visualFingerprint?: OcrVisualFingerprint,
   existingId?: string,
 ): OcrTemplate {
-  const mapped = lines.map((line, index) => ({ line, index, field: mappings[line.id] })).filter((item) => item.field && item.field !== 'ignore' && item.field !== 'generic') as Array<{ line: OcrDetectedLine; index: number; field: Exclude<OcrField, 'ignore' | 'generic'> }>
+  const mapped = lines.map((line, index) => ({ line, index, field: mappings[line.id] })).filter((item) => item.field && item.field !== 'generic') as Array<{ line: OcrDetectedLine; index: number; field: Exclude<OcrField, 'generic'> }>
   const fieldPatterns: OcrFieldPattern[] = mapped.map(({ line, index, field }) => {
-    const type = valueTypeForField(field)
-    const anchor = inferAnchor(lines, index, field)
-    const sameTypeBefore = mapped.filter((item) => item.index < index && valueTypeForField(item.field) === type).length
+    const type = field === 'ignore'
+      ? (/^\D*\d[\d\s._-]{5,}\D*$/.test(line.text) ? 'digits' : 'text')
+      : valueTypeForField(field)
+    const anchor = field === 'ignore'
+      ? { text: line.text, relation: 'nearest' as const }
+      : inferAnchor(lines, index, field)
+    const sameTypeBefore = mapped.filter((item) => item.index < index && item.field !== 'ignore' && valueTypeForField(item.field) === type).length
     return {
       id: crypto.randomUUID(),
       field,
