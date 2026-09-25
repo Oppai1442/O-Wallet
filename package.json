@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "dexie": "4.4.5",
-    "lucide-react": "1.42.0",
+    "lucide-react": "1.45.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "recharts": "3.10.1",
