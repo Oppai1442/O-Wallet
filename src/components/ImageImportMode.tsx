@@ -147,6 +147,7 @@ export function ImageImportMode({
   const [analyses, setAnalyses] = useState<SourceAnalysis[]>([])
   const [drafts, setDrafts] = useState<BatchOcrDraft[]>([])
   const [activeId, setActiveId] = useState<string>()
+  const [patternSourceIndex, setPatternSourceIndex] = useState<number>()
   const [busy, setBusy] = useState(false)
   const [saving, setSaving] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -204,23 +205,33 @@ export function ImageImportMode({
 
   const active = drafts.find((draft) => draft.id === activeId) ?? drafts[0]
   const activeAnalysis = active ? analyses.find((item) => item.fileIndex === active.fileIndex) : undefined
+  const patternAnalysis = activeAnalysis
+    ?? analyses.find((item) => item.fileIndex === patternSourceIndex)
+    ?? analyses[0]
   const activeTemplate = active?.templateId ? sessionTemplates.find((item) => item.id === active.templateId) : undefined
+  const patternTemplate = activeTemplate
+    ?? (patternAnalysis?.templateId ? sessionTemplates.find((item) => item.id === patternAnalysis.templateId) : undefined)
   const legacyTemplates = sessionTemplates.filter((template) => template.schemaVersion !== 2 && template.enabled !== false && template.regions.length)
 
   const activePatternVisual = useMemo(
-    () => patternVisualForDraft(active, activeAnalysis),
-    [active, activeAnalysis],
+    () => patternVisualForDraft(active, patternAnalysis),
+    [active, patternAnalysis],
   )
 
   const activeLines = useMemo(
-    () => detectedLinesForDraft(active, activeAnalysis),
-    [active, activeAnalysis],
+    () => {
+      if (!patternAnalysis) return [] as OcrDetectedLine[]
+      return active
+        ? detectedLinesForDraft(active, patternAnalysis)
+        : buildDetectedLines(patternAnalysis.result, patternAnalysis.width, patternAnalysis.height)
+    },
+    [active, patternAnalysis],
   )
 
   useEffect(() => {
     setLineMappings({})
-    setPatternName(activeTemplate?.name ?? '')
-  }, [activeId, activeTemplate?.id])
+    setPatternName(patternTemplate?.name ?? '')
+  }, [activeId, patternAnalysis?.fileIndex, patternTemplate?.id])
 
   async function chooseImages(selected: File[]) {
     setError(undefined)
@@ -230,6 +241,7 @@ export function ImageImportMode({
       for (const file of selected) hashes.push(await sourceFingerprint(file))
       setFiles(selected)
       setFileHashes(hashes)
+      setPatternSourceIndex(undefined)
       learningGenerationRef.current += 1
       learningRevisionRef.current.clear()
       setProgress(0)
@@ -582,7 +594,7 @@ export function ImageImportMode({
       }
       const nextDrafts = buildDraftsFromAnalyses(nextAnalyses, sessionTemplates, true)
       await persistCheckpoint(nextAnalyses, nextDrafts, reviewedIdsRef.current, activeId ?? nextDrafts[0]?.id, nextPartialTiles)
-      if (!nextDrafts.length) setError(t('imageImport.noDrafts'))
+      setError(undefined)
       setProgress(1)
       setStatus('')
     } catch (analysisError) {
@@ -823,7 +835,7 @@ export function ImageImportMode({
   }
 
   async function upgradeLegacyTemplate() {
-    if (!legacyTemplateId || !activeAnalysis || !activeLines.length || (!personalSettings && !onSaveTemplates)) return
+    if (!legacyTemplateId || !patternAnalysis || !activeLines.length || (!personalSettings && !onSaveTemplates)) return
     await learningQueueRef.current.catch(() => undefined)
     const legacy = sessionTemplatesRef.current.find((template) => template.id === legacyTemplateId && template.schemaVersion !== 2)
     if (!legacy) return
@@ -849,13 +861,15 @@ export function ImageImportMode({
   }
 
   async function savePattern() {
-    if ((!personalSettings && !onSaveTemplates) || !activeAnalysis || !activeLines.length || !patternName.trim()) return
+    if ((!personalSettings && !onSaveTemplates) || !patternAnalysis || !activeLines.length || !patternName.trim()) return
     await learningQueueRef.current.catch(() => undefined)
     const effectiveMappings = Object.values(lineMappings).some(Boolean)
       ? lineMappings
       : active ? mappingsFromCorrectedDraft(active, activeLines) : {}
     if (Object.values(effectiveMappings).filter(Boolean).length < 2) return
-    const existing = active?.templateId ? sessionTemplatesRef.current.find((template) => template.id === active.templateId) : undefined
+    const existing = patternTemplate?.schemaVersion === 2
+      ? sessionTemplatesRef.current.find((template) => template.id === patternTemplate.id)
+      : undefined
     const learned = buildPatternTemplate(patternName.trim(), activeLines, effectiveMappings, activePatternVisual, existing?.id)
     const effectiveTemplate = existing ? mergePatternTemplateEvidence(existing, learned) : learned
     const nextTemplates = existing
@@ -1006,6 +1020,7 @@ export function ImageImportMode({
   }
 
   const selectedCount = drafts.filter((draft) => draft.selected).length
+  const needsPattern = !busy && analyses.length > 0 && drafts.length === 0
 
   return <div className="min-w-0 space-y-4 p-4 sm:p-5">
     <div className="rounded-2xl border border-blue-200 bg-blue-50/40 p-4 dark:border-blue-500/30 dark:bg-blue-500/5">
@@ -1022,15 +1037,18 @@ export function ImageImportMode({
       {busy&&<><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800"><div className="h-full bg-blue-500 transition-all" style={{width:`${Math.round(progress*100)}%`}}/></div><div className="mt-1 text-xs text-stone-500">{status}</div></>}
       {!busy&&status&&<div className="mt-2 text-xs text-stone-500">{status}</div>}
       {checkpointAvailable&&<div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500"><span>{t('imageImport.checkpointReady')}</span><button type="button" className="font-semibold text-rose-600 hover:underline dark:text-rose-300" onClick={()=>void discardCheckpoint()}>{t('imageImport.discardCheckpoint')}</button></div>}
-      {activeAnalysis?.diagnostics&&<details className="mt-2 text-xs text-stone-500"><summary className="cursor-pointer font-semibold">{t('imageImport.diagnostics')}</summary><div className="mt-1 grid gap-1 sm:grid-cols-2"><span>{t('imageImport.tiles',{count:activeAnalysis.diagnostics.tileCount})}</span><span>{t('imageImport.retries',{count:activeAnalysis.diagnostics.retryCount})}</span><span>tile {activeAnalysis.diagnostics.tileHeight}px</span><span>{Math.round(activeAnalysis.diagnostics.tileDurationsMs.reduce((a,b)=>a+b,0)/Math.max(1,activeAnalysis.diagnostics.tileDurationsMs.length))} ms/tile</span></div><Button variant="ghost" className="mt-2 px-2 py-1 text-xs" onClick={exportDiagnostics}><Download size={14}/>{t('imageImport.exportDiagnostics')}</Button><p className="mt-1 text-[10px] leading-4 opacity-80">{t('imageImport.diagnosticsPrivacy')}</p></details>}
+      {patternAnalysis?.diagnostics&&<details className="mt-2 text-xs text-stone-500"><summary className="cursor-pointer font-semibold">{t('imageImport.diagnostics')}</summary><div className="mt-1 grid gap-1 sm:grid-cols-2"><span>{t('imageImport.tiles',{count:patternAnalysis.diagnostics.tileCount})}</span><span>{t('imageImport.retries',{count:patternAnalysis.diagnostics.retryCount})}</span><span>tile {patternAnalysis.diagnostics.tileHeight}px</span><span>{Math.round(patternAnalysis.diagnostics.tileDurationsMs.reduce((a,b)=>a+b,0)/Math.max(1,patternAnalysis.diagnostics.tileDurationsMs.length))} ms/tile</span></div><Button variant="ghost" className="mt-2 px-2 py-1 text-xs" onClick={exportDiagnostics}><Download size={14}/>{t('imageImport.exportDiagnostics')}</Button><p className="mt-1 text-[10px] leading-4 opacity-80">{t('imageImport.diagnosticsPrivacy')}</p></details>}
     </div>
 
     {drafts.length>0&&<BatchOcrReview drafts={drafts} files={files} accounts={accounts} categories={categories} catalogues={catalogues} activeId={activeId} onActiveId={(id)=>void changeActive(id)} onChange={updateDraft}/>}
 
-    {active&&activeAnalysis&&<details className="rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
-      <summary className="cursor-pointer list-none"><div className="flex items-center gap-2 font-bold text-stone-800 dark:text-stone-100"><BrainCircuit size={18} className="text-blue-500"/>{t('imageImport.patternTitle')}</div><p className="mt-1 text-xs leading-5 text-stone-500">{activeTemplate?t('imageImport.templateMatched',{name:activeTemplate.name}):t('imageImport.templateNone')}</p></summary>
+    {needsPattern&&<div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-100"><div className="font-semibold">{t('imageImport.noDrafts')}</div><p className="mt-1 text-xs leading-5 opacity-80">{t('imageImport.noDraftsHint')}</p></div>}
+
+    {patternAnalysis&&activeLines.length>0&&<details key={needsPattern?'pattern-required':'pattern-review'} open={needsPattern||undefined} className="rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
+      <summary className="cursor-pointer list-none"><div className="flex items-center gap-2 font-bold text-stone-800 dark:text-stone-100"><BrainCircuit size={18} className="text-blue-500"/>{t('imageImport.patternTitle')}</div><p className="mt-1 text-xs leading-5 text-stone-500">{patternTemplate?t('imageImport.templateMatched',{name:patternTemplate.name}):t('imageImport.templateNone')}</p></summary>
       <div className="mt-4 space-y-3">
         <p className="text-xs leading-5 text-stone-500">{t('imageImport.patternHint')}</p>
+        {!active&&analyses.length>1&&<div><div className="mb-1 text-xs font-semibold text-stone-600 dark:text-stone-300">{t('imageImport.patternSource')}</div><Select value={String(patternAnalysis.fileIndex)} onChange={(event)=>setPatternSourceIndex(Number(event.target.value))}>{analyses.map((analysis)=><option key={analysis.fileIndex} value={analysis.fileIndex}>{files[analysis.fileIndex]?.name??t('imageImport.patternSourceFallback',{index:analysis.fileIndex+1})}</option>)}</Select></div>}
         {legacyTemplates.length>0&&<div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-500/20 dark:bg-amber-500/5"><div className="text-xs font-bold text-amber-800 dark:text-amber-200">{t('imageImport.legacyUpgrade')}</div><p className="mt-1 text-[11px] leading-5 text-amber-700/80 dark:text-amber-200/70">{t('imageImport.legacyUpgradeHint')}</p><div className="mt-2 flex flex-col gap-2 sm:flex-row"><Select value={legacyTemplateId} onChange={(event)=>setLegacyTemplateId(event.target.value)}><option value="">{t('imageImport.legacySelect')}</option>{legacyTemplates.map((template)=><option key={template.id} value={template.id}>{template.name}</option>)}</Select><Button variant="secondary" disabled={!legacyTemplateId} onClick={()=>void upgradeLegacyTemplate()}>{t('imageImport.legacyUpgradeAction')}</Button></div></div>}
         <OcrTeachingPanel lines={activeLines} mappings={lineMappings} onMap={(line,field)=>setLineMappings((current)=>({...current,[line.id]:field}))}/>
         <div className="flex flex-col gap-2 sm:flex-row"><Input value={patternName} onChange={(event)=>setPatternName(event.target.value)} placeholder={t('imageImport.patternName')}/><Button variant="secondary" onClick={()=>void savePattern()} disabled={!patternName.trim()||Object.values(lineMappings).filter(Boolean).length<2}><BrainCircuit size={17}/>{t('imageImport.savePattern')}</Button></div>
