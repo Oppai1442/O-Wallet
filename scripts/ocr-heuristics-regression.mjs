@@ -83,7 +83,7 @@ const {
 
 const { sourceFingerprint } = fingerprintModule
 const { sanitizeOcrTileResumeState, sanitizeOcrTileResumeMap } = checkpointModule
-const { findOcrCustomInputMatch, extractBetweenOcrContexts } = ocrSemanticModule
+const { findOcrCustomInputMatch, extractBetweenOcrContexts, extractBetweenOcrContextsDetailed } = ocrSemanticModule
 const { buildImageImportBlockRowId, buildImageImportSemanticRowId, canonicalImageImportTransaction, imageImportBlockFingerprint, imageImportImageId, imageImportRecordId, imageImportTransactionHash, importSourcesMatch, sourceIdsMatch } = importIdentityModule
 const { decodeCheckpointValue, encodeCheckpointValue, isCompressedCheckpoint } = checkpointCodecModule
 
@@ -420,3 +420,13 @@ assert.equal(extractBetweenOcrContexts(customInputLines[0].text, [merchantCustom
 const amountCustomMatch = findOcrCustomInputMatch(customInputLines, 'amount', '500000')
 assert.equal(amountCustomMatch?.line.id, 'sentence')
 assert.equal(findOcrCustomInputMatch(customInputLines, 'merchant', 'không tồn tại'), undefined)
+
+
+// Fuzzy contextual slots tolerate small OCR/layout-anchor mutations while keeping the value boundary.
+assert.equal(extractBetweenOcrContexts('abcdyz Trần Văn B zxcvbnm', ['abcdyx'], ['zxcvbnm']), 'Trần Văn B')
+const fuzzySlot = extractBetweenOcrContextsDetailed('abcdyz Công ty ABC zxcvbnm', ['abcdyx'], ['zxcvbnm'])
+assert.equal(fuzzySlot?.value, 'Công ty ABC')
+assert.equal(fuzzySlot?.fuzzy, true)
+assert.ok((fuzzySlot?.confidence ?? 0) >= 0.72)
+assert.equal(extractBetweenOcrContexts('Đã chuyển tiền đến tài khoản [Trần Văn B] với số tiền 700.000đ', ['da chuyen tien toi tai khoan'], ['voi so tien 500 000d']), 'Trần Văn B')
+assert.equal(extractBetweenOcrContexts('unrelated header Nguyễn Văn C unrelated footer', ['abcdyx'], ['zxcvbnm']), undefined)
