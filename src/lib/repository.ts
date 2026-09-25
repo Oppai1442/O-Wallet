@@ -241,16 +241,16 @@ export class WalletRepository {
     await this.put({ ...transaction, deleted: true, updatedAt: now })
   }
 
-  async saveImage(file: File, preferredId?: string) {
-    await validateImageFile(file)
+  async prepareImage(file: File, preferredId?: string) {
+    const mimeType = await validateImageFile(file)
     const requestedId = preferredId?.trim()
     if (requestedId && (requestedId.length > 160 || !/^[a-zA-Z0-9._:-]+$/.test(requestedId))) throw new Error('error.invalidImageId')
     const existing = requestedId ? await db.images.get(requestedId) : undefined
-    if (existing && !existing.deleted) return existing
+    if (existing && !existing.deleted) return { row: existing, alreadyLocal: true }
 
     const raw = new Uint8Array(await file.arrayBuffer())
     const header = new TextEncoder().encode(JSON.stringify({
-      mimeType: file.type || 'application/octet-stream',
+      mimeType: mimeType || file.type || 'application/octet-stream',
       originalName: file.name,
       originalSize: file.size,
     }))
@@ -270,11 +270,17 @@ export class WalletRepository {
       deleted: false,
       payload: await encryptBytes(this.key, clear, `image:${id}`),
     }
+    return { row, alreadyLocal: false }
+  }
+
+  async saveImage(file: File, preferredId?: string) {
+    const prepared = await this.prepareImage(file, preferredId)
+    if (prepared.alreadyLocal) return prepared.row
     await db.transaction('rw', [db.images, db.syncQueue], async () => {
-      await db.images.put(row)
-      await db.syncQueue.put(syncQueueRow('image', row.id, now, row.updatedAt))
+      await db.images.put(prepared.row)
+      await db.syncQueue.put(syncQueueRow('image', prepared.row.id, prepared.row.updatedAt, prepared.row.updatedAt))
     })
-    return row
+    return prepared.row
   }
 
   async getImageBlob(id: string) {
