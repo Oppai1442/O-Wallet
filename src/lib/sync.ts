@@ -289,6 +289,20 @@ async function uploadImage(token: string, layout: DriveLayout, local: EncryptedI
   stats.pushedImages += 1
 }
 
+
+export async function uploadPreparedImageToDrive(
+  token: string,
+  layout: DriveLayout,
+  local: EncryptedImageRow,
+) {
+  const remote = await db.remoteImages.get(local.id)
+  if (remote && compareStamp(local, remote) <= 0 && !remote.deleted) return remote
+  const file = await uploadDriveFile(token, imageUploadOptions(local, layout, remote))
+  const cached = await cacheRemoteImage(file)
+  if (!cached) throw new Error('error.invalidDriveRecord')
+  return cached
+}
+
 function snapshotRecord(row: EncryptedRecordRow): SnapshotRecord {
   return {
     id: row.id,

@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Database, FileUp, ImageOff, LoaderCircle, RefreshCw } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Database, FileUp, FolderOpen, Images, LoaderCircle, RefreshCw } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { localizeError, useI18n } from '../i18n'
 import { findDuplicateTransaction } from '../lib/duplicates'
+import { externalPhotoImageId, matchExternalPhotoReferences } from '../lib/externalPhotoImport'
 import { parseExternalBackup } from '../lib/importers/client'
 import type { ExternalImportBundle, ExternalImportTransaction, ExternalImportUnsupportedRow } from '../lib/importers/types'
 import type { Account, Category, Transaction, TransactionType, WalletEntity } from '../types'
@@ -18,6 +19,8 @@ interface ImportResult {
   createdAccounts: number
   createdCategories: number
   skippedUnsupported: number
+  importedPhotos: number
+  unmatchedPhotos: number
 }
 
 function normalizedName(value: string) {
@@ -61,9 +64,10 @@ function unsupportedToTransaction(
 }
 
 export function ExternalImport() {
-  const { accounts, categories, transactions, saveEntities } = useWallet()
+  const { accounts, categories, transactions, saveEntities, uploadImageRemoteOnly, googleConnectionState } = useWallet()
   const { t, locale } = useI18n()
   const inputRef = useRef<HTMLInputElement>(null)
+  const photoInputRef = useRef<HTMLInputElement>(null)
   const [bundle, setBundle] = useState<ExternalImportBundle>()
   const [fileName, setFileName] = useState('')
   const [reading, setReading] = useState(false)
@@ -76,6 +80,9 @@ export function ExternalImport() {
   const [skipPossible, setSkipPossible] = useState(false)
   const [type7Mapping, setType7Mapping] = useState<UnknownTypeMapping>('skip')
   const [type8Mapping, setType8Mapping] = useState<UnknownTypeMapping>('skip')
+  const [photoFiles, setPhotoFiles] = useState<File[]>([])
+  const [photoUploading, setPhotoUploading] = useState(false)
+  const [photoProgress, setPhotoProgress] = useState({ completed: 0, total: 0 })
 
   const unknown7 = bundle?.unsupportedRows.filter((row) => row.doType === '7' && row.reason === 'unknown-transaction-type') ?? []
   const unknown8 = bundle?.unsupportedRows.filter((row) => row.doType === '8' && row.reason === 'unknown-transaction-type') ?? []
@@ -88,6 +95,7 @@ export function ExternalImport() {
     : 'This backup contains a few records with internal codes whose income/expense meaning is not reliable enough for O-Wallet to guess. You can skip them or choose how they should be imported.'
 
   const sampleTransactions = useMemo(() => bundle?.transactions.slice(0, 5) ?? [], [bundle])
+  const photoMatch = useMemo(() => bundle ? matchExternalPhotoReferences(bundle.photoReferences, photoFiles) : undefined, [bundle, photoFiles])
 
   async function chooseFile(file?: File) {
     if (!file) return
@@ -95,6 +103,8 @@ export function ExternalImport() {
     setError(undefined)
     setResult(undefined)
     setBundle(undefined)
+    setPhotoFiles([])
+    setPhotoProgress({ completed: 0, total: 0 })
     setFileName(file.name)
     try {
       const parsed = await parseExternalBackup(file)
@@ -126,7 +136,7 @@ export function ExternalImport() {
   }
 
   async function runImport() {
-    if (!bundle || importing) return
+    if (!bundle || importing || photoUploading) return
     setImporting(true)
     setError(undefined)
     setResult(undefined)
@@ -246,6 +256,35 @@ export function ExternalImport() {
           .filter((tx) => tx.importSource?.adapterId === bundle.adapterId)
           .map((tx) => [tx.importSource!.sourceId, tx]),
       )
+      const photoIdsByTransactionSource = new Map<string, string[]>()
+      let importedPhotos = 0
+      let unmatchedPhotos = bundle.photoReferences.length
+      if (photoMatch?.matches.length) {
+        if (googleConnectionState !== 'connected') throw new Error('error.googleNotReady')
+        setPhotoUploading(true)
+        setPhotoProgress({ completed: 0, total: photoMatch.matches.length })
+        const uniqueMatches = Array.from(new Map(photoMatch.matches.map((match) => [match.reference.sourceId, match])).values())
+        let next = 0
+        let completed = 0
+        const workerCount = Math.min(4, uniqueMatches.length)
+        await Promise.all(Array.from({ length: workerCount }, async () => {
+          while (true) {
+            const index = next++
+            if (index >= uniqueMatches.length) return
+            const match = uniqueMatches[index]
+            const imageId = await externalPhotoImageId(bundle.adapterId, match.reference.sourceId)
+            await uploadImageRemoteOnly(match.file, imageId)
+            const ids = photoIdsByTransactionSource.get(match.reference.transactionSourceId) ?? []
+            ids.push(imageId)
+            photoIdsByTransactionSource.set(match.reference.transactionSourceId, ids)
+            importedPhotos += 1
+            completed += 1
+            setPhotoProgress({ completed, total: uniqueMatches.length })
+          }
+        }))
+        unmatchedPhotos = bundle.photoReferences.length - importedPhotos
+      }
+
       const newTransactions: Transaction[] = []
       let importedTransactions = 0
       let updatedTransactions = 0
@@ -277,7 +316,11 @@ export function ExternalImport() {
           description: source.description,
           note: source.note,
           tags: source.tags,
-          imageIds: previousImport?.imageIds ?? [],
+          imageIds: Array.from(new Set([
+            ...(previousImport?.imageIds ?? []),
+            ...(photoIdsByTransactionSource.get(source.sourceId) ?? []),
+            ...source.sourceRowIds.flatMap((sourceRowId) => photoIdsByTransactionSource.get(sourceRowId) ?? []),
+          ])),
           createdAt: previousImport?.createdAt ?? now,
           updatedAt: now,
           deleted: false,
@@ -319,10 +362,13 @@ export function ExternalImport() {
         createdAccounts: newAccounts.length,
         createdCategories: newCategories.length,
         skippedUnsupported,
+        importedPhotos,
+        unmatchedPhotos,
       })
     } catch (importError) {
       setError(localizeError(importError, t, 'import.importError'))
     } finally {
+      setPhotoUploading(false)
       setImporting(false)
     }
   }
@@ -345,6 +391,20 @@ export function ExternalImport() {
         type="file"
         accept=".mmbak,.db,.sqlite,.sqlite3,application/x-sqlite3"
         onChange={(event) => void chooseFile(event.target.files?.[0])}
+      />
+
+      <input
+        ref={photoInputRef}
+        className="hidden"
+        type="file"
+        accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+        multiple
+        {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+        onChange={(event) => {
+          setPhotoFiles(Array.from(event.target.files ?? []))
+          setPhotoProgress({ completed: 0, total: 0 })
+          event.currentTarget.value = ''
+        }}
       />
 
       <div className="mt-4 flex flex-wrap gap-2">
@@ -370,9 +430,20 @@ export function ExternalImport() {
           {bundle.dateRange && <div className="text-xs text-stone-500">{t('import.dateRange', { from: new Date(bundle.dateRange.min).toLocaleDateString(locale), to: new Date(bundle.dateRange.max).toLocaleDateString(locale) })}</div>}
 
           {bundle.photoReferences.length > 0 && (
-            <div className="flex gap-3 rounded-xl bg-amber-50 p-3 text-sm leading-6 text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
-              <ImageOff size={18} className="mt-0.5 shrink-0" />
-              <div>{t('import.photosMissing', { count: bundle.photoReferences.length })}</div>
+            <div className="rounded-xl border border-stone-200 p-3 dark:border-stone-800">
+              <div className="flex flex-wrap items-start gap-3">
+                <Images size={18} className="mt-0.5 shrink-0 text-blue-500" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-bold text-stone-800 dark:text-stone-100">{t('import.photosTitle')}</div>
+                  <div className="mt-1 text-xs leading-5 text-stone-500">{t('import.photosHint', { count: bundle.photoReferences.length })}</div>
+                </div>
+                <Button variant="secondary" onClick={() => photoInputRef.current?.click()} disabled={importing || reading}>
+                  <FolderOpen size={16} /> {t('import.choosePhotoFolder')}
+                </Button>
+              </div>
+              {photoFiles.length > 0 && <div className="mt-3 rounded-lg bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{t('import.photosMatched', { selected: photoFiles.length, matched: photoMatch?.matches.length ?? 0, unmatched: photoMatch?.unmatched.length ?? 0, ambiguous: photoMatch?.ambiguous.length ?? 0 })}</div>}
+              {photoUploading && <div className="mt-3"><div className="h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800"><div className="h-full bg-blue-500 transition-all" style={{ width: `${photoProgress.total ? photoProgress.completed / photoProgress.total * 100 : 0}%` }} /></div><div className="mt-1 text-[11px] text-stone-500">{t('import.photosUploading', { completed: photoProgress.completed, total: photoProgress.total })}</div></div>}
+              <div className="mt-2 text-[11px] leading-5 text-stone-500">{t('import.photosRemoteOnly')}</div>
             </div>
           )}
 
@@ -409,7 +480,7 @@ export function ExternalImport() {
           )}
 
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={() => void runImport()} disabled={importing || importableTransactionCount === 0}>
+            <Button onClick={() => void runImport()} disabled={importing || photoUploading || importableTransactionCount === 0}>
               {importing ? <LoaderCircle size={17} className="animate-spin" /> : <FileUp size={17} />}
               {importing ? t('import.importing') : t('import.importButton')}
             </Button>
@@ -428,7 +499,8 @@ export function ExternalImport() {
                   categories: result.createdCategories,
                   duplicates: result.skippedExact + result.skippedPossible,
                   skipped: result.skippedUnsupported,
-                })}</div>
+                })}
+                {bundle.photoReferences.length > 0 && <div className="mt-1">{t('import.photosDone', { imported: result.importedPhotos, unmatched: result.unmatchedPhotos })}</div>}</div>
               </div>
             </div>
           )}
