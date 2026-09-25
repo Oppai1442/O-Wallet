@@ -78,7 +78,11 @@ export function suggestOcrLine(lines: OcrDetectedLine[], index: number): OcrSema
   const direct = labelSuggestion(line.text)
   const valueType = inferredValueType(line.text)
 
-  if (direct?.field === 'ignore') return direct
+  if (direct?.field === 'ignore') {
+    const hasOwnDigits = /\d/.test(line.text)
+    if (hasOwnDigits) return direct
+    return undefined
+  }
 
   const context = labelContext(lines, index)
   if (context) {
