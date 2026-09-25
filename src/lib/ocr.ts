@@ -715,6 +715,8 @@ export function mergePatternTemplateEvidence(
       ordinal: next.ordinal ?? prior.ordinal,
       sampleShape: next.sampleShape ?? prior.sampleShape,
       sampleShapes: shapes,
+      contextPrefixes: [...new Set([...(prior.contextPrefixes ?? []), ...(next.contextPrefixes ?? [])])].slice(-8),
+      contextSuffixes: [...new Set([...(prior.contextSuffixes ?? []), ...(next.contextSuffixes ?? [])])].slice(-8),
       successes: (prior.successes ?? 0) + (hasFeedback ? (predictionMatched ? 1 : 0) : 1),
       failures: (prior.failures ?? 0) + (hasFeedback && !predictionMatched ? 1 : 0),
     }
@@ -832,9 +834,11 @@ function lineMatchesIgnoredPattern(line: OcrDetectedLine, pattern: OcrFieldPatte
 }
 
 function candidateValueFromLine(line: string, pattern: OcrFieldPattern) {
-  if (pattern.valueType === 'money') return parseMoneyText(line)
-  if (pattern.valueType === 'datetime') return parseDateTimeText(line)
-  return stripFieldLabel(line, pattern.field)
+  const contextual = extractBetweenOcrContexts(line, pattern.contextPrefixes, pattern.contextSuffixes)
+  const valueText = contextual ?? line
+  if (pattern.valueType === 'money') return parseMoneyText(valueText)
+  if (pattern.valueType === 'datetime') return parseDateTimeText(valueText)
+  return contextual ?? stripFieldLabel(line, pattern.field)
 }
 
 function findPatternLine(lines: OcrDetectedLine[], pattern: OcrFieldPattern, ignoreQuarantine = false) {
