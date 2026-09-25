@@ -158,8 +158,8 @@ export async function validateImageFile(file: File) {
   return sniffed
 }
 
-export async function validateImageBatch(files: File[]) {
-  if (files.length > SECURITY_LIMITS.maxImagesPerBatch) throw new Error('error.tooManyImages')
+export async function validateImageBatch(files: File[], options?: { unlimitedCount?: boolean }) {
+  if (!options?.unlimitedCount && files.length > SECURITY_LIMITS.maxImagesPerBatch) throw new Error('error.tooManyImages')
   for (const file of files) await validateImageFile(file)
 }
 
