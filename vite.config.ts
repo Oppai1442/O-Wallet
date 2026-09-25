@@ -17,7 +17,7 @@ const productionCsp = [
   "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
   "img-src 'self' data: blob: https://*.googleusercontent.com",
   "font-src 'self' data:",
-  "connect-src 'self' https://www.googleapis.com https://content.googleapis.com https://accounts.google.com/gsi/ https://oauth2.googleapis.com https://cdn.jsdelivr.net https://tessdata.projectnaptha.com https://openrouter.ai https://api.frankfurter.dev",
+  "connect-src 'self' https://www.googleapis.com https://content.googleapis.com https://accounts.google.com/gsi/ https://oauth2.googleapis.com https://cdn.jsdelivr.net https://tessdata.projectnaptha.com https://openrouter.ai https://api.frankfurter.dev https://raw.githubusercontent.com",
   "frame-src https://accounts.google.com https://docs.google.com https://drive.google.com",
   "worker-src 'self' blob: https://cdn.jsdelivr.net",
   "media-src 'self' blob:",

@@ -2,9 +2,11 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { registerSW } from 'virtual:pwa-register'
 import App from './App'
+import { startReleaseWatchdog } from './lib/releaseWatchdog'
 import './index.css'
 
 registerSW({ immediate: true })
+startReleaseWatchdog()
 
 const root = document.getElementById('root')!
 
