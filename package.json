@@ -11,9 +11,10 @@
     "security:check": "node scripts/security-check.mjs && node scripts/crypto-smoke.mjs",
     "security:dist": "node scripts/dist-security-check.mjs",
     "test:ocr": "node scripts/ocr-heuristics-regression.mjs",
-    "check": "npm run security:check && npm run test:ocr && npm run build && npm run security:dist",
+    "check": "npm run security:check && npm run test:ocr && npm run test:import:photos && npm run build && npm run security:dist",
     "test:ocr:visual": "node scripts/ocr-visual-e2e.mjs",
-    "test:ocr:calibration": "node scripts/ocr-calibration-e2e.mjs"
+    "test:ocr:calibration": "node scripts/ocr-calibration-e2e.mjs",
+    "test:import:photos": "node scripts/external-photo-import-regression.mjs"
   },
   "cloudflare": {
     "bindings": {
