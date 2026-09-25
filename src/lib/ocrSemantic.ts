@@ -223,23 +223,131 @@ function comparableWithMap(value: string) {
   return { text: normalizedText, map }
 }
 
-export function extractBetweenOcrContexts(line: string, prefixes?: string[], suffixes?: string[]) {
+interface FuzzyContextMatch {
+  start: number
+  end: number
+  score: number
+  exact: boolean
+}
+
+function levenshteinDistance(left: string, right: string) {
+  if (left === right) return 0
+  if (!left.length) return right.length
+  if (!right.length) return left.length
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index)
+  for (let row = 1; row <= left.length; row += 1) {
+    const current = [row]
+    for (let column = 1; column <= right.length; column += 1) {
+      current[column] = Math.min(
+        current[column - 1] + 1,
+        previous[column] + 1,
+        previous[column - 1] + (left[row - 1] === right[column - 1] ? 0 : 1),
+      )
+    }
+    previous = current
+  }
+  return previous[right.length]
+}
+
+function fuzzyTextSimilarity(left: string, right: string) {
+  if (!left || !right) return 0
+  if (left === right) return 1
+  return 1 - levenshteinDistance(left, right) / Math.max(left.length, right.length)
+}
+
+function normalizedTokenRanges(text: string) {
+  const tokens: Array<{ text: string; start: number; end: number }> = []
+  const expression = /[a-z0-9]+/g
+  let match: RegExpExecArray | null
+  while ((match = expression.exec(text))) tokens.push({ text: match[0], start: match.index, end: match.index + match[0].length })
+  return tokens
+}
+
+function fuzzyContextMatches(sourceText: string, contexts?: string[]) {
+  const sourceTokens = normalizedTokenRanges(sourceText)
+  if (!sourceTokens.length || !contexts?.length) return [] as FuzzyContextMatch[]
+  const matches: FuzzyContextMatch[] = []
+  for (const rawContext of contexts) {
+    const context = normalized(rawContext)
+    const targetTokens = context.split(' ').filter(Boolean)
+    if (!context || !targetTokens.length) continue
+    const minWindow = Math.max(1, targetTokens.length - 1)
+    const maxWindow = targetTokens.length + 1
+    const threshold = context.length >= 8 ? 0.72 : 0.82
+    for (let startToken = 0; startToken < sourceTokens.length; startToken += 1) {
+      for (let size = minWindow; size <= maxWindow && startToken + size <= sourceTokens.length; size += 1) {
+        const start = sourceTokens[startToken].start
+        const end = sourceTokens[startToken + size - 1].end
+        const candidate = sourceText.slice(start, end)
+        const tokenPenalty = Math.abs(size - targetTokens.length) * 0.04
+        const score = Math.max(0, fuzzyTextSimilarity(candidate, context) - tokenPenalty)
+        if (score < threshold) continue
+        matches.push({ start, end, score, exact: candidate === context })
+      }
+    }
+  }
+  return matches
+    .sort((a, b) => Number(b.exact) - Number(a.exact) || b.score - a.score || a.start - b.start)
+    .filter((match, index, all) => index === all.findIndex((item) => item.start === match.start && item.end === match.end))
+    .slice(0, 16)
+}
+
+export interface OcrContextExtraction {
+  value: string
+  confidence: number
+  prefixScore?: number
+  suffixScore?: number
+  fuzzy: boolean
+}
+
+export function extractBetweenOcrContextsDetailed(line: string, prefixes?: string[], suffixes?: string[]): OcrContextExtraction | undefined {
   const source = comparableWithMap(line)
-  const prefixMatches = (prefixes ?? []).map(normalized).filter(Boolean).map((prefix) => {
-    const index = source.text.indexOf(prefix)
-    return index < 0 ? undefined : { index, end: index + prefix.length }
-  }).filter((value): value is { index: number; end: number } => Boolean(value)).sort((a, b) => b.end - a.end)
-  const startNormalized = prefixMatches[0]?.end ?? 0
-  const suffixMatches = (suffixes ?? []).map(normalized).filter(Boolean).map((suffix) => {
-    const index = source.text.indexOf(suffix, startNormalized)
-    return index < 0 ? undefined : { index }
-  }).filter((value): value is { index: number } => Boolean(value)).sort((a, b) => a.index - b.index)
-  const endNormalized = suffixMatches[0]?.index ?? source.text.length
-  if ((!prefixMatches.length && !suffixMatches.length) || endNormalized <= startNormalized) return undefined
-  let start = source.map[Math.min(startNormalized, source.map.length - 1)] ?? 0
-  let end = endNormalized >= source.map.length ? line.length : (source.map[endNormalized] ?? line.length)
+  if (!source.text || (!prefixes?.length && !suffixes?.length)) return undefined
+  const prefixMatches = fuzzyContextMatches(source.text, prefixes)
+  const suffixMatches = fuzzyContextMatches(source.text, suffixes)
+  const requiresPrefix = Boolean(prefixes?.length)
+  const requiresSuffix = Boolean(suffixes?.length)
+  if ((requiresPrefix && !prefixMatches.length) || (requiresSuffix && !suffixMatches.length)) return undefined
+
+  const pairs: Array<{ start: number; end: number; prefix?: FuzzyContextMatch; suffix?: FuzzyContextMatch; score: number }> = []
+  const prefixOptions: Array<FuzzyContextMatch | undefined> = requiresPrefix ? prefixMatches : [undefined]
+  const suffixOptions: Array<FuzzyContextMatch | undefined> = requiresSuffix ? suffixMatches : [undefined]
+  for (const prefix of prefixOptions) {
+    for (const suffix of suffixOptions) {
+      const start = prefix?.end ?? 0
+      const end = suffix?.start ?? source.text.length
+      if (end <= start) continue
+      const gapLength = end - start
+      if (gapLength > 180) continue
+      const scores = [prefix?.score, suffix?.score].filter((value): value is number => value !== undefined)
+      const anchorScore = scores.reduce((sum, value) => sum + value, 0) / Math.max(1, scores.length)
+      const boundedGapBonus = Math.max(0, 1 - Math.max(0, gapLength - 80) / 200) * 0.02
+      pairs.push({ start, end, prefix, suffix, score: anchorScore + boundedGapBonus })
+    }
+  }
+  const best = pairs.sort((a, b) => b.score - a.score || (a.end - a.start) - (b.end - b.start))[0]
+  if (!best) return undefined
+
+  let start = best.start >= source.map.length ? line.length : (source.map[best.start] ?? 0)
+  let end = best.end >= source.map.length ? line.length : (source.map[best.end] ?? line.length)
   while (start < end && /[\s:：\-–—\[\](){}]/.test(line[start])) start += 1
   while (end > start && /[\s:：\-–—\[\](){}]/.test(line[end - 1])) end -= 1
-  const extracted = line.slice(start, end).trim()
-  return extracted || undefined
+  const value = line.slice(start, end).trim()
+  if (!value) return undefined
+  const prefixScore = best.prefix?.score
+  const suffixScore = best.suffix?.score
+  const confidenceParts = [prefixScore, suffixScore].filter((value): value is number => value !== undefined)
+  const confidence = confidenceParts.reduce((sum, value) => sum + value, 0) / Math.max(1, confidenceParts.length)
+  return {
+    value,
+    confidence,
+    prefixScore,
+    suffixScore,
+    fuzzy: Boolean((best.prefix && !best.prefix.exact) || (best.suffix && !best.suffix.exact)),
+  }
 }
+
+export function extractBetweenOcrContexts(line: string, prefixes?: string[], suffixes?: string[]) {
+  return extractBetweenOcrContextsDetailed(line, prefixes, suffixes)?.value
+}
+
