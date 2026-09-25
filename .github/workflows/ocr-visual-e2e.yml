@@ -23,10 +23,35 @@ on:
       - 'tests/ocr-calibration/**'
       - 'package.json'
       - '.github/workflows/ocr-visual-e2e.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/lib/ocr.ts'
+      - 'src/lib/ocrParsing.ts'
+      - 'src/lib/ocrHeuristics.ts'
+      - 'src/lib/ocrSemantic.ts'
+      - 'src/lib/ocrCheckpoint.ts'
+      - 'src/lib/checkpointCodec.ts'
+      - 'src/lib/fileFingerprint.ts'
+      - 'src/lib/importIdentity.ts'
+      - 'src/components/OcrTeachingPanel.tsx'
+      - 'src/components/ImageImportMode.tsx'
+      - 'src/components/BatchOcrReview.tsx'
+      - 'src/components/SharedProfileTransactionModal.tsx'
+      - 'src/components/SharedProfileSettings.tsx'
+      - 'src/ocrVisualE2E.ts'
+      - 'src/main.tsx'
+      - 'vite.config.ts'
+      - 'scripts/ocr-heuristics-regression.mjs'
+      - 'scripts/ocr-visual-e2e.mjs'
+      - 'scripts/ocr-calibration-e2e.mjs'
+      - 'tests/ocr-calibration/**'
+      - 'package.json'
+      - '.github/workflows/ocr-visual-e2e.yml'
   workflow_dispatch:
 
 concurrency:
-  group: ocr-visual-e2e
+  group: ocr-visual-e2e-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
