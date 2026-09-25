@@ -83,6 +83,7 @@ const {
 
 const { sourceFingerprint } = fingerprintModule
 const { sanitizeOcrTileResumeState, sanitizeOcrTileResumeMap } = checkpointModule
+const { findOcrCustomInputMatch, extractBetweenOcrContexts } = ocrSemanticModule
 const { buildImageImportBlockRowId, buildImageImportSemanticRowId, canonicalImageImportTransaction, imageImportBlockFingerprint, imageImportImageId, imageImportRecordId, imageImportTransactionHash, importSourcesMatch, sourceIdsMatch } = importIdentityModule
 const { decodeCheckpointValue, encodeCheckpointValue, isCompressedCheckpoint } = checkpointCodecModule
 
@@ -404,3 +405,18 @@ assert.equal(separateRows.length, 2)
 
 fs.rmSync(outDir, { recursive: true, force: true })
 console.log('OCR heuristic regression PASS')
+
+
+const customInputLines = [
+  {id:'sentence',text:'Đã chuyển tiền tới tài khoản [Nguyễn Văn A] với số tiền 500.000đ',confidence:94,x:0,y:0,width:1,height:0.1},
+  {id:'reference',text:'Mã tham chiếu 123456789',confidence:97,x:0,y:0.1,width:1,height:0.1},
+]
+const merchantCustomMatch = findOcrCustomInputMatch(customInputLines, 'merchant', 'nguyen van a')
+assert.equal(merchantCustomMatch?.line.id, 'sentence')
+assert.equal(merchantCustomMatch?.exactSubstring, true)
+assert.equal(merchantCustomMatch?.prefix, 'da chuyen tien toi tai khoan')
+assert.equal(merchantCustomMatch?.suffix, 'voi so tien 500 000d')
+assert.equal(extractBetweenOcrContexts(customInputLines[0].text, [merchantCustomMatch.prefix], [merchantCustomMatch.suffix]), 'Nguyễn Văn A')
+const amountCustomMatch = findOcrCustomInputMatch(customInputLines, 'amount', '500000')
+assert.equal(amountCustomMatch?.line.id, 'sentence')
+assert.equal(findOcrCustomInputMatch(customInputLines, 'merchant', 'không tồn tại'), undefined)
