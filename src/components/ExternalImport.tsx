@@ -2,12 +2,13 @@ import { useMemo, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Database, FileUp, FolderOpen, Images, LoaderCircle, RefreshCw } from 'lucide-react'
 import { useWallet } from '../WalletContext'
 import { localizeError, useI18n } from '../i18n'
-import { findDuplicateTransaction } from '../lib/duplicates'
+import { findExternalImportConflicts, replaceExternalImportConflict, type ExternalImportConflict, type ExternalImportConflictDecision } from '../lib/externalImportConflicts'
 import { externalPhotoImageId, matchExternalPhotoReferences } from '../lib/externalPhotoImport'
 import { parseExternalBackup } from '../lib/importers/client'
 import type { ExternalImportBundle, ExternalImportTransaction, ExternalImportUnsupportedRow } from '../lib/importers/types'
 import type { Account, Category, Transaction, TransactionType, WalletEntity } from '../types'
 import { Button, Card, Select } from './ui'
+import { ExternalImportConflictReview } from './ExternalImportConflictReview'
 
 type UnknownTypeMapping = 'skip' | 'income' | 'expense'
 
@@ -76,8 +77,8 @@ export function ExternalImport() {
   const [result, setResult] = useState<ImportResult>()
   const [mergeByName, setMergeByName] = useState(true)
   const [onlyUsedCategories, setOnlyUsedCategories] = useState(true)
-  const [skipExact, setSkipExact] = useState(true)
-  const [skipPossible, setSkipPossible] = useState(false)
+  const [pendingConflicts, setPendingConflicts] = useState<ExternalImportConflict[]>([])
+  const [conflictDecisions, setConflictDecisions] = useState<Record<string, ExternalImportConflictDecision>>({})
   const [type7Mapping, setType7Mapping] = useState<UnknownTypeMapping>('skip')
   const [type8Mapping, setType8Mapping] = useState<UnknownTypeMapping>('skip')
   const [photoFiles, setPhotoFiles] = useState<File[]>([])
@@ -105,6 +106,8 @@ export function ExternalImport() {
     setBundle(undefined)
     setPhotoFiles([])
     setPhotoProgress({ completed: 0, total: 0 })
+    setPendingConflicts([])
+    setConflictDecisions({})
     setFileName(file.name)
     try {
       const parsed = await parseExternalBackup(file)
@@ -332,21 +335,40 @@ export function ExternalImport() {
           },
         }
 
-        if (!previousImport) {
-          const duplicate = findDuplicateTransaction(candidate, transactions)
-          if (duplicate?.level === 'exact' && skipExact) {
-            skippedExact += 1
-            continue
-          }
-          if (duplicate?.level === 'possible' && skipPossible) {
-            skippedPossible += 1
-            continue
-          }
-          importedTransactions += 1
-        } else {
-          updatedTransactions += 1
-        }
+        if (!previousImport) importedTransactions += 1
+        else updatedTransactions += 1
         newTransactions.push(candidate)
+      }
+
+      const conflicts = findExternalImportConflicts(newTransactions, transactions)
+      if (conflicts.length) {
+        const unresolved = conflicts.filter((conflict) => !conflictDecisions[conflict.id])
+        if (unresolved.length || pendingConflicts.length === 0) {
+          setPendingConflicts(conflicts)
+          setImporting(false)
+          return
+        }
+
+        const conflictByIncomingId = new Map(conflicts.map((conflict) => [conflict.incoming.id, conflict]))
+        const resolvedTransactions = newTransactions.flatMap((candidate) => {
+          const conflict = conflictByIncomingId.get(candidate.id)
+          if (!conflict) return [candidate]
+          const decision = conflictDecisions[conflict.id]
+          if (decision === 'ignore') {
+            skippedExact += 1
+            importedTransactions = Math.max(0, importedTransactions - 1)
+            return []
+          }
+          if (decision === 'replace') {
+            updatedTransactions += 1
+            importedTransactions = Math.max(0, importedTransactions - 1)
+            return [replaceExternalImportConflict(conflict)]
+          }
+          return []
+        })
+        newTransactions.splice(0, newTransactions.length, ...resolvedTransactions)
+        setPendingConflicts([])
+        setConflictDecisions({})
       }
 
       const entities: WalletEntity[] = [...newAccounts, ...newCategories, ...newTransactions]
@@ -463,9 +485,17 @@ export function ExternalImport() {
           <div className="grid gap-2 md:grid-cols-2">
             <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-stone-200 p-3 dark:border-stone-800"><input className="mt-1" type="checkbox" checked={mergeByName} onChange={(e) => setMergeByName(e.target.checked)} /><span><span className="block text-sm font-semibold text-stone-800 dark:text-stone-100">{t('import.mergeByName')}</span><span className="mt-0.5 block text-xs leading-5 text-stone-500">{t('import.mergeByNameHint')}</span></span></label>
             <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-stone-200 p-3 dark:border-stone-800"><input className="mt-1" type="checkbox" checked={onlyUsedCategories} onChange={(e) => setOnlyUsedCategories(e.target.checked)} /><span><span className="block text-sm font-semibold text-stone-800 dark:text-stone-100">{t('import.onlyUsedCategories')}</span><span className="mt-0.5 block text-xs leading-5 text-stone-500">{t('import.onlyUsedCategoriesHint')}</span></span></label>
-            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-stone-200 p-3 dark:border-stone-800"><input className="mt-1" type="checkbox" checked={skipExact} onChange={(e) => setSkipExact(e.target.checked)} /><span><span className="block text-sm font-semibold text-stone-800 dark:text-stone-100">{t('import.skipExact')}</span><span className="mt-0.5 block text-xs leading-5 text-stone-500">{t('import.skipExactHint')}</span></span></label>
-            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-stone-200 p-3 dark:border-stone-800"><input className="mt-1" type="checkbox" checked={skipPossible} onChange={(e) => setSkipPossible(e.target.checked)} /><span><span className="block text-sm font-semibold text-stone-800 dark:text-stone-100">{t('import.skipPossible')}</span><span className="mt-0.5 block text-xs leading-5 text-stone-500">{t('import.skipPossibleHint')}</span></span></label>
           </div>
+
+          {pendingConflicts.length > 0 && (
+            <ExternalImportConflictReview
+              conflicts={pendingConflicts}
+              decisions={conflictDecisions}
+              locale={locale}
+              onDecision={(id, decision) => setConflictDecisions((current) => ({ ...current, [id]: decision }))}
+              onAll={(decision) => setConflictDecisions(Object.fromEntries(pendingConflicts.map((conflict) => [conflict.id, decision])))}
+            />
+          )}
 
           {sampleTransactions.length > 0 && (
             <div>
