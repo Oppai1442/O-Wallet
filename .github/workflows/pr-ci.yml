@@ -52,6 +52,12 @@ jobs:
       - name: OCR heuristic regression
         run: npm run test:ocr
 
+      - name: External photo import regression
+        run: npm run test:import:photos
+
+      - name: External import conflict regression
+        run: npm run test:import:conflicts
+
       - name: Release watchdog regression
         run: npm run test:update
 
