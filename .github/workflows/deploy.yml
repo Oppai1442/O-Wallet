@@ -49,6 +49,9 @@ jobs:
       - name: External photo import regression
         run: npm run test:import:photos
 
+      - name: Release watchdog regression
+        run: npm run test:update
+
       - name: Build
         run: npm run build
         env:
