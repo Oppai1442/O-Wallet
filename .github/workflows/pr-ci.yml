@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout merged PR result
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
